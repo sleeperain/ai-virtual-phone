@@ -777,11 +777,12 @@ export async function generateParagraphCommentReply(params: {
             },
         ]
         : [{ role: "user", content: `${chapterContent}\n\n${taskPrompt}` }];
+    ensureTrailingUserTurn(messages, `${chapterContent}\n\n${taskPrompt}`);
 
     const raw = await callReadingLLM(
         apiConfig,
         preset,
-        ensureTrailingUserTurn(messages),
+        messages,
         character.name,
         input.regexes,
         input.appTags,
