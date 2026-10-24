@@ -262,6 +262,7 @@ export function ReadingAppearanceDialog({ appearance, backgroundUrl, loadedFonts
                                 : <span className="reading-look-follow">跟随日间</span>) : null}
                         </span>
                         <ColorInput
+                            showHexInput
                             value={onNight ? (lookDraft.look.textColor || draft.textColor) : draft.textColor}
                             onChange={(textColor) => (onNight ? editLook({ textColor }) : setDraft((prev) => ({ ...prev, textColor })))}
                         />
@@ -317,6 +318,7 @@ export function ReadingAppearanceDialog({ appearance, backgroundUrl, loadedFonts
                     <div className="reading-settings-color-row">
                         <span className="reading-settings-label-inline">文字颜色</span>
                         <ColorInput
+                            showHexInput
                             value={draft.annotationTextColor || READING_ANNOTATION_STYLE_DEFAULTS.textColor}
                             onChange={(annotationTextColor) => setDraft((prev) => ({ ...prev, annotationTextColor }))}
                         />
@@ -324,6 +326,7 @@ export function ReadingAppearanceDialog({ appearance, backgroundUrl, loadedFonts
                     <div className="reading-settings-color-row">
                         <span className="reading-settings-label-inline">卡片颜色</span>
                         <ColorInput
+                            showHexInput
                             value={draft.annotationCardColor || READING_ANNOTATION_STYLE_DEFAULTS.cardColor}
                             onChange={(annotationCardColor) => setDraft((prev) => ({ ...prev, annotationCardColor }))}
                         />
@@ -379,6 +382,7 @@ export function ReadingAppearanceDialog({ appearance, backgroundUrl, loadedFonts
                     <div className="reading-settings-color-row">
                         <span className="reading-settings-label-inline">文字颜色</span>
                         <ColorInput
+                            showHexInput
                             value={draft.userAnnotationTextColor || READING_ANNOTATION_STYLE_DEFAULTS.userTextColor}
                             onChange={(userAnnotationTextColor) => setDraft((prev) => ({ ...prev, userAnnotationTextColor }))}
                         />
@@ -386,6 +390,7 @@ export function ReadingAppearanceDialog({ appearance, backgroundUrl, loadedFonts
                     <div className="reading-settings-color-row">
                         <span className="reading-settings-label-inline">卡片颜色</span>
                         <ColorInput
+                            showHexInput
                             value={draft.userAnnotationCardColor || READING_ANNOTATION_STYLE_DEFAULTS.userCardColor}
                             onChange={(userAnnotationCardColor) => setDraft((prev) => ({ ...prev, userAnnotationCardColor }))}
                         />
@@ -416,11 +421,11 @@ export function ReadingAppearanceDialog({ appearance, backgroundUrl, loadedFonts
                             <span className="reading-settings-label-inline">{tier.title}</span>
                             <div className="reading-settings-color-row">
                                 <span className="reading-settings-label-inline">高亮颜色</span>
-                                <ColorInput value={tier.highlight} onChange={tier.onHighlight} />
+                                <ColorInput showHexInput value={tier.highlight} onChange={tier.onHighlight} />
                             </div>
                             <div className="reading-settings-color-row">
                                 <span className="reading-settings-label-inline">划线颜色</span>
-                                <ColorInput value={tier.underline} onChange={tier.onUnderline} />
+                                <ColorInput showHexInput value={tier.underline} onChange={tier.onUnderline} />
                             </div>
                             <div className="reading-mark-preview">
                                 <span

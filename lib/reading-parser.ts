@@ -497,12 +497,17 @@ export async function parseEpubFile(arrayBuffer: ArrayBuffer, fileName?: string)
 
     // 3. Extract spine order (reading order)
     const spineItems: string[] = [];
+    // linear="no" 的 spine 项通常是封面包装页或末尾脚注弹出池，记录下来以便识别封面页
+    const nonLinearSpineIds = new Set<string>();
     const spineMatch = opfXml.match(/<spine[^>]*>([\s\S]*?)<\/spine>/i);
     if (spineMatch) {
-        const itemRefPattern = /idref="([^"]+)"/g;
-        let m;
-        while ((m = itemRefPattern.exec(spineMatch[1])) !== null) {
-            spineItems.push(m[1]);
+        const itemRefTagPattern = /<itemref\b[^>]*>/gi;
+        let tag;
+        while ((tag = itemRefTagPattern.exec(spineMatch[1])) !== null) {
+            const idref = tag[0].match(/\bidref="([^"]+)"/i)?.[1];
+            if (!idref) continue;
+            spineItems.push(idref);
+            if (/\blinear="no"/i.test(tag[0])) nonLinearSpineIds.add(idref);
         }
     }
 
@@ -511,6 +516,7 @@ export async function parseEpubFile(arrayBuffer: ArrayBuffer, fileName?: string)
     // EPUB3 的导航文档（properties="nav"）本身就是一张目录页，阅读器已经有自己的
     // 导航面板，把它当章节收进来只会在正文里多出一屏目录条目。
     const navItemIds = new Set<string>();
+    const coverPagePaths = new Set<string>();
     const idToMime = new Map<string, string>();
     let coverImageId = "";
     const manifestMatch = opfXml.match(/<manifest[^>]*>([\s\S]*?)<\/manifest>/i);
@@ -530,11 +536,34 @@ export async function parseEpubFile(arrayBuffer: ArrayBuffer, fileName?: string)
         }
     }
 
+    // EPUB2 <guide><reference type="cover" href="..."/></guide> 指向封面 HTML 页
+    const guideMatch = opfXml.match(/<guide[^>]*>([\s\S]*?)<\/guide>/i);
+    if (guideMatch) {
+        const refTagPattern = /<reference\b[^>]*>/gi;
+        let refTag;
+        while ((refTag = refTagPattern.exec(guideMatch[1])) !== null) {
+            const refType = refTag[0].match(/\btype="([^"]+)"/i)?.[1] || "";
+            const refHref = refTag[0].match(/\bhref="([^"]+)"/i)?.[1] || "";
+            if (/^cover$/i.test(refType) && refHref) {
+                const resolved = normalizeTocHref(refHref, rootDir);
+                if (resolved) coverPagePaths.add(resolved);
+            }
+        }
+    }
+
     // EPUB2 用 <meta name="cover" content="ID">；再不行就找 id/href 里带 cover 的图片
     if (!coverImageId) {
-        const metaCover = opfXml.match(/<meta\b[^>]*\bname="cover"[^>]*>/i)?.[0];
+        const metaCover = opfXml.match(/<meta\b[^>]*\bname="cover"[^>]*>/i)?.[0]
+            || opfXml.match(/<meta\b[^>]*\bcontent="[^"]+"[^>]*\bname="cover"[^>]*>/i)?.[0];
         const candidate = metaCover?.match(/\bcontent="([^"]+)"/)?.[1];
-        if (candidate && idToHref.has(candidate)) coverImageId = candidate;
+        if (candidate && idToHref.has(candidate)) {
+            if (idToMime.get(candidate)?.startsWith("image/")) {
+                coverImageId = candidate;
+            } else {
+                const pageHref = idToHref.get(candidate);
+                if (pageHref) coverPagePaths.add(normalizeTocHref(pageHref, rootDir));
+            }
+        }
     }
     if (!coverImageId) {
         for (const [id, itemHref] of idToHref) {
@@ -546,6 +575,7 @@ export async function parseEpubFile(arrayBuffer: ArrayBuffer, fileName?: string)
     let cover: ParsedBook["cover"];
     const coverHref = coverImageId ? idToHref.get(coverImageId) : undefined;
     const coverMime = coverImageId ? idToMime.get(coverImageId) : undefined;
+    const resolvedCoverImagePath = coverHref ? normalizeTocHref(coverHref, rootDir) : "";
     if (coverHref && coverMime?.startsWith("image/")) {
         const data = await zip.file(rootDir + decodeURIComponent(coverHref))?.async("arraybuffer");
         if (data && data.byteLength > 0) cover = { data, mime: coverMime };
@@ -601,10 +631,12 @@ export async function parseEpubFile(arrayBuffer: ArrayBuffer, fileName?: string)
     // 同一张图被多处引用时只存一份。
     const imagePathToIndex = new Map<string, number>();
     const imagePaths: string[] = [];
-    for (const itemId of spineItems) {
+    for (let spineIdx = 0; spineIdx < spineItems.length; spineIdx += 1) {
+        const itemId = spineItems[spineIdx];
         if (navItemIds.has(itemId)) continue;
         const href = idToHref.get(itemId);
         if (!href) continue;
+        const normalizedPagePath = normalizeTocHref(href, rootDir);
         const filePath = rootDir + decodeURIComponent(href);
         const html = await zip.file(filePath)?.async("text");
         if (!html) continue;
@@ -613,13 +645,45 @@ export async function parseEpubFile(arrayBuffer: ArrayBuffer, fileName?: string)
         const { title, paragraphs, imageSrcs } = extractTextFromHtml(html);
         if (paragraphs.length === 0) continue;
 
+        const chapterDir = filePath.includes("/") ? filePath.substring(0, filePath.lastIndexOf("/") + 1) : "";
+        const resolvedChapterImagePaths = (imageSrcs || []).map((src) => normalizeTocHref(src, chapterDir));
+
+        // 跳过纯粹的封面包装页：已经提取为书架封面的图，不再作为第一章塞进正文里重复显示
+        const fromToc = tocByPath.get(normalizedPagePath);
+        const textOnlyParagraphs = paragraphs.filter((p) => !parseReadingImageMarker(p));
+        const totalTextChars = textOnlyParagraphs.reduce((sum, p) => sum + p.replace(/\s+/g, "").length, 0);
+        const isCoverChapterHint = coverPagePaths.has(normalizedPagePath)
+            || /\bcover\b/i.test(itemId)
+            || /\bcover\b/i.test(href)
+            || /^(:?封面|cover)$/i.test((fromToc?.label || title || "").trim())
+            || (spineIdx === 0 && nonLinearSpineIds.has(itemId));
+        const hasCoverImageInChapter = Boolean(
+            resolvedCoverImagePath && resolvedChapterImagePaths.includes(resolvedCoverImagePath),
+        );
+        if (
+            (isCoverChapterHint && totalTextChars <= 20 && resolvedChapterImagePaths.length <= 2)
+            || (spineIdx <= 1 && hasCoverImageInChapter && totalTextChars === 0 && resolvedChapterImagePaths.length === 1)
+        ) {
+            // 若此前还没拿到 cover（比如 OPF 没标 cover-image，只在 guide 里标了封面页），顺手从这页第一张图补上
+            if (!cover && resolvedChapterImagePaths[0]) {
+                const firstImgPath = resolvedChapterImagePaths[0];
+                const data = await zip.file(firstImgPath)?.async("arraybuffer");
+                if (data && data.byteLength > 0) {
+                    const ext = firstImgPath.split(".").pop()?.toLowerCase();
+                    const mime = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : ext === "gif" ? "image/gif" : "image/jpeg";
+                    cover = { data, mime };
+                }
+            }
+            continue;
+        }
+
         let finalParagraphs = paragraphs;
         if (imageSrcs && imageSrcs.length > 0) {
-            const chapterDir = filePath.includes("/") ? filePath.substring(0, filePath.lastIndexOf("/") + 1) : "";
             const localToGlobal = new Map<number, number>();
-            imageSrcs.forEach((src, localIndex) => {
-                const resolved = normalizeTocHref(src, chapterDir);
+            resolvedChapterImagePaths.forEach((resolved, localIndex) => {
                 if (!resolved) return;
+                // 封面图本身不再混入正文插图
+                if (resolvedCoverImagePath && resolved === resolvedCoverImagePath && totalTextChars === 0) return;
                 let globalIndex = imagePathToIndex.get(resolved);
                 if (globalIndex === undefined) {
                     globalIndex = imagePaths.length;
@@ -637,7 +701,6 @@ export async function parseEpubFile(arrayBuffer: ArrayBuffer, fileName?: string)
             if (finalParagraphs.length === 0) continue;
         }
 
-        const fromToc = tocByPath.get(normalizeTocHref(href, rootDir));
         chapters.push({
             title: fromToc?.label || title || `第${chapters.length + 1}章`,
             paragraphs: finalParagraphs,
@@ -652,8 +715,12 @@ export async function parseEpubFile(arrayBuffer: ArrayBuffer, fileName?: string)
         const data = await zip.file(imagePaths[index])?.async("blob");
         if (!data || data.size === 0) { droppedImages.add(index); continue; }
         const measured = await measureImageBlob(data);
-        // 1x1 透明占位、分隔线之类的小图没有阅读价值，只会在正文里留一行空白
-        if (measured && (measured.width < 40 || measured.height < 40)) { droppedImages.add(index); continue; }
+        // 1x1 透明占位、角标图标、花纹分隔线之类的小图没有独立成段的阅读价值，
+        // 若当成独立插图渲染会被拉满整行放大
+        if (measured && (measured.width < 120 || measured.height < 80 || (measured.width * measured.height < 14400))) {
+            droppedImages.add(index);
+            continue;
+        }
         const blob = await compressReadingImage(data, READING_INLINE_IMAGE_MAX_SIZE);
         images.push({ index, blob, width: measured?.width ?? 0, height: measured?.height ?? 0 });
     }
@@ -750,6 +817,8 @@ function extractTextFromDom(html: string): { title: string; paragraphs: string[]
 
     // 插图：原地换成一条「标记段落」，保住它在正文里的位置。
     // 下面的取文逻辑只看文字，图片元素本身不产出任何段落，不换的话图就没了。
+    // 注意：许多精排 EPUB 会把注释角标（[1]、①、注）做成行内小图片放在 <sup>/<a> 或段落文字中间，
+    // 如果把这类角标图也拆成独立插图段落，不仅会把段落切断，还会把角标放大成整行大图。
     const imageSrcs: string[] = [];
     body.querySelectorAll("img, image").forEach((node) => {
         const src = node.getAttribute("src")
@@ -757,6 +826,43 @@ function extractTextFromDom(html: string): { title: string; paragraphs: string[]
             || node.getAttribute("href")
             || "";
         if (!src.trim()) { node.remove(); return; }
+        const alt = (node.getAttribute("alt") || node.getAttribute("title") || "").trim();
+        const cls = [
+            node.getAttribute("class") || "",
+            node.parentElement?.getAttribute("class") || "",
+            node.closest("a, sup, sub, span")?.getAttribute("class") || "",
+        ].join(" ");
+        const epubType = [
+            node.getAttribute("epub:type") || "",
+            node.closest("[epub\\:type]")?.getAttribute("epub:type") || "",
+        ].join(" ");
+        const styleAttr = (node.getAttribute("style") || "").toLowerCase();
+        const widthAttr = parseFloat(node.getAttribute("width") || "0");
+        const heightAttr = parseFloat(node.getAttribute("height") || "0");
+
+        const inSupOrSub = Boolean(node.closest("sup, sub"));
+        const inNoterefLink = Boolean(
+            node.closest("a[epub\\:type*='noteref'], a[role*='noteref'], a[href*='#fn'], a[href*='#note'], a[href*='footnote'], a[href*='endnote']"),
+        );
+        const hasNoteHint = /(?:footnote|endnote|noteref|duokan-footnote|zy-note|note-mark|note-icon|inline-icon| Math|smiley|emoji)/i.test(`${cls} ${epubType} ${src}`);
+        const hasSmallExplicitSize = (widthAttr > 0 && widthAttr <= 48) || (heightAttr > 0 && heightAttr <= 48)
+            || /width\s*:\s*(?:0?\.\d+|1(?:\.\d+)?)\s*(?:em|rem)/i.test(styleAttr)
+            || /height\s*:\s*(?:0?\.\d+|1(?:\.\d+)?)\s*(?:em|rem)/i.test(styleAttr);
+
+        // 检查是否嵌在一段较长的正文文字中间（两边有非空文字，且不是 figure/div 独立插图容器）
+        const blockContainer = node.closest("p, li, blockquote, h1, h2, h3, h4, h5, h6");
+        const siblingTextLen = blockContainer
+            ? (blockContainer.textContent || "").replace(/\s+/g, "").length
+            : 0;
+        const isInlineInTextParagraph = Boolean(blockContainer && siblingTextLen > 0 && (inSupOrSub || inNoterefLink || hasNoteHint || hasSmallExplicitSize));
+
+        if (inSupOrSub || inNoterefLink || hasNoteHint || hasSmallExplicitSize || isInlineInTextParagraph) {
+            const replacement = doc.createTextNode(alt || (inSupOrSub || inNoterefLink ? "[注]" : ""));
+            const target = node.tagName.toLowerCase() === "image" ? (node.closest("svg") || node) : node;
+            target.replaceWith(replacement);
+            return;
+        }
+
         const placeholder = doc.createElement("p");
         placeholder.textContent = buildReadingImageMarker(imageSrcs.length);
         // <image> 一般裹在 <svg> 里，整块换掉，免得留个空 svg

@@ -56,7 +56,7 @@ import {
 import { loadReadingAsset } from "@/lib/reading-appearance";
 
 type TxtPageItem =
-    | { kind: "line"; text: string; chapterIndex: number; paragraphIndex: number; indent?: boolean; segEnd?: boolean; charStart?: number }
+    | { kind: "line"; text: string; chapterIndex: number; paragraphIndex: number; indent?: boolean; segEnd?: boolean; charStart?: number; annotationCount?: number }
     | { kind: "gap"; chapterIndex: number; paragraphIndex: number }
     | { kind: "image"; image: ReadingImageRef; chapterIndex: number; paragraphIndex: number }
     | { kind: "annotation"; annotation: ReadingAnnotation; chapterIndex: number; paragraphIndex: number };
@@ -392,6 +392,11 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     const [editingAnnotation, setEditingAnnotation] = useState<ReadingAnnotation | null>(null);
     const [editingText, setEditingText] = useState("");
     const [annotationTranslationOverrides, setAnnotationTranslationOverrides] = useState<Record<string, boolean>>({});
+    const [openAnnotationParagraphs, setOpenAnnotationParagraphs] = useState<Record<string, boolean>>({});
+    const toggleParagraphAnnotationBubble = useCallback((cIdx: number, pIdx: number) => {
+        const key = `${cIdx}:${pIdx}`;
+        setOpenAnnotationParagraphs((prev) => ({ ...prev, [key]: !prev[key] }));
+    }, []);
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     const readingMessagePressStartRef = useRef<{ x: number; y: number } | null>(null);
     const chatDragRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number } | null>(null);
@@ -453,6 +458,10 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     useEffect(() => {
         setAnnotationTranslationOverrides({});
     }, [book.id, chapterIndex, readingConfig.collapseBilingualTranslation]);
+
+    useEffect(() => {
+        setOpenAnnotationParagraphs({});
+    }, [book.id]);
 
     const companion = companionId ? (enrichedContacts.find(c => c.characterId === companionId)?.char || loadCharacters().find(c => c.id === companionId)) : null;
     const bilingualTranslationEnabled = readingConfig.bilingualTranslationEnabled === true;
@@ -760,6 +769,10 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         await saveAnnotation(annotation);
         appendReadingAnnotationMemos(toAnnotationMemos([annotation]));
         setAnnotations(prev => [...prev, annotation]);
+        setOpenAnnotationParagraphs(prev => ({
+            ...prev,
+            [`${annotation.chapterIndex}:${annotation.paragraphIndex}`]: true,
+        }));
         setShowMyAnnotation(false);
         setMyAnnotationText("");
         setPendingQuote(null);
@@ -884,26 +897,60 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         return nodes;
     };
 
-    const renderLine = (item: Extract<TxtPageItem, { kind: "line" }>, key: number) => (
-        <p
-            key={key}
-            className={`reading-line${item.indent ? " reading-line-indent" : ""}${item.segEnd ? " reading-line-seg-end" : ""}`}
-            data-chapter={item.chapterIndex}
-            data-paragraph={item.paragraphIndex}
-            data-charstart={item.charStart ?? 0}
-        >
-            {renderLineContent(item)}
-        </p>
-    );
+    const renderLine = (item: Extract<TxtPageItem, { kind: "line" }>, key: number) => {
+        const bubbleCount = item.annotationCount ?? 0;
+        const pKey = `${item.chapterIndex}:${item.paragraphIndex}`;
+        const isBubbleOpen = Boolean(openAnnotationParagraphs[pKey]);
+        return (
+            <p
+                key={key}
+                className={`reading-line${item.indent ? " reading-line-indent" : ""}${item.segEnd ? " reading-line-seg-end" : ""}`}
+                data-chapter={item.chapterIndex}
+                data-paragraph={item.paragraphIndex}
+                data-charstart={item.charStart ?? 0}
+            >
+                {renderLineContent(item)}
+                {bubbleCount > 0 && (
+                    <button
+                        type="button"
+                        className="reading-annotation-bubble"
+                        data-count={bubbleCount}
+                        data-open={isBubbleOpen ? "" : undefined}
+                        data-no-nav="true"
+                        aria-label={isBubbleOpen ? `收起${bubbleCount}条批注` : `展开${bubbleCount}条批注`}
+                        aria-expanded={isBubbleOpen}
+                        style={{ ["--bubble-count" as "--bubble-count"]: `"${bubbleCount}"` } as CSSProperties}
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onPointerUp={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            toggleParagraphAnnotationBubble(item.chapterIndex, item.paragraphIndex);
+                        }}
+                    >
+                        <svg viewBox="3 2 29 22" aria-hidden="true">
+                            <path d="M6.74 18.11A13.4 9.2 0 1 1 10.3 20.17L4.6 22.2Z" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinejoin="round" strokeLinecap="round" />
+                        </svg>
+                    </button>
+                )}
+            </p>
+        );
+    };
 
-    /** 一张正文插图。图还没读出来时先占住位置（有原始尺寸就按比例占），
+    /** 一张正文插图。图还没读出来时先占住位置（有原始尺寸就按比例占，且不放大超过原图尺寸），
      *  否则图片加载完会把正文顶得一跳一跳。 */
     const renderImageItem = (image: ReadingImageRef, key: number | string) => {
         const url = inlineImageUrls[image.index];
-        // 量不出原图尺寸时按正方形占位，和分页里的算法保持一致
-        const ratio = image.width > 0 && image.height > 0 ? `${image.width} / ${image.height}` : "1 / 1";
+        const hasSize = image.width > 0 && image.height > 0;
+        const ratio = hasSize ? `${image.width} / ${image.height}` : "5 / 3";
         return (
-            <div key={key} className="reading-inline-image" style={{ aspectRatio: ratio }}>
+            <div
+                key={key}
+                className="reading-inline-image"
+                style={{
+                    aspectRatio: ratio,
+                    ...(hasSize ? { maxWidth: `${image.width}px` } : {}),
+                }}
+            >
                 {url
                     // eslint-disable-next-line @next/next/no-img-element
                     ? <img src={url} alt="" />
@@ -926,7 +973,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                         </div>
                         : item.kind === "image"
                             ? renderImageItem(item.image, i)
-                            : <p key={i} className={`reading-line${item.indent ? " reading-line-indent" : ""}${item.segEnd ? " reading-line-seg-end" : ""}`}>{item.text}</p>
+                            : renderLine(item, i)
             )}
         </div>
     );
@@ -2320,6 +2367,11 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         const annotationSignature = chapterAnnotations
             .map((annotation) => `${annotation.id}:${annotation.content.length}:${isAnnotationTranslationExpanded(annotation.id) ? 1 : 0}`)
             .join("|");
+        const openParagraphSignature = Object.entries(openAnnotationParagraphs)
+            .filter(([key, open]) => open && key.startsWith(`${chapterIndex}:`))
+            .map(([key]) => key)
+            .sort()
+            .join(",");
         const paragraphCharCount = currentChapter.paragraphs.reduce((sum, paragraph) => sum + paragraph.length, 0);
         const paginationSignature = [
             currentChapter.id,
@@ -2327,6 +2379,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
             currentChapter.paragraphs.length,
             paragraphCharCount,
             annotationSignature,
+            openParagraphSignature,
             bilingualTranslationEnabled ? 1 : 0,
             Math.round(maxWidth),
             Math.round(maxHeight),
@@ -2379,23 +2432,36 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                 if (index < currentChapter.paragraphs.length - 1) tokens.push({ kind: "gap", chapterIndex, paragraphIndex: index });
                 return;
             }
+            const paragraphAnnotations = annotationMap.get(index) || [];
             const segments = paragraph.split("\n");
             // 段落内的字符游标：wrapTextToLines 不裁剪字符，各行拼接等于原段落，
             // 所以逐行累加长度就能得到每行在段落中的起始偏移（荧光笔/划线按此定位）。
             let charCursor = 0;
             segments.forEach((segment, segmentIndex) => {
                 const shouldIndent = segmentIndex === 0;
+                const isLastSegment = segmentIndex === segments.length - 1;
                 const wrappedLines = wrapTextToLines(segment, maxWidth, ctx, shouldIndent ? indentWidth : 0);
                 wrappedLines.forEach((line, lineIndex) => {
-                    tokens.push({ kind: "line", text: line, chapterIndex, paragraphIndex: index, indent: shouldIndent && lineIndex === 0, segEnd: lineIndex === wrappedLines.length - 1, charStart: charCursor });
+                    const isLastLine = isLastSegment && lineIndex === wrappedLines.length - 1;
+                    tokens.push({
+                        kind: "line",
+                        text: line,
+                        chapterIndex,
+                        paragraphIndex: index,
+                        indent: shouldIndent && lineIndex === 0,
+                        segEnd: lineIndex === wrappedLines.length - 1,
+                        charStart: charCursor,
+                        ...(isLastLine && paragraphAnnotations.length > 0 ? { annotationCount: paragraphAnnotations.length } : {}),
+                    });
                     charCursor += line.length;
                 });
                 if (segmentIndex < segments.length - 1) charCursor += 1; // 被 split 掉的 \n
                 if (segmentIndex < segments.length - 1) tokens.push({ kind: "gap", chapterIndex, paragraphIndex: index });
             });
-            const paragraphAnnotations = annotationMap.get(index) || [];
-            for (const annotation of paragraphAnnotations) {
-                tokens.push({ kind: "annotation", annotation, chapterIndex, paragraphIndex: index });
+            if (paragraphAnnotations.length > 0 && openAnnotationParagraphs[`${chapterIndex}:${index}`]) {
+                for (const annotation of paragraphAnnotations) {
+                    tokens.push({ kind: "annotation", annotation, chapterIndex, paragraphIndex: index });
+                }
             }
             if (index < currentChapter.paragraphs.length - 1) tokens.push({ kind: "gap", chapterIndex, paragraphIndex: index });
         });
@@ -2404,14 +2470,15 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         let currentPage: TxtPageItem[] = [];
         let usedHeight = 0;
 
-        /** 插图占多高：按原图比例铺满正文宽度，最高不超过一页能放下的高度。
-         *  CSS 里用同一个数当 max-height，排版和实际渲染才对得上。 */
+        /** 插图占多高：按原图比例缩放，但不超过原图自身的像素尺寸（避免小插图被强行放大铺满整行），
+         *  最高也不超过一页能放下的高度。CSS 里用同一个约束，排版和实际渲染才对得上。 */
         const measureImageHeight = (image: ReadingImageRef) => {
             if (image.width > 0 && image.height > 0) {
-                return Math.min(maxHeight, Math.round((maxWidth * image.height) / image.width));
+                const displayWidth = Math.min(maxWidth, image.width);
+                return Math.min(maxHeight, Math.round((displayWidth * image.height) / image.width));
             }
-            // 量不出原始尺寸（SVG 等）：留一块方方正正的位置
-            return Math.min(maxHeight, Math.round(maxWidth));
+            // 量不出原始尺寸（SVG 等）：留一块适中的位置
+            return Math.min(maxHeight, Math.round(maxWidth * 0.6));
         };
 
         for (const token of tokens) {
@@ -2442,7 +2509,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         lastTxtPaginationSignatureRef.current = paginationSignature;
         setImageMaxHeight((prev) => (prev === maxHeight ? prev : maxHeight));
         setTxtPages(pages);
-    }, [annotations, bilingualTranslationEnabled, chapterIndex, currentChapter, isAnnotationTranslationExpanded, isPdf, isScrollMode, txtLayoutVersion]);
+    }, [annotations, bilingualTranslationEnabled, chapterIndex, currentChapter, isAnnotationTranslationExpanded, isPdf, isScrollMode, openAnnotationParagraphs, txtLayoutVersion]);
 
     const txtTotalPages = txtPagesReadyForCurrentChapter ? txtPages.length : 1;
 
@@ -2575,6 +2642,23 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         if (isScrollMode) return;
         scrollRef.current?.scrollTo(0, 0);
     }, [txtPage, isScrollMode]);
+
+    // 展开/收起段末批注气泡后，滚动模式下重新测量章节块高度
+    useLayoutEffect(() => {
+        if (!isScrollMode || !chaptersLoaded) return;
+        const content = scrollContentRef.current;
+        const body = scrollRef.current;
+        if (!content || !body) return;
+        const bodyRect = body.getBoundingClientRect();
+        const metrics = new Map<number, { top: number; height: number }>();
+        for (const chunk of content.querySelectorAll<HTMLElement>("[data-chapter-index]")) {
+            const idx = Number(chunk.getAttribute("data-chapter-index"));
+            if (!Number.isFinite(idx)) continue;
+            const rect = chunk.getBoundingClientRect();
+            metrics.set(idx, { top: rect.top - bodyRect.top + body.scrollTop, height: rect.height });
+        }
+        chapterMetricsRef.current = metrics;
+    }, [isScrollMode, chaptersLoaded, openAnnotationParagraphs]);
 
     // 滚动模式：监听滚动 —— 更新章节内滚动比例；无缝衔接（多章窗口平移，保持视觉连续）
     // 前向：当前章内容读完（章底滚到视口顶部/底部）→ 移除顶部章块 + 补偿滚动位置，自然过渡到下一章
@@ -2957,6 +3041,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                     const paragraphAnnotations = annotations.filter(
                                         (annotation) => annotation.chapterIndex === chapter.index && annotation.paragraphIndex === pIndex
                                     );
+                                    const isBubbleOpen = Boolean(openAnnotationParagraphs[`${chapter.index}:${pIndex}`]);
                                     return (
                                         <div key={pIndex} className="reading-scroll-block">
                                             {(() => {
@@ -2964,18 +3049,20 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                                 return paragraph.split("\n").map((segment, sIndex) => {
                                                     const charStart = charCursor;
                                                     charCursor += segment.length + 1; // 被拆掉的 \n 也占一个字符
+                                                    const isLastSeg = sIndex === segmentCount - 1;
                                                     return renderLine({
                                                         kind: "line",
                                                         text: segment,
                                                         chapterIndex: chapter.index,
                                                         paragraphIndex: pIndex,
                                                         indent: true,
-                                                        segEnd: sIndex === segmentCount - 1,
+                                                        segEnd: isLastSeg,
                                                         charStart,
+                                                        ...(isLastSeg && paragraphAnnotations.length > 0 ? { annotationCount: paragraphAnnotations.length } : {}),
                                                     }, sIndex);
                                                 });
                                             })()}
-                                            {paragraphAnnotations.map((annotation) => renderAnnotationItem(annotation))}
+                                            {isBubbleOpen && paragraphAnnotations.map((annotation) => renderAnnotationItem(annotation))}
                                         </div>
                                     );
                                 })}

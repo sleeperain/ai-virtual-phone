@@ -7719,7 +7719,7 @@
   justify-content: center;
   width: 100%;
   max-height: var(--reading-image-max-height, 70vh);
-  margin: 2px 0;
+  margin: 6px auto;
   border-radius: 6px;
   overflow: hidden;
   background: rgba(45, 35, 28, 0.05);
@@ -7811,6 +7811,89 @@
    否则会被紧随其后的另一张批注卡片盖住。 */
 .reading-annotation.is-menu-open {
   z-index: 60;
+}
+
+/* ══ 段末批注气泡（单路径描边版） ══ */
+.reading-app-surface .reading-line .reading-annotation-bubble {
+  --bubble-ink: #9a9a9a;
+  --bubble-w: 1.5em;
+  --bubble-h: 1.14em;
+
+  position: relative !important;
+  display: inline-block;
+  width: var(--bubble-w) !important;
+  height: var(--bubble-h) !important;
+  min-width: var(--bubble-w) !important;
+  margin: 0 0.18em 0 0.06em !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: none !important;
+  color: var(--bubble-ink) !important;
+  opacity: 1 !important;
+  vertical-align: middle !important;
+  line-height: 1 !important;
+  text-indent: 0 !important;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.reading-app-surface .reading-line .reading-annotation-bubble > svg {
+  display: none !important;
+}
+
+.reading-app-surface .reading-line .reading-annotation-bubble::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-color: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='3 2 29 22'%3E%3Cpath d='M6.74 18.11A13.4 9.2 0 1 1 10.3 20.17L4.6 22.2Z' fill='none' stroke='white' stroke-width='1.9' stroke-linejoin='round' stroke-linecap='round'/%3E%3C/svg%3E") center / 100% 100% no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='3 2 29 22'%3E%3Cpath d='M6.74 18.11A13.4 9.2 0 1 1 10.3 20.17L4.6 22.2Z' fill='none' stroke='white' stroke-width='1.9' stroke-linejoin='round' stroke-linecap='round'/%3E%3C/svg%3E") center / 100% 100% no-repeat;
+}
+
+.reading-app-surface .reading-line .reading-annotation-bubble[data-open] {
+  --bubble-ink: #6f6f6f;
+}
+
+.reading-app-surface .reading-line .reading-annotation-bubble::after {
+  content: var(--bubble-count, attr(data-count));
+  position: absolute;
+  /* 对齐的是椭圆本体的中心 (17.02,12.21)，不是按钮盒子的中心 —— 尾巴在左下，
+     盒子中心比气泡中心偏右下，直接 inset:0 居中就会偏。 */
+  inset: 0 3.3% 7.2% 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.52em;
+  line-height: 1;
+  color: var(--bubble-ink);
+  pointer-events: none;
+  /* 微调旋钮：这一步是给字形本身留的（数字 1 在各字体里的可视宽度很窄，
+     flex 是按字符宽度居中、不是按视觉重心），左右偏就动这个值 */
+  transform: translateX(0.02em);
+}
+
+/* 颜色选择器旁边的十六进制输入框（如 #8FB2C8） */
+.ui-color-input--with-hex {
+  cursor: default;
+  gap: 6px;
+}
+.ui-color-hex-field {
+  width: 78px;
+  height: 28px;
+  padding: 0 7px;
+  border: 1px solid var(--c-input-border, rgba(45, 35, 28, 0.16));
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.65);
+  color: var(--c-text-title, var(--reading-warm-ink, #111));
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace !important;
+  font-size: calc(11px*var(--app-text-scale,1));
+  line-height: 1;
+  text-transform: uppercase;
+  outline: none;
+  box-sizing: border-box;
+}
+.ui-color-hex-field:focus {
+  border-color: var(--reading-warm-brown, var(--c-icon-active, #8a5a2b));
 }
 
 /* 高亮/划线配色分「我划的」「TA 划的」两档 */

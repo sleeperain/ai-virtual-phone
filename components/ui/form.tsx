@@ -1,6 +1,6 @@
 "use client";
 
-import type { InputHTMLAttributes, TextareaHTMLAttributes, SelectHTMLAttributes, ReactNode } from "react";
+import { useState, useEffect, type InputHTMLAttributes, type TextareaHTMLAttributes, type SelectHTMLAttributes, type ReactNode } from "react";
 
 /* ── Input ── */
 type InputProps = InputHTMLAttributes<HTMLInputElement> & {
@@ -107,26 +107,104 @@ export function AvatarUpload({
   );
 }
 
+function normalizeHexColor(raw: string): string | null {
+  const cleaned = raw.trim().replace(/^#+/, "");
+  if (/^[0-9a-fA-F]{6}$/.test(cleaned)) {
+    return `#${cleaned.toLowerCase()}`;
+  }
+  if (/^[0-9a-fA-F]{3}$/.test(cleaned)) {
+    const expanded = cleaned
+      .split("")
+      .map((ch) => ch + ch)
+      .join("");
+    return `#${expanded.toLowerCase()}`;
+  }
+  return null;
+}
+
 /* ── Color Input ── */
 export function ColorInput({
   value,
   onChange,
   label,
   className,
+  showHexInput = false,
 }: {
   value: string;
   onChange: (color: string) => void;
   label?: string;
   className?: string;
+  showHexInput?: boolean;
 }) {
+  const [hexDraft, setHexDraft] = useState(value || "#000000");
+
+  useEffect(() => {
+    setHexDraft(value || "#000000");
+  }, [value]);
+
+  const pickerValue = normalizeHexColor(value) ?? "#000000";
+
+  if (!showHexInput) {
+    return (
+      <label className={`ui-color-input ${className ?? ""}`}>
+        <input
+          type="color"
+          value={pickerValue}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        {label && <span>{label}</span>}
+      </label>
+    );
+  }
+
+  const commitDraft = () => {
+    const normalized = normalizeHexColor(hexDraft);
+    if (normalized) {
+      setHexDraft(normalized);
+      if (normalized.toLowerCase() !== (value || "").toLowerCase()) {
+        onChange(normalized);
+      }
+    } else {
+      setHexDraft(value || "#000000");
+    }
+  };
+
   return (
-    <label className={`ui-color-input ${className ?? ""}`}>
+    <div className={`ui-color-input ui-color-input--with-hex ${className ?? ""}`}>
+      <input
+        type="text"
+        className="ui-color-hex-field"
+        value={hexDraft}
+        placeholder="#8FB2C8"
+        maxLength={7}
+        spellCheck={false}
+        autoCapitalize="off"
+        autoCorrect="off"
+        onChange={(e) => {
+          const next = e.target.value;
+          setHexDraft(next);
+          if (/^#?[0-9a-fA-F]{6}$/.test(next.trim())) {
+            const normalized = normalizeHexColor(next);
+            if (normalized) onChange(normalized);
+          }
+        }}
+        onBlur={commitDraft}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commitDraft();
+          }
+        }}
+      />
       <input
         type="color"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
+        value={pickerValue}
+        onChange={(e) => {
+          setHexDraft(e.target.value);
+          onChange(e.target.value);
+        }}
       />
       {label && <span>{label}</span>}
-    </label>
+    </div>
   );
 }
