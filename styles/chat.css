@@ -7813,6 +7813,20 @@
   z-index: 60;
 }
 
+/* EPUB 行内角标/小图标：保留原图并按字号缩成小角标，不断段、不放大 */
+.reading-app-surface .reading-line .reading-inline-icon {
+  display: inline-block;
+  height: 0.95em;
+  width: auto;
+  max-width: 1.8em;
+  max-height: 1.1em;
+  vertical-align: super;
+  margin: 0 0.08em;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 /* ══ 段末批注气泡（单路径描边版） ══ */
 .reading-app-surface .reading-line .reading-annotation-bubble {
   --bubble-ink: #9a9a9a;
@@ -7824,7 +7838,7 @@
   width: var(--bubble-w) !important;
   height: var(--bubble-h) !important;
   min-width: var(--bubble-w) !important;
-  margin: 0 0.18em 0 0.06em !important;
+  margin: 0 0.18em 0 0.36em !important;
   padding: 0 !important;
   border: 0 !important;
   background: none !important;

@@ -37,6 +37,51 @@ export function isReadingImageParagraph(text: string): boolean {
     return parseReadingImageMarker(text) !== null;
 }
 
+/** 行内角标/小图标占位符：直接嵌在段落文本中间，不断段、不放大成整行插图。
+ *  格式：\uFFFCico:<index>\uFFFC */
+const INLINE_ICON_GLOBAL_PATTERN = /￼ico:(\d+)￼/g;
+
+export function buildReadingInlineIconMarker(index: number): string {
+    return `￼ico:${index}￼`;
+}
+
+/** 扫描一段文本里包含的所有行内小图标 index */
+export function collectReadingInlineIconIndices(text: string): number[] {
+    if (!text.includes("￼ico:")) return [];
+    const indices: number[] = [];
+    let match: RegExpExecArray | null;
+    const re = new RegExp(INLINE_ICON_GLOBAL_PATTERN.source, "g");
+    while ((match = re.exec(text)) !== null) {
+        indices.push(Number(match[1]));
+    }
+    return indices;
+}
+
+/** 把文本按行内小图标占位符切开，供渲染成文字 + <img class="reading-inline-icon"> */
+export function splitTextByInlineIcons(text: string): Array<{ type: "text"; text: string } | { type: "icon"; index: number }> {
+    if (!text.includes("￼ico:")) return [{ type: "text", text }];
+    const out: Array<{ type: "text"; text: string } | { type: "icon"; index: number }> = [];
+    let lastIndex = 0;
+    const re = new RegExp(INLINE_ICON_GLOBAL_PATTERN.source, "g");
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(text)) !== null) {
+        if (match.index > lastIndex) {
+            out.push({ type: "text", text: text.slice(lastIndex, match.index) });
+        }
+        out.push({ type: "icon", index: Number(match[1]) });
+        lastIndex = re.lastIndex;
+    }
+    if (lastIndex < text.length) {
+        out.push({ type: "text", text: text.slice(lastIndex) });
+    }
+    return out;
+}
+
+/** 给模型看或算字数时，把行内角标占位符剥掉 */
+export function stripReadingInlineIconMarkers(text: string): string {
+    return text.includes("￼ico:") ? text.replace(INLINE_ICON_GLOBAL_PATTERN, "") : text;
+}
+
 /** 给模型看的正文里不该出现这种占位符 */
 export function describeReadingImageParagraph(): string {
     return "（此处是一张插图）";

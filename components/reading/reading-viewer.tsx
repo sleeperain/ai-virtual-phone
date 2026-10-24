@@ -49,8 +49,11 @@ import type { Book, BookChapter, ReadingAnnotation, ReadingProgress } from "@/li
 import type { Character } from "@/lib/character-types";
 import { splitBilingualText } from "@/lib/bilingual-text";
 import {
+    collectReadingInlineIconIndices,
     parseReadingImageMarker,
     readingImageAssetKey,
+    splitTextByInlineIcons,
+    stripReadingInlineIconMarkers,
     type ReadingImageRef,
 } from "@/lib/reading-inline-image";
 import { loadReadingAsset } from "@/lib/reading-appearance";
@@ -152,7 +155,7 @@ function buildParagraphRefsFromChapters(chapters: BookChapter[]): ParagraphRef[]
             absoluteIndex: 0,
             chapterIndex: currentChapterIndex,
             paragraphIndex,
-            text,
+            text: stripReadingInlineIconMarkers(text),
             pageNum: chapter.paragraphPages?.[paragraphIndex],
             yRatio: chapter.paragraphYPositions?.[paragraphIndex],
         }]
@@ -172,6 +175,28 @@ function trimTrailingGaps(items: TxtPageItem[]): TxtPageItem[] {
     return items.slice(0, end);
 }
 
+/** 把一段文本切成「单字符或单个行内小图标标记」的原子序列，
+ *  避免 wrapTextToLines 把 \uFFFCico:12\uFFFC 拆成两行，且算宽度时把整个标记按大约 1 个字宽计。 */
+function tokenizeLineUnits(text: string): string[] {
+    if (!text.includes("￼ico:")) return Array.from(text);
+    const units: string[] = [];
+    const parts = splitTextByInlineIcons(text);
+    for (const part of parts) {
+        if (part.type === "icon") {
+            units.push(`￼ico:${part.index}￼`);
+        } else {
+            units.push(...Array.from(part.text));
+        }
+    }
+    return units;
+}
+
+function measureLineWithIcons(text: string, ctx: CanvasRenderingContext2D): number {
+    if (!text.includes("￼ico:")) return ctx.measureText(text).width;
+    const replaced = text.replace(/￼ico:\d+￼/g, "注");
+    return ctx.measureText(replaced).width;
+}
+
 function wrapTextToLines(text: string, maxWidth: number, ctx: CanvasRenderingContext2D, firstLineOffset = 0): string[] {
     if (!text) return [""];
 
@@ -179,12 +204,12 @@ function wrapTextToLines(text: string, maxWidth: number, ctx: CanvasRenderingCon
     let current = "";
     let lineIndex = 0;
 
-    for (const char of Array.from(text)) {
-        const candidate = current + char;
+    for (const unit of tokenizeLineUnits(text)) {
+        const candidate = current + unit;
         const lineLimit = lineIndex === 0 ? Math.max(1, maxWidth - firstLineOffset) : maxWidth;
-        if (current && ctx.measureText(candidate).width > lineLimit) {
+        if (current && measureLineWithIcons(candidate, ctx) > lineLimit) {
             lines.push(current);
-            current = char;
+            current = unit;
             lineIndex += 1;
         } else {
             current = candidate;
@@ -497,7 +522,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     }, []);
     const currentChapter = chapters[chapterIndex];
 
-    /** 当前屏上会用到的插图序号。只加载这些，读完就放掉，
+    /** 当前屏上会用到的插图序号（含独立插图与行内角标小图）。只加载这些，读完就放掉，
      *  免得整本画册的图全挂在内存里。 */
     const visibleImageIndices = useMemo(() => {
         const source = isScrollMode ? windowChapters : (currentChapter ? [currentChapter] : []);
@@ -505,7 +530,13 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         for (const chapter of source) {
             for (const paragraph of chapter.paragraphs) {
                 const marker = parseReadingImageMarker(paragraph);
-                if (marker) indices.add(marker.index);
+                if (marker) {
+                    indices.add(marker.index);
+                    continue;
+                }
+                for (const iconIdx of collectReadingInlineIconIndices(paragraph)) {
+                    indices.add(iconIdx);
+                }
             }
         }
         return [...indices].sort((a, b) => a - b);
@@ -863,6 +894,25 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         return map;
     }, [marks]);
 
+    /** 把一段纯文本里的行内小图标标记（\uFFFCico:N\uFFFC）渲染成真实的 <img> 角标 */
+    const renderTextSliceWithIcons = (slice: string, keyPrefix: string): React.ReactNode => {
+        if (!slice.includes("￼ico:")) return slice;
+        const parts = splitTextByInlineIcons(slice);
+        return parts.map((part, idx) => {
+            if (part.type === "text") return part.text;
+            const url = inlineImageUrls[part.index];
+            return url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                    key={`${keyPrefix}-ico-${idx}`}
+                    src={url}
+                    alt=""
+                    className="reading-inline-icon"
+                />
+            ) : null;
+        });
+    };
+
     /** 把落在本行区间内的荧光笔/划线切成 <mark>/<u> 片段 */
     const renderLineContent = (item: Extract<TxtPageItem, { kind: "line" }>) => {
         const lineStart = item.charStart ?? 0;
@@ -870,14 +920,16 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         const hits = (marksByParagraph.get(`${item.chapterIndex}:${item.paragraphIndex}`) || [])
             .filter(mark => mark.start < lineEnd && mark.end > lineStart)
             .sort((a, b) => a.start - b.start);
-        if (hits.length === 0) return item.text;
+        if (hits.length === 0) return renderTextSliceWithIcons(item.text, `L${lineStart}`);
 
         const nodes: React.ReactNode[] = [];
         let cursor = lineStart;
         hits.forEach((mark, i) => {
             const from = Math.max(cursor, mark.start);
             const to = Math.min(lineEnd, mark.end);
-            if (from > cursor) nodes.push(item.text.slice(cursor - lineStart, from - lineStart));
+            if (from > cursor) {
+                nodes.push(renderTextSliceWithIcons(item.text.slice(cursor - lineStart, from - lineStart), `pre-${i}`));
+            }
             if (to > from) {
                 nodes.push(
                     <span
@@ -887,13 +939,15 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                         data-author={mark.authorType === "character" ? "character" : "user"}
                         data-mark-id={mark.id}
                     >
-                        {item.text.slice(from - lineStart, to - lineStart)}
+                        {renderTextSliceWithIcons(item.text.slice(from - lineStart, to - lineStart), `mk-${i}`)}
                     </span>,
                 );
                 cursor = to;
             }
         });
-        if (cursor < lineEnd) nodes.push(item.text.slice(cursor - lineStart));
+        if (cursor < lineEnd) {
+            nodes.push(renderTextSliceWithIcons(item.text.slice(cursor - lineStart), "tail"));
+        }
         return nodes;
     };
 

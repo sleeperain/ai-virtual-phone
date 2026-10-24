@@ -1,6 +1,10 @@
 // lib/reading-parser.ts — File parsing for TXT, EPUB, PDF.
 
-import { buildReadingImageMarker, parseReadingImageMarker } from "./reading-inline-image";
+import {
+    buildReadingImageMarker,
+    buildReadingInlineIconMarker,
+    parseReadingImageMarker,
+} from "./reading-inline-image";
 import { READING_INLINE_IMAGE_MAX_SIZE, compressReadingImage } from "./reading-image";
 
 // ── PDF.js CDN loader ──
@@ -694,9 +698,17 @@ export async function parseEpubFile(arrayBuffer: ArrayBuffer, fileName?: string)
             });
             finalParagraphs = paragraphs.map((paragraph) => {
                 const marker = parseReadingImageMarker(paragraph);
-                if (!marker) return paragraph;
-                const globalIndex = localToGlobal.get(marker.index);
-                return globalIndex === undefined ? "" : buildReadingImageMarker(globalIndex);
+                if (marker) {
+                    const globalIndex = localToGlobal.get(marker.index);
+                    return globalIndex === undefined ? "" : buildReadingImageMarker(globalIndex);
+                }
+                if (paragraph.includes("\uFFFCico:")) {
+                    return paragraph.replace(/\uFFFCico:(\d+)\uFFFC/g, (_, rawIdx) => {
+                        const globalIndex = localToGlobal.get(Number(rawIdx));
+                        return globalIndex === undefined ? "" : buildReadingInlineIconMarker(globalIndex);
+                    });
+                }
+                return paragraph;
             }).filter((paragraph) => paragraph !== "");
             if (finalParagraphs.length === 0) continue;
         }
@@ -708,6 +720,19 @@ export async function parseEpubFile(arrayBuffer: ArrayBuffer, fileName?: string)
         });
     }
 
+    // 统计哪些图片被当成了行内角标/小图标使用
+    const usedAsInlineIcon = new Set<number>();
+    for (const chapter of chapters) {
+        for (const paragraph of chapter.paragraphs) {
+            if (!paragraph.includes("\uFFFCico:")) continue;
+            const re = /\uFFFCico:(\d+)\uFFFC/g;
+            let m: RegExpExecArray | null;
+            while ((m = re.exec(paragraph)) !== null) {
+                usedAsInlineIcon.add(Number(m[1]));
+            }
+        }
+    }
+
     // 7. 取出插图的字节，顺便量一下原图尺寸（翻页分页要用它算这张图占多高）
     const images: ReadingParsedImage[] = [];
     const droppedImages = new Set<number>();
@@ -715,9 +740,18 @@ export async function parseEpubFile(arrayBuffer: ArrayBuffer, fileName?: string)
         const data = await zip.file(imagePaths[index])?.async("blob");
         if (!data || data.size === 0) { droppedImages.add(index); continue; }
         const measured = await measureImageBlob(data);
-        // 1x1 透明占位、角标图标、花纹分隔线之类的小图没有独立成段的阅读价值，
-        // 若当成独立插图渲染会被拉满整行放大
-        if (measured && (measured.width < 120 || measured.height < 80 || (measured.width * measured.height < 14400))) {
+        const isInlineIcon = usedAsInlineIcon.has(index);
+        if (isInlineIcon) {
+            // 行内角标/小图标：只要不是 1x1 透明点就保留原图
+            if (measured && (measured.width <= 2 || measured.height <= 2)) {
+                droppedImages.add(index);
+                continue;
+            }
+            images.push({ index, blob: data, width: measured?.width ?? 0, height: measured?.height ?? 0 });
+            continue;
+        }
+        // 独立成段的 1x1 透明占位或极小装饰点没有独立成段的价值
+        if (measured && (measured.width < 24 || measured.height < 24)) {
             droppedImages.add(index);
             continue;
         }
@@ -730,10 +764,18 @@ export async function parseEpubFile(arrayBuffer: ArrayBuffer, fileName?: string)
         for (const chapter of chapters) {
             chapter.paragraphs = chapter.paragraphs.map((paragraph) => {
                 const marker = parseReadingImageMarker(paragraph);
-                if (!marker) return paragraph;
-                if (droppedImages.has(marker.index)) return "";
-                const image = sizeByIndex.get(marker.index);
-                return buildReadingImageMarker(marker.index, image?.width ?? 0, image?.height ?? 0);
+                if (marker) {
+                    if (droppedImages.has(marker.index)) return "";
+                    const image = sizeByIndex.get(marker.index);
+                    return buildReadingImageMarker(marker.index, image?.width ?? 0, image?.height ?? 0);
+                }
+                if (paragraph.includes("\uFFFCico:")) {
+                    return paragraph.replace(/\uFFFCico:(\d+)\uFFFC/g, (full, rawIdx) => {
+                        const idx = Number(rawIdx);
+                        return droppedImages.has(idx) ? "" : full;
+                    }).trim();
+                }
+                return paragraph;
             }).filter((paragraph) => paragraph !== "");
         }
     }
@@ -788,7 +830,7 @@ const BLOCK_TAGS = new Set([
  *  ——那样既会显示成一个怪符号，也会被当成正文送进模型。 */
 function pushParagraphWithImages(paragraphs: string[], text: string): void {
     if (!text) return;
-    if (!text.includes("\uFFFC")) { paragraphs.push(text); return; }
+    if (!text.includes("\uFFFCimg:")) { paragraphs.push(text); return; }
     for (const piece of text.split(/(\uFFFCimg:\d+(?::\d+x\d+)?)/)) {
         const trimmed = piece.trim();
         if (trimmed) paragraphs.push(trimmed);
@@ -856,10 +898,14 @@ function extractTextFromDom(html: string): { title: string; paragraphs: string[]
             : 0;
         const isInlineInTextParagraph = Boolean(blockContainer && siblingTextLen > 0 && (inSupOrSub || inNoterefLink || hasNoteHint || hasSmallExplicitSize));
 
-        if (inSupOrSub || inNoterefLink || hasNoteHint || hasSmallExplicitSize || isInlineInTextParagraph) {
-            const replacement = doc.createTextNode(alt || (inSupOrSub || inNoterefLink ? "[注]" : ""));
+        // 只要图片嵌在有文字的正文块（如 <p>/<li>/<h1> 等）内部，或者属于上标/注释链接/小图标，
+        // 就保留为行内小图片（\uFFFCico:N\uFFFC），既保留原书角标图片本身，又不会断段或被放大成整行插图
+        const isEmbeddedInTextBlock = Boolean(blockContainer && siblingTextLen > 0 && !node.closest("figure"));
+        if (inSupOrSub || inNoterefLink || hasNoteHint || hasSmallExplicitSize || isInlineInTextParagraph || isEmbeddedInTextBlock) {
+            const replacement = doc.createTextNode(buildReadingInlineIconMarker(imageSrcs.length));
             const target = node.tagName.toLowerCase() === "image" ? (node.closest("svg") || node) : node;
             target.replaceWith(replacement);
+            imageSrcs.push(src.trim());
             return;
         }
 
