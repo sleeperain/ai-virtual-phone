@@ -8127,3 +8127,328 @@
   font-size: calc(10.8px*var(--app-text-scale,1));
   color: var(--reading-warm-ink, #111);
 }
+
+/* ══ 阅读：按句拆分单点态 & 上图标下文字菜单栏 ══ */
+.reading-sentence {
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background-color 0.14s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.reading-sentence.is-selected {
+  background-color: rgba(138, 90, 43, 0.14);
+}
+
+.reading-sentence-menu {
+  position: fixed;
+  z-index: 65;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: 12px;
+  background: rgba(38, 32, 24, 0.95);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  max-width: calc(100vw - 16px);
+}
+.reading-sentence-menu--above {
+  transform: translate(-50%, -100%);
+}
+.reading-sentence-menu-btn {
+  border: 0;
+  background: transparent;
+  color: #fdf8ee;
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 9px;
+  min-width: 44px;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.reading-sentence-menu-btn svg {
+  width: 17px;
+  height: 17px;
+  flex-shrink: 0;
+  stroke: currentColor;
+}
+.reading-sentence-menu-btn span {
+  font-size: calc(10.5px * var(--app-text-scale, 1));
+  line-height: 1.15;
+  letter-spacing: 0.02em;
+}
+.reading-sentence-menu-btn.is-active {
+  color: #fae389;
+  background: rgba(255, 255, 255, 0.1);
+}
+.reading-sentence-menu-btn:active {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* ══ 阅读：段评（💬）弹窗与嵌套回复 ══ */
+.reading-comment-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  background: rgba(15, 12, 8, 0.42);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  animation: reading-comment-fade-in 0.18s ease-out;
+}
+@keyframes reading-comment-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.reading-comment-modal {
+  width: 100%;
+  max-width: 520px;
+  max-height: 74vh;
+  background: var(--reading-warm-bg, #fffced);
+  color: var(--reading-warm-ink, #111);
+  border-radius: 20px 20px 0 0;
+  box-shadow: 0 -8px 32px rgba(30, 20, 10, 0.18);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: reading-comment-slide-up 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes reading-comment-slide-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+.reading-comment-modal-header {
+  display: grid;
+  grid-template-columns: 32px 1fr 32px;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(45, 35, 28, 0.08);
+  flex-shrink: 0;
+}
+.reading-comment-modal-header-spacer {
+  width: 32px;
+  height: 32px;
+}
+.reading-comment-modal-title {
+  text-align: center;
+  font-size: calc(14px * var(--app-text-scale, 1));
+  font-weight: 600;
+  color: var(--reading-warm-ink, #111);
+}
+.reading-comment-modal-refresh {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--reading-warm-ink-secondary, #666);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+.reading-comment-modal-refresh:active:not(:disabled) {
+  background: rgba(45, 35, 28, 0.08);
+}
+.reading-comment-modal-refresh:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+.reading-comment-modal-refresh.is-spinning svg {
+  animation: reading-comment-spin 0.9s linear infinite;
+}
+@keyframes reading-comment-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.reading-comment-modal-list {
+  flex: 1 1 auto;
+  min-height: 160px;
+  max-height: 54vh;
+  overflow-y: auto;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.reading-comment-modal-empty {
+  padding: 36px 18px;
+  text-align: center;
+  font-size: calc(12.5px * var(--app-text-scale, 1));
+  color: var(--reading-warm-ink-tertiary, #999);
+  line-height: 1.6;
+}
+.reading-comment-thread {
+  display: flex;
+  flex-direction: column;
+}
+.reading-comment-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.reading-comment-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: rgba(138, 90, 43, 0.14);
+  color: var(--reading-warm-brown, #8a5a2b);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(13px * var(--app-text-scale, 1));
+  font-weight: 600;
+}
+.reading-comment-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.reading-comment-avatar--small {
+  width: 22px;
+  height: 22px;
+  font-size: calc(10px * var(--app-text-scale, 1));
+}
+.reading-comment-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.reading-comment-name-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 20px;
+}
+.reading-comment-name {
+  font-size: calc(12.5px * var(--app-text-scale, 1));
+  font-weight: 600;
+  color: var(--reading-warm-ink-secondary, #555);
+  line-height: 1.3;
+}
+.reading-comment-reply-to {
+  font-weight: 400;
+  color: var(--reading-warm-ink-tertiary, #999);
+  font-size: calc(11.5px * var(--app-text-scale, 1));
+}
+.reading-comment-delete-btn {
+  border: 0;
+  background: transparent;
+  padding: 0 2px;
+  font-size: calc(10.5px * var(--app-text-scale, 1));
+  color: var(--reading-warm-ink-tertiary, #999);
+  cursor: pointer;
+}
+.reading-comment-content {
+  font-size: calc(13.5px * var(--app-text-scale, 1));
+  line-height: 1.55;
+  color: var(--reading-warm-ink, #111);
+  white-space: pre-wrap;
+  word-break: break-word;
+  text-align: left;
+}
+.reading-comment-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 2px;
+}
+.reading-comment-time {
+  font-size: calc(11px * var(--app-text-scale, 1));
+  color: var(--reading-warm-ink-tertiary, #999);
+}
+.reading-comment-reply-btn {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: calc(11px * var(--app-text-scale, 1));
+  font-weight: 500;
+  color: var(--reading-warm-brown, #8a5a2b);
+  cursor: pointer;
+}
+/* 回复列表位于主评论 reading-comment-main 内，天然与第一行头像右侧的昵称左对齐 */
+.reading-comment-replies {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.reading-comment-reply-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.reading-comment-modal-footer {
+  border-top: 1px solid rgba(45, 35, 28, 0.08);
+  padding: 10px 14px calc(12px + env(safe-area-inset-bottom, 0px));
+  background: rgba(255, 255, 255, 0.65);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.reading-comment-reply-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: calc(11px * var(--app-text-scale, 1));
+  color: var(--reading-warm-ink-secondary, #666);
+  padding: 2px 4px;
+}
+.reading-comment-reply-banner button {
+  border: 0;
+  background: transparent;
+  color: var(--reading-warm-brown, #8a5a2b);
+  font-size: calc(11px * var(--app-text-scale, 1));
+  cursor: pointer;
+  padding: 0 4px;
+}
+.reading-comment-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.reading-comment-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(45, 35, 28, 0.14);
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--reading-warm-ink, #111);
+  font-size: calc(13px * var(--app-text-scale, 1));
+  outline: none;
+}
+.reading-comment-send-btn {
+  flex-shrink: 0;
+  height: 36px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--reading-warm-brown, #8a5a2b);
+  color: #fff;
+  font-size: calc(12.5px * var(--app-text-scale, 1));
+  font-weight: 600;
+  cursor: pointer;
+}
+.reading-comment-send-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

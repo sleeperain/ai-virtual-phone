@@ -76,6 +76,13 @@ export type ReadingAnnotation = {
     /** quote 在所属段落中的字符区间（含头不含尾）。定位不到时不写。 */
     quoteStart?: number;
     quoteEnd?: number;
+    /** 区分「段评」（显示在段尾💬弹窗里，支持嵌套回复）与「句子批注」（显示在被高亮/划线句子末字所在行下方）。
+     *  缺省时：若无 quoteEnd 或非句子批注，亦可兼容展示。 */
+    annotationKind?: "note" | "comment";
+    /** 段评回复的目标评论 ID（顶层段评不填；回复某条段评或回复时填被回复的评论 ID） */
+    parentId?: string;
+    /** 被回复人的昵称（方便展示与构建上下文） */
+    replyToName?: string;
 };
 
 /** 荧光笔 / 划线。按「段落内字符区间」锚定；纯阅读标记，不进记忆。 */

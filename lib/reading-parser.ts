@@ -853,6 +853,17 @@ function extractTextFromDom(html: string): { title: string; paragraphs: string[]
     if (!body) return null;
 
     body.querySelectorAll("script, style, nav[*|type='toc'], nav.toc").forEach((node) => node.remove());
+    // 清理 EPUB 里单纯写成 <a class="duokan-footnote">note</a> 或 <sup>note</sup> 的注释图标占位文字（通常靠 CSS background-image 显示图标并隐藏文字）
+    body.querySelectorAll("a, sup, sub, span").forEach((el) => {
+        if (el.querySelector("img, image, svg")) return;
+        const raw = (el.textContent || "").trim();
+        if (/^(?:note|footnote|endnote|noteref)$/i.test(raw)) {
+            const clsAndHref = `${el.getAttribute("class") || ""} ${el.getAttribute("epub:type") || ""} ${el.getAttribute("href") || ""}`;
+            if (el.tagName === "SUP" || /(?:note|fn|foot|duokan|zy)/i.test(clsAndHref)) {
+                el.textContent = "〔注〕";
+            }
+        }
+    });
 
     const heading = body.querySelector("h1, h2, h3");
     const title = normalizeInlineText(heading?.textContent || doc.querySelector("title")?.textContent || "");
@@ -892,13 +903,33 @@ function extractTextFromDom(html: string): { title: string; paragraphs: string[]
             || /height\s*:\s*(?:0?\.\d+|1(?:\.\d+)?)\s*(?:em|rem)/i.test(styleAttr);
 
         // 检查是否嵌在一段较长的正文文字中间（两边有非空文字，且不是 figure/div 独立插图容器）
-        const blockContainer = node.closest("p, li, blockquote, h1, h2, h3, h4, h5, h6");
+        const blockContainer = node.closest("p, li, blockquote, h1, h2, h3, h4, h5, h6")
+            || (() => {
+                // 很多 EPUB 用 <div class="para">...文字<img/>文字...</div> 当段落容器（内部没有子块元素）
+                const div = node.closest("div");
+                if (!div) return null;
+                const hasBlockChild = Array.from(div.children).some((c) => BLOCK_TAGS.has(c.tagName));
+                return hasBlockChild ? null : div;
+            })();
         const siblingTextLen = blockContainer
             ? (blockContainer.textContent || "").replace(/\s+/g, "").length
             : 0;
         const isInlineInTextParagraph = Boolean(blockContainer && siblingTextLen > 0 && (inSupOrSub || inNoterefLink || hasNoteHint || hasSmallExplicitSize));
 
-        // 只要图片嵌在有文字的正文块（如 <p>/<li>/<h1> 等）内部，或者属于上标/注释链接/小图标，
+        // 若图片本身或所在的 <a>/<sup> 旁带有被 CSS 隐藏的英文提示文字（如 <a class="duokan-footnote"><img src="note.png"/><span>note</span></a>），
+        // 或图片的 alt 是无意义的 "note"/"footnote"/"注释"，把旁边多余的 "note" 文本节点清掉，避免解析出「note」文字影响观感。
+        const noteWrapper = node.closest("a, sup, sub");
+        if (noteWrapper && (inSupOrSub || inNoterefLink || hasNoteHint)) {
+            Array.from(noteWrapper.childNodes).forEach((child) => {
+                if (child === node || (child instanceof Element && child.contains(node))) return;
+                const txt = (child.textContent || "").trim();
+                if (/^(?:note|footnote|endnote|noteref|注释?|注)$/i.test(txt)) {
+                    child.remove();
+                }
+            });
+        }
+
+        // 只要图片嵌在有文字的正文块（如 <p>/<li>/<h1>/叶子<div> 等）内部，或者属于上标/注释链接/小图标，
         // 就保留为行内小图片（\uFFFCico:N\uFFFC），既保留原书角标图片本身，又不会断段或被放大成整行插图
         const isEmbeddedInTextBlock = Boolean(blockContainer && siblingTextLen > 0 && !node.closest("figure"));
         if (inSupOrSub || inNoterefLink || hasNoteHint || hasSmallExplicitSize || isInlineInTextParagraph || isEmbeddedInTextBlock) {

@@ -32,9 +32,10 @@ import {
 } from "@/lib/reading-memory";
 import { annotationExportFileName, buildAnnotationMarkdown } from "@/lib/reading-export";
 import { downloadFile } from "@/lib/download-utils";
-import { collectSelectionSegments, type ReadingSelectionSegment } from "./reading-selection";
+import { collectSelectionSegments, splitParagraphIntoSentences, type ReadingSelectionSegment } from "./reading-selection";
 import { isUserAnnotation, type ReadingBookmark, type ReadingMark, type ReadingMarkStyle } from "@/lib/reading-types";
-import { generateAnnotationBatch, generateReadingChat, parseReadingDiscussResponse, summarizeReadingRange, type ReadingDiscussAction, type ReadingDiscussContext } from "@/lib/reading-engine";
+import { generateAnnotationBatch, generateParagraphCommentReply, generateReadingChat, parseReadingDiscussResponse, summarizeReadingRange, type ReadingDiscussAction, type ReadingDiscussContext } from "@/lib/reading-engine";
+import { loadReadingProfile, loadReadingProfileAvatar } from "@/lib/reading-profile";
 import { loadChatMessages, pushChatMessage, deleteChatMessage, editChatMessage, loadChatContacts, createOrGetSession, isReadingDiscussMessage } from "@/lib/chat-storage";
 import type { ChatMessage, ChatSession } from "@/lib/chat-storage";
 import { loadCharacters } from "@/lib/character-storage";
@@ -65,10 +66,35 @@ type TxtPageItem =
     | { kind: "annotation"; annotation: ReadingAnnotation; chapterIndex: number; paragraphIndex: number };
 
 /** 菜单半宽，避免贴着某个点算出来的位置把菜单顶出屏幕 */
-const MENU_HALF_WIDTH = 96;
+const MENU_HALF_WIDTH = 152;
 
 function clampMenuX(centerX: number, width: number): number {
     return Math.min(Math.max(centerX, MENU_HALF_WIDTH), Math.max(MENU_HALF_WIDTH, width - MENU_HALF_WIDTH));
+}
+
+function isSentenceNoteAnnotation(annotation: ReadingAnnotation): boolean {
+    if (annotation.annotationKind === "note") return true;
+    if (annotation.annotationKind === "comment") return false;
+    return typeof annotation.quoteEnd === "number" && annotation.quoteEnd > 0;
+}
+
+function formatCommentTimestamp(iso: string): string {
+    if (!iso) return "";
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return "";
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const hm = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    if (
+        date.getFullYear() === now.getFullYear() &&
+        date.getMonth() === now.getMonth() &&
+        date.getDate() === now.getDate()
+    ) {
+        return hm;
+    }
+    const md = `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${hm}`;
+    if (date.getFullYear() === now.getFullYear()) return md;
+    return `${date.getFullYear()}-${md}`;
 }
 
 /** iOS 的 Copy / Look Up 条出现在选区上方还是下方，UIKit 没有公开规则，
@@ -354,9 +380,38 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     const [summaryBusy, setSummaryBusy] = useState(false);
     const [summaryNote, setSummaryNote] = useState("");
     const [pendingQuote, setPendingQuote] = useState<
-        { text: string; chapterIndex: number; paragraphIndex: number } | null
+        { text: string; chapterIndex: number; paragraphIndex: number; start?: number; end?: number } | null
     >(null);
     const [myAnnotationText, setMyAnnotationText] = useState("");
+    /** 用户单点某一句后弹出的句子菜单 */
+    const [sentenceMenu, setSentenceMenu] = useState<{
+        chapterIndex: number;
+        paragraphIndex: number;
+        start: number;
+        end: number;
+        text: string;
+        x: number;
+        y: number;
+        placeAbove?: boolean;
+    } | null>(null);
+    /** 正在打开的「段评」（💬）弹窗定位 */
+    const [activeParagraphCommentModal, setActiveParagraphCommentModal] = useState<{
+        chapterIndex: number;
+        paragraphIndex: number;
+    } | null>(null);
+    /** 段评弹窗底部输入框内容 */
+    const [paragraphCommentDraft, setParagraphCommentDraft] = useState("");
+    /** 段评弹窗内当前正在回复的目标评论（null 表示直接发段评） */
+    const [paragraphCommentReplyTarget, setParagraphCommentReplyTarget] = useState<{
+        id: string;
+        parentId: string;
+        authorName: string;
+        content: string;
+    } | null>(null);
+    /** 手动触发陪读角色发段评的加载态 */
+    const [generatingParagraphComment, setGeneratingParagraphComment] = useState(false);
+    /** 阅读账号自定义头像 objectURL */
+    const [readingProfileAvatarUrl, setReadingProfileAvatarUrl] = useState<string>("");
     const [immersive, setImmersive] = useState(true);
     const [showCharPicker, setShowCharPicker] = useState(false);
     const [charPickerClosing, setCharPickerClosing] = useState(false);
@@ -578,11 +633,39 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
             return {};
         });
     }, []);
-    // 批注署名用绑定的用户身份，不写死
-    const userDisplayName = useMemo(
-        () => resolveUserIdentity(companionId || undefined, "reading")?.name?.trim() || "我",
+    useEffect(() => {
+        let revoked = false;
+        let url = "";
+        void loadReadingProfileAvatar().then((blob) => {
+            if (revoked || !blob || blob.size === 0) return;
+            url = URL.createObjectURL(blob);
+            setReadingProfileAvatarUrl(url);
+        }).catch(() => {});
+        return () => {
+            revoked = true;
+            if (url) URL.revokeObjectURL(url);
+        };
+    }, []);
+    const userIdentity = useMemo(
+        () => resolveUserIdentity(companionId || undefined, "reading"),
         [companionId],
     );
+    // 批注/段评署名优先用阅读账号昵称或绑定的用户身份，不写死
+    const userDisplayName = useMemo(
+        () => loadReadingProfile().name.trim() || userIdentity?.name?.trim() || "我",
+        [userIdentity],
+    );
+    const userAvatarUrl = readingProfileAvatarUrl || userIdentity?.avatarUrl || "";
+    const characterById = useMemo(() => {
+        const map = new Map<string, Character>();
+        for (const item of enrichedContacts) {
+            map.set(item.characterId, item.char);
+        }
+        for (const ch of loadCharacters()) {
+            if (!map.has(ch.id)) map.set(ch.id, ch);
+        }
+        return map;
+    }, [enrichedContacts]);
     const txtPagesChapterIndex = txtPages[0]?.find((item) => item.kind !== "gap")?.chapterIndex ?? txtPages[0]?.[0]?.chapterIndex;
     const txtPagesReadyForCurrentChapter = !isPdf && !isScrollMode && txtPages.length > 0 && txtPagesChapterIndex === chapterIndex;
     const showTxtLoading = !isPdf && (
@@ -655,22 +738,139 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         });
     }, [chapters]);
 
-    /** 点已有标记：iOS 的系统菜单只在有选区时出现，这里是单纯点击，就近弹自己的菜单 */
+    /** 单点句子或已有标记：弹出句子菜单栏（上方SVG图标 + 正下方按钮文字） */
     const handleSurfaceClick = (e: React.MouseEvent) => {
         const sel = typeof window !== "undefined" ? window.getSelection() : null;
         if (sel && !sel.isCollapsed) return; // 正在选字，交给选字菜单
-        const hit = (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-mark-id]");
-        if (!hit) { setMarkMenu(null); return; }
+        const target = e.target as HTMLElement | null;
+        if (!target) return;
+        if (target.closest(".reading-sentence-menu, .reading-mark-menu, .reading-selection-menu")) return;
+
+        const sentenceHit = target.closest<HTMLElement>("[data-sentence-start]");
+        if (sentenceHit) {
+            const cIdx = Number(sentenceHit.dataset.sentenceChapter);
+            const pIdx = Number(sentenceHit.dataset.sentenceParagraph);
+            const start = Number(sentenceHit.dataset.sentenceStart);
+            const end = Number(sentenceHit.dataset.sentenceEnd);
+            const paragraph = chapters[cIdx]?.paragraphs[pIdx] || "";
+            if (Number.isFinite(cIdx) && Number.isFinite(pIdx) && Number.isFinite(start) && Number.isFinite(end) && end > start) {
+                const rawSlice = paragraph.slice(start, end);
+                const cleanText = stripReadingInlineIconMarkers(rawSlice).trim();
+                const rect = sentenceHit.getBoundingClientRect();
+                const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 375;
+                const viewportHeight = typeof window !== "undefined" ? window.innerHeight : 812;
+                const placeAbove = rect.bottom + 84 > viewportHeight - 40;
+                setMarkMenu(null);
+                setSentenceMenu((prev) => {
+                    if (
+                        prev &&
+                        prev.chapterIndex === cIdx &&
+                        prev.paragraphIndex === pIdx &&
+                        prev.start === start &&
+                        prev.end === end
+                    ) {
+                        return null;
+                    }
+                    return {
+                        chapterIndex: cIdx,
+                        paragraphIndex: pIdx,
+                        start,
+                        end,
+                        text: cleanText || rawSlice,
+                        x: clampMenuX(rect.left + rect.width / 2, viewportWidth),
+                        y: placeAbove ? Math.max(56, rect.top - 8) : rect.bottom + 8,
+                        placeAbove,
+                    };
+                });
+                return;
+            }
+        }
+
+        const hit = target.closest<HTMLElement>("[data-mark-id]");
+        if (!hit) {
+            setMarkMenu(null);
+            setSentenceMenu(null);
+            return;
+        }
         const mark = marks.find(item => item.id === hit.dataset.markId);
         if (!mark) return;
         const rect = hit.getBoundingClientRect();
         const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 375;
-        setMarkMenu({ mark, x: clampMenuX(rect.left + rect.width / 2, viewportWidth), y: rect.bottom });
+        const viewportHeight = typeof window !== "undefined" ? window.innerHeight : 812;
+        const placeAbove = rect.bottom + 84 > viewportHeight - 40;
+        const paragraph = chapters[mark.chapterIndex]?.paragraphs[mark.paragraphIndex] || "";
+        const rawSlice = paragraph.slice(mark.start, mark.end) || mark.text;
+        setSentenceMenu({
+            chapterIndex: mark.chapterIndex,
+            paragraphIndex: mark.paragraphIndex,
+            start: mark.start,
+            end: mark.end,
+            text: stripReadingInlineIconMarkers(rawSlice).trim() || mark.text,
+            x: clampMenuX(rect.left + rect.width / 2, viewportWidth),
+            y: placeAbove ? Math.max(56, rect.top - 8) : rect.bottom + 8,
+            placeAbove,
+        });
     };
 
     const openShareDialog = (mark: ReadingMark) => {
         setShareTarget(readingMarkGroup(marks, mark));
         setMarkMenu(null);
+        setSentenceMenu(null);
+    };
+
+    const toggleSentenceMark = (style: ReadingMarkStyle) => {
+        if (!sentenceMenu) return;
+        const { chapterIndex: cIdx, paragraphIndex: pIdx, start, end } = sentenceMenu;
+        const overlappingSameStyle = marks.filter(
+            (m) =>
+                m.chapterIndex === cIdx &&
+                m.paragraphIndex === pIdx &&
+                m.style === style &&
+                m.start < end &&
+                m.end > start,
+        );
+        if (overlappingSameStyle.length > 0) {
+            // 已有同类型标记 → 取消高亮 / 取消划线
+            const toRemoveIds = new Set<string>();
+            for (const m of overlappingSameStyle) {
+                for (const gm of readingMarkGroup(marks, m)) {
+                    toRemoveIds.add(gm.id);
+                }
+            }
+            toRemoveIds.forEach((id) => deleteReadingMark(book.id, id));
+            setMarks((prev) => prev.filter((item) => !toRemoveIds.has(item.id)));
+            return;
+        }
+        // 如果该句已有另一种样式（如高亮改划线），先移除旧样式再添加新样式，保持清晰
+        const overlappingOtherStyle = marks.filter(
+            (m) =>
+                m.chapterIndex === cIdx &&
+                m.paragraphIndex === pIdx &&
+                m.style !== style &&
+                m.start === start &&
+                m.end === end,
+        );
+        if (overlappingOtherStyle.length > 0) {
+            const otherIds = new Set(overlappingOtherStyle.map((m) => m.id));
+            otherIds.forEach((id) => deleteReadingMark(book.id, id));
+            setMarks((prev) => prev.filter((item) => !otherIds.has(item.id)));
+        }
+        const paragraphText = chapters[cIdx]?.paragraphs[pIdx] || "";
+        const created: ReadingMark = {
+            id: `mk_${Date.now()}_0_${Math.random().toString(36).slice(2, 6)}`,
+            bookId: book.id,
+            chapterIndex: cIdx,
+            paragraphIndex: pIdx,
+            start,
+            end,
+            text: stripReadingInlineIconMarkers(paragraphText.slice(start, end)) || sentenceMenu.text,
+            style,
+            createdAt: new Date().toISOString(),
+            authorType: "user",
+        };
+        saveReadingMark(created);
+        setMarks((prev) => [...prev, created]);
+        // 注意：点击「高亮」或「划线」后不关闭 sentenceMenu，以便按钮立即变为「取消高亮/取消划线」并显示插入的「批注」按钮
     };
 
     const removeMark = (mark: ReadingMark) => {
@@ -784,6 +984,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     const saveMyAnnotation = async () => {
         const text = myAnnotationText.trim();
         if (!text || !pendingQuote) return;
+        const hasRange = typeof pendingQuote.end === "number" && pendingQuote.end > 0;
         const annotation: ReadingAnnotation = {
             id: `ann_user_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
             bookId: book.id,
@@ -791,22 +992,140 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
             paragraphIndex: pendingQuote.paragraphIndex,
             // 用户批注仍记录当前共读的角色，便于「这条是写给谁看的」
             characterId: companionId || "",
-            characterName: "",
+            characterName: userDisplayName,
             content: text,
             createdAt: new Date().toISOString(),
             authorType: "user",
             quote: pendingQuote.text,
+            ...(typeof pendingQuote.start === "number" ? { quoteStart: pendingQuote.start } : {}),
+            ...(hasRange ? { quoteEnd: pendingQuote.end, annotationKind: "note" as const } : {}),
         };
         await saveAnnotation(annotation);
         appendReadingAnnotationMemos(toAnnotationMemos([annotation]));
         setAnnotations(prev => [...prev, annotation]);
-        setOpenAnnotationParagraphs(prev => ({
-            ...prev,
-            [`${annotation.chapterIndex}:${annotation.paragraphIndex}`]: true,
-        }));
         setShowMyAnnotation(false);
         setMyAnnotationText("");
         setPendingQuote(null);
+        setSentenceMenu(null);
+    };
+
+    const openParagraphCommentDialog = useCallback((cIdx: number, pIdx: number) => {
+        setActiveParagraphCommentModal({ chapterIndex: cIdx, paragraphIndex: pIdx });
+        setParagraphCommentReplyTarget(null);
+        setParagraphCommentDraft("");
+        setSentenceMenu(null);
+    }, []);
+
+    const handleSendParagraphComment = async () => {
+        if (!activeParagraphCommentModal) return;
+        const text = paragraphCommentDraft.trim();
+        if (!text) return;
+        const { chapterIndex: cIdx, paragraphIndex: pIdx } = activeParagraphCommentModal;
+        const annotation: ReadingAnnotation = {
+            id: `ann_user_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            bookId: book.id,
+            chapterIndex: cIdx,
+            paragraphIndex: pIdx,
+            characterId: companionId || "",
+            characterName: userDisplayName,
+            content: text,
+            createdAt: new Date().toISOString(),
+            authorType: "user",
+            annotationKind: "comment",
+            ...(paragraphCommentReplyTarget
+                ? {
+                    parentId: paragraphCommentReplyTarget.parentId,
+                    replyToName: paragraphCommentReplyTarget.authorName,
+                }
+                : {}),
+        };
+        await saveAnnotation(annotation);
+        appendReadingAnnotationMemos(toAnnotationMemos([annotation]));
+        setAnnotations((prev) => [...prev, annotation]);
+        setParagraphCommentDraft("");
+        setParagraphCommentReplyTarget(null);
+    };
+
+    const handleRefreshCompanionParagraphComment = async () => {
+        if (!activeParagraphCommentModal || generatingParagraphComment) return;
+        if (!companionId || !companion) {
+            setAnnotationError("请先在左下角选择陪读角色");
+            return;
+        }
+        const { chapterIndex: cIdx, paragraphIndex: pIdx } = activeParagraphCommentModal;
+        const chapter = chapters[cIdx];
+        const rawParagraph = chapter?.paragraphs[pIdx] || "";
+        const paragraphText = stripReadingInlineIconMarkers(rawParagraph).trim();
+        if (!paragraphText) return;
+
+        const prevPara = pIdx > 0 ? stripReadingInlineIconMarkers(chapter?.paragraphs[pIdx - 1] || "").trim() : "";
+        const nextPara = pIdx + 1 < (chapter?.paragraphs.length || 0) ? stripReadingInlineIconMarkers(chapter?.paragraphs[pIdx + 1] || "").trim() : "";
+        const surroundingText = [prevPara, nextPara].filter(Boolean).join("\n");
+
+        const existingComments = annotations
+            .filter(
+                (a) =>
+                    a.chapterIndex === cIdx &&
+                    a.paragraphIndex === pIdx &&
+                    !isSentenceNoteAnnotation(a),
+            )
+            .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+            .map((a) => ({
+                authorName: isUserAnnotation(a) ? userDisplayName : (a.characterName || companion.name),
+                isUser: isUserAnnotation(a),
+                content: a.content,
+                replyToName: a.replyToName,
+            }));
+
+        setGeneratingParagraphComment(true);
+        setAnnotationError(null);
+        try {
+            const replyText = await generateParagraphCommentReply({
+                book,
+                chapterTitle: chapter?.title || book.title,
+                paragraphIndex: pIdx,
+                paragraphText,
+                surroundingText,
+                existingComments,
+                characterId: companionId,
+                replyTarget: paragraphCommentReplyTarget
+                    ? {
+                        id: paragraphCommentReplyTarget.id,
+                        authorName: paragraphCommentReplyTarget.authorName,
+                        content: paragraphCommentReplyTarget.content,
+                    }
+                    : undefined,
+            });
+            const newComment: ReadingAnnotation = {
+                id: `ra_cmt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                bookId: book.id,
+                chapterIndex: cIdx,
+                paragraphIndex: pIdx,
+                characterId: companionId,
+                characterName: companion.name,
+                content: replyText,
+                createdAt: new Date().toISOString(),
+                authorType: "character",
+                annotationKind: "comment",
+                ...(paragraphCommentReplyTarget
+                    ? {
+                        parentId: paragraphCommentReplyTarget.parentId,
+                        replyToName: paragraphCommentReplyTarget.authorName,
+                    }
+                    : {}),
+            };
+            await saveAnnotation(newComment);
+            appendReadingAnnotationMemos(toAnnotationMemos([newComment]));
+            setAnnotations((prev) => [...prev, newComment]);
+            if (paragraphCommentReplyTarget) {
+                setParagraphCommentReplyTarget(null);
+            }
+        } catch (err) {
+            console.error("[Reading] Companion paragraph comment error:", err);
+            setAnnotationError(`段评生成失败: ${err instanceof Error ? err.message : String(err)}`);
+        } finally {
+            setGeneratingParagraphComment(false);
+        }
     };
 
     /** 手动改批注。记忆区那条要一起改，否则角色嘴上记得的还是旧话。 */
@@ -913,48 +1232,156 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         });
     };
 
-    /** 把落在本行区间内的荧光笔/划线切成 <mark>/<u> 片段 */
-    const renderLineContent = (item: Extract<TxtPageItem, { kind: "line" }>) => {
-        const lineStart = item.charStart ?? 0;
-        const lineEnd = lineStart + item.text.length;
-        const hits = (marksByParagraph.get(`${item.chapterIndex}:${item.paragraphIndex}`) || [])
-            .filter(mark => mark.start < lineEnd && mark.end > lineStart)
-            .sort((a, b) => a.start - b.start);
-        if (hits.length === 0) return renderTextSliceWithIcons(item.text, `L${lineStart}`);
+    /** 缓存每个段落按句末标点拆分出的单句列表，供单点句子交互使用 */
+    const sentencesByParagraph = useMemo(() => {
+        const map = new Map<string, ReturnType<typeof splitParagraphIntoSentences>>();
+        for (const ch of chapters) {
+            ch.paragraphs.forEach((p, pIdx) => {
+                if (!p || parseReadingImageMarker(p)) return;
+                map.set(`${ch.index}:${pIdx}`, splitParagraphIntoSentences(p));
+            });
+        }
+        return map;
+    }, [chapters]);
 
+    /** 把一段范围 [sliceFrom, sliceTo) 内部的高亮/划线渲染出来 */
+    const renderRangeWithMarks = (
+        lineText: string,
+        lineStart: number,
+        sliceFrom: number,
+        sliceTo: number,
+        paragraphMarks: ReadingMark[],
+        keyPrefix: string,
+    ): React.ReactNode => {
+        const hits = paragraphMarks
+            .filter((mark) => mark.start < sliceTo && mark.end > sliceFrom)
+            .sort((a, b) => a.start - b.start);
+        if (hits.length === 0) {
+            return renderTextSliceWithIcons(lineText.slice(sliceFrom - lineStart, sliceTo - lineStart), keyPrefix);
+        }
         const nodes: React.ReactNode[] = [];
-        let cursor = lineStart;
+        let cursor = sliceFrom;
         hits.forEach((mark, i) => {
             const from = Math.max(cursor, mark.start);
-            const to = Math.min(lineEnd, mark.end);
+            const to = Math.min(sliceTo, mark.end);
             if (from > cursor) {
-                nodes.push(renderTextSliceWithIcons(item.text.slice(cursor - lineStart, from - lineStart), `pre-${i}`));
+                nodes.push(
+                    renderTextSliceWithIcons(
+                        lineText.slice(cursor - lineStart, from - lineStart),
+                        `${keyPrefix}-pre-${i}`,
+                    ),
+                );
             }
             if (to > from) {
                 nodes.push(
                     <span
-                        key={`${mark.id}-${i}`}
+                        key={`${keyPrefix}-${mark.id}-${i}`}
                         className="reading-mark"
                         data-style={mark.style}
                         data-author={mark.authorType === "character" ? "character" : "user"}
                         data-mark-id={mark.id}
                     >
-                        {renderTextSliceWithIcons(item.text.slice(from - lineStart, to - lineStart), `mk-${i}`)}
+                        {renderTextSliceWithIcons(
+                            lineText.slice(from - lineStart, to - lineStart),
+                            `${keyPrefix}-mk-${i}`,
+                        )}
+                    </span>,
+                );
+                cursor = to;
+            }
+        });
+        if (cursor < sliceTo) {
+            nodes.push(
+                renderTextSliceWithIcons(
+                    lineText.slice(cursor - lineStart, sliceTo - lineStart),
+                    `${keyPrefix}-tail`,
+                ),
+            );
+        }
+        return nodes;
+    };
+
+    /** 按「。」「？」「！」拆分出的句子包裹每行正文，并把落在本行区间内的荧光笔/划线渲染为片段 */
+    const renderLineContent = (item: Extract<TxtPageItem, { kind: "line" }>) => {
+        const lineStart = item.charStart ?? 0;
+        const lineEnd = lineStart + item.text.length;
+        const pKey = `${item.chapterIndex}:${item.paragraphIndex}`;
+        const paragraphMarks = marksByParagraph.get(pKey) || [];
+        const sentenceSpans = (sentencesByParagraph.get(pKey) || []).filter(
+            (span) => span.start < lineEnd && span.end > lineStart,
+        );
+        if (sentenceSpans.length === 0) {
+            return renderRangeWithMarks(item.text, lineStart, lineStart, lineEnd, paragraphMarks, `L${lineStart}`);
+        }
+
+        const nodes: React.ReactNode[] = [];
+        let cursor = lineStart;
+        sentenceSpans.forEach((span, idx) => {
+            const from = Math.max(cursor, span.start);
+            const to = Math.min(lineEnd, span.end);
+            if (from > cursor) {
+                nodes.push(
+                    renderRangeWithMarks(
+                        item.text,
+                        lineStart,
+                        cursor,
+                        from,
+                        paragraphMarks,
+                        `L${lineStart}-gap-${idx}`,
+                    ),
+                );
+            }
+            if (to > from) {
+                const isSelectedSentence =
+                    sentenceMenu !== null &&
+                    sentenceMenu.chapterIndex === item.chapterIndex &&
+                    sentenceMenu.paragraphIndex === item.paragraphIndex &&
+                    sentenceMenu.start === span.start &&
+                    sentenceMenu.end === span.end;
+                nodes.push(
+                    <span
+                        key={`sent-${span.start}-${idx}`}
+                        className={`reading-sentence${isSelectedSentence ? " is-selected" : ""}`}
+                        data-sentence-chapter={item.chapterIndex}
+                        data-sentence-paragraph={item.paragraphIndex}
+                        data-sentence-start={span.start}
+                        data-sentence-end={span.end}
+                        data-no-nav="true"
+                    >
+                        {renderRangeWithMarks(
+                            item.text,
+                            lineStart,
+                            from,
+                            to,
+                            paragraphMarks,
+                            `L${lineStart}-s-${idx}`,
+                        )}
                     </span>,
                 );
                 cursor = to;
             }
         });
         if (cursor < lineEnd) {
-            nodes.push(renderTextSliceWithIcons(item.text.slice(cursor - lineStart), "tail"));
+            nodes.push(
+                renderRangeWithMarks(
+                    item.text,
+                    lineStart,
+                    cursor,
+                    lineEnd,
+                    paragraphMarks,
+                    `L${lineStart}-end`,
+                ),
+            );
         }
         return nodes;
     };
 
-    const renderLine = (item: Extract<TxtPageItem, { kind: "line" }>, key: number) => {
+    const renderLine = (item: Extract<TxtPageItem, { kind: "line" }>, key: number | string) => {
         const bubbleCount = item.annotationCount ?? 0;
-        const pKey = `${item.chapterIndex}:${item.paragraphIndex}`;
-        const isBubbleOpen = Boolean(openAnnotationParagraphs[pKey]);
+        const isModalOpen =
+            activeParagraphCommentModal !== null &&
+            activeParagraphCommentModal.chapterIndex === item.chapterIndex &&
+            activeParagraphCommentModal.paragraphIndex === item.paragraphIndex;
         return (
             <p
                 key={key}
@@ -969,16 +1396,16 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                         type="button"
                         className="reading-annotation-bubble"
                         data-count={bubbleCount}
-                        data-open={isBubbleOpen ? "" : undefined}
+                        data-open={isModalOpen ? "" : undefined}
                         data-no-nav="true"
-                        aria-label={isBubbleOpen ? `收起${bubbleCount}条批注` : `展开${bubbleCount}条批注`}
-                        aria-expanded={isBubbleOpen}
+                        aria-label={`查看${bubbleCount}条段评`}
+                        aria-expanded={isModalOpen}
                         style={{ ["--bubble-count" as "--bubble-count"]: `"${bubbleCount}"` } as CSSProperties}
                         onPointerDown={(e) => e.stopPropagation()}
                         onPointerUp={(e) => e.stopPropagation()}
                         onClick={(e) => {
                             e.stopPropagation();
-                            toggleParagraphAnnotationBubble(item.chapterIndex, item.paragraphIndex);
+                            openParagraphCommentDialog(item.chapterIndex, item.paragraphIndex);
                         }}
                     >
                         <svg viewBox="3 2 29 22" aria-hidden="true">
@@ -2487,6 +2914,10 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                 return;
             }
             const paragraphAnnotations = annotationMap.get(index) || [];
+            // 句子批注（显示在被高亮/划线句子末字所在行下方）与段评（显示在段末💬气泡弹窗内）拆分
+            const sentenceNotes = paragraphAnnotations.filter(isSentenceNoteAnnotation);
+            const paragraphComments = paragraphAnnotations.filter((a) => !isSentenceNoteAnnotation(a));
+            const insertedNoteIds = new Set<string>();
             const segments = paragraph.split("\n");
             // 段落内的字符游标：wrapTextToLines 不裁剪字符，各行拼接等于原段落，
             // 所以逐行累加长度就能得到每行在段落中的起始偏移（荧光笔/划线按此定位）。
@@ -2497,6 +2928,8 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                 const wrappedLines = wrapTextToLines(segment, maxWidth, ctx, shouldIndent ? indentWidth : 0);
                 wrappedLines.forEach((line, lineIndex) => {
                     const isLastLine = isLastSegment && lineIndex === wrappedLines.length - 1;
+                    const lineStart = charCursor;
+                    const lineEnd = lineStart + line.length;
                     tokens.push({
                         kind: "line",
                         text: line,
@@ -2504,17 +2937,28 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                         paragraphIndex: index,
                         indent: shouldIndent && lineIndex === 0,
                         segEnd: lineIndex === wrappedLines.length - 1,
-                        charStart: charCursor,
-                        ...(isLastLine && paragraphAnnotations.length > 0 ? { annotationCount: paragraphAnnotations.length } : {}),
+                        charStart: lineStart,
+                        ...(isLastLine && paragraphComments.length > 0 ? { annotationCount: paragraphComments.length } : {}),
                     });
+                    // 找出被高亮/划线句子最末字落在当前行的批注，紧贴本行正下方渲染
+                    for (const note of sentenceNotes) {
+                        const targetEnd = typeof note.quoteEnd === "number" ? note.quoteEnd : paragraph.length;
+                        if (
+                            !insertedNoteIds.has(note.id) &&
+                            ((targetEnd > lineStart && targetEnd <= lineEnd) || (isLastLine && targetEnd > lineEnd))
+                        ) {
+                            insertedNoteIds.add(note.id);
+                            tokens.push({ kind: "annotation", annotation: note, chapterIndex, paragraphIndex: index });
+                        }
+                    }
                     charCursor += line.length;
                 });
                 if (segmentIndex < segments.length - 1) charCursor += 1; // 被 split 掉的 \n
                 if (segmentIndex < segments.length - 1) tokens.push({ kind: "gap", chapterIndex, paragraphIndex: index });
             });
-            if (paragraphAnnotations.length > 0 && openAnnotationParagraphs[`${chapterIndex}:${index}`]) {
-                for (const annotation of paragraphAnnotations) {
-                    tokens.push({ kind: "annotation", annotation, chapterIndex, paragraphIndex: index });
+            for (const note of sentenceNotes) {
+                if (!insertedNoteIds.has(note.id)) {
+                    tokens.push({ kind: "annotation", annotation: note, chapterIndex, paragraphIndex: index });
                 }
             }
             if (index < currentChapter.paragraphs.length - 1) tokens.push({ kind: "gap", chapterIndex, paragraphIndex: index });
@@ -3095,28 +3539,44 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                     const paragraphAnnotations = annotations.filter(
                                         (annotation) => annotation.chapterIndex === chapter.index && annotation.paragraphIndex === pIndex
                                     );
-                                    const isBubbleOpen = Boolean(openAnnotationParagraphs[`${chapter.index}:${pIndex}`]);
+                                    const sentenceNotes = paragraphAnnotations.filter(isSentenceNoteAnnotation);
+                                    const paragraphComments = paragraphAnnotations.filter((a) => !isSentenceNoteAnnotation(a));
                                     return (
                                         <div key={pIndex} className="reading-scroll-block">
                                             {(() => {
                                                 let charCursor = 0;
+                                                const insertedNoteIds = new Set<string>();
                                                 return paragraph.split("\n").map((segment, sIndex) => {
                                                     const charStart = charCursor;
+                                                    const segEndOffset = charStart + segment.length;
                                                     charCursor += segment.length + 1; // 被拆掉的 \n 也占一个字符
                                                     const isLastSeg = sIndex === segmentCount - 1;
-                                                    return renderLine({
-                                                        kind: "line",
-                                                        text: segment,
-                                                        chapterIndex: chapter.index,
-                                                        paragraphIndex: pIndex,
-                                                        indent: true,
-                                                        segEnd: isLastSeg,
-                                                        charStart,
-                                                        ...(isLastSeg && paragraphAnnotations.length > 0 ? { annotationCount: paragraphAnnotations.length } : {}),
-                                                    }, sIndex);
+                                                    const matchingNotes = sentenceNotes.filter((note) => {
+                                                        if (insertedNoteIds.has(note.id)) return false;
+                                                        const targetEnd = typeof note.quoteEnd === "number" ? note.quoteEnd : paragraph.length;
+                                                        if ((targetEnd > charStart && targetEnd <= segEndOffset) || (isLastSeg && targetEnd > segEndOffset)) {
+                                                            insertedNoteIds.add(note.id);
+                                                            return true;
+                                                        }
+                                                        return false;
+                                                    });
+                                                    return (
+                                                        <div key={sIndex} className="reading-scroll-segment">
+                                                            {renderLine({
+                                                                kind: "line",
+                                                                text: segment,
+                                                                chapterIndex: chapter.index,
+                                                                paragraphIndex: pIndex,
+                                                                indent: true,
+                                                                segEnd: isLastSeg,
+                                                                charStart,
+                                                                ...(isLastSeg && paragraphComments.length > 0 ? { annotationCount: paragraphComments.length } : {}),
+                                                            }, sIndex)}
+                                                            {matchingNotes.map((note) => renderAnnotationItem(note))}
+                                                        </div>
+                                                    );
                                                 });
                                             })()}
-                                            {isBubbleOpen && paragraphAnnotations.map((annotation) => renderAnnotationItem(annotation))}
                                         </div>
                                     );
                                 })}
@@ -3541,30 +4001,388 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                     <button type="button" onClick={clearSelection}>取消</button>
                 </div>
             )}
-            {markMenu && (
-                <div
-                    className="reading-mark-menu"
-                    style={{ left: markMenu.x, top: markMenu.y + 8 }}
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onClick={(e) => e.stopPropagation()}
-                >
-                    <button type="button" onClick={() => openShareDialog(markMenu.mark)}>分享</button>
-                    <button type="button" onClick={() => {
-                        const group = readingMarkGroup(marks, markMenu.mark);
-                        setPendingQuote({
-                            // 跨段划选时整段引用，锚点落在第一段
-                            text: group.map(item => item.text).join("\n"),
-                            chapterIndex: group[0].chapterIndex,
-                            paragraphIndex: group[0].paragraphIndex,
-                        });
-                        setMyAnnotationText("");
-                        setMarkMenu(null);
-                        setShowMyAnnotation(true);
-                    }}>批注</button>
-                    <button type="button" onClick={() => removeMark(markMenu.mark)}>删除</button>
-                    <button type="button" onClick={() => setMarkMenu(null)}>取消</button>
-                </div>
-            )}
+            {sentenceMenu && (() => {
+                const { chapterIndex: cIdx, paragraphIndex: pIdx, start, end, text } = sentenceMenu;
+                const hasHighlight = marks.some(
+                    (m) =>
+                        m.chapterIndex === cIdx &&
+                        m.paragraphIndex === pIdx &&
+                        m.style === "highlight" &&
+                        m.start < end &&
+                        m.end > start,
+                );
+                const hasUnderline = marks.some(
+                    (m) =>
+                        m.chapterIndex === cIdx &&
+                        m.paragraphIndex === pIdx &&
+                        m.style === "underline" &&
+                        m.start < end &&
+                        m.end > start,
+                );
+                const isMarked = hasHighlight || hasUnderline;
+                return (
+                    <div
+                        className={`reading-sentence-menu${sentenceMenu.placeAbove ? " reading-sentence-menu--above" : ""}`}
+                        style={{
+                            left: sentenceMenu.x,
+                            top: sentenceMenu.y,
+                        }}
+                        data-no-nav="true"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <button
+                            type="button"
+                            className="reading-sentence-menu-btn"
+                            onClick={() => openParagraphCommentDialog(cIdx, pIdx)}
+                        >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+                            </svg>
+                            <span>发段评</span>
+                        </button>
+                        <button
+                            type="button"
+                            className="reading-sentence-menu-btn"
+                            onClick={() => {
+                                copyToClipboard(text);
+                                setSentenceMenu(null);
+                            }}
+                        >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                            </svg>
+                            <span>复制</span>
+                        </button>
+                        <button
+                            type="button"
+                            className={`reading-sentence-menu-btn${hasHighlight ? " is-active" : ""}`}
+                            onClick={() => toggleSentenceMark("highlight")}
+                        >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <path d="m9 11-6 6v3h9l3-3" />
+                                <path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4" />
+                            </svg>
+                            <span>{hasHighlight ? "取消高亮" : "高亮"}</span>
+                        </button>
+                        <button
+                            type="button"
+                            className={`reading-sentence-menu-btn${hasUnderline ? " is-active" : ""}`}
+                            onClick={() => toggleSentenceMark("underline")}
+                        >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <path d="M6 4v6a6 6 0 0 0 12 0V4" />
+                                <line x1="4" y1="20" x2="20" y2="20" />
+                            </svg>
+                            <span>{hasUnderline ? "取消划线" : "划线"}</span>
+                        </button>
+                        {isMarked && (
+                            <button
+                                type="button"
+                                className="reading-sentence-menu-btn"
+                                onClick={() => {
+                                    setPendingQuote({
+                                        text,
+                                        chapterIndex: cIdx,
+                                        paragraphIndex: pIdx,
+                                        start,
+                                        end,
+                                    });
+                                    setMyAnnotationText("");
+                                    setSentenceMenu(null);
+                                    setShowMyAnnotation(true);
+                                }}
+                            >
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                    <path d="M12 20h9" />
+                                    <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                                </svg>
+                                <span>批注</span>
+                            </button>
+                        )}
+                        <button
+                            type="button"
+                            className="reading-sentence-menu-btn"
+                            onClick={() => {
+                                const existingMark = marks.find(
+                                    (m) =>
+                                        m.chapterIndex === cIdx &&
+                                        m.paragraphIndex === pIdx &&
+                                        m.start < end &&
+                                        m.end > start,
+                                );
+                                if (existingMark) {
+                                    openShareDialog(existingMark);
+                                } else {
+                                    setShareTarget([{
+                                        id: `temp_share_${Date.now()}`,
+                                        bookId: book.id,
+                                        chapterIndex: cIdx,
+                                        paragraphIndex: pIdx,
+                                        start,
+                                        end,
+                                        text,
+                                        style: "highlight",
+                                        createdAt: new Date().toISOString(),
+                                        authorType: "user",
+                                    }]);
+                                    setSentenceMenu(null);
+                                }
+                            }}
+                        >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <circle cx="18" cy="5" r="3" />
+                                <circle cx="6" cy="12" r="3" />
+                                <circle cx="18" cy="19" r="3" />
+                                <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+                                <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+                            </svg>
+                            <span>分享</span>
+                        </button>
+                        <button
+                            type="button"
+                            className="reading-sentence-menu-btn"
+                            onClick={() => setSentenceMenu(null)}
+                        >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <line x1="18" y1="6" x2="6" y2="18" />
+                                <line x1="6" y1="6" x2="18" y2="18" />
+                            </svg>
+                            <span>取消</span>
+                        </button>
+                    </div>
+                );
+            })()}
+            {activeParagraphCommentModal && (() => {
+                const { chapterIndex: cIdx, paragraphIndex: pIdx } = activeParagraphCommentModal;
+                const allComments = annotations
+                    .filter(
+                        (a) =>
+                            a.chapterIndex === cIdx &&
+                            a.paragraphIndex === pIdx &&
+                            !isSentenceNoteAnnotation(a),
+                    )
+                    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+                const topLevelComments = allComments.filter((c) => !c.parentId);
+                const repliesByParent = new Map<string, ReadingAnnotation[]>();
+                const topIds = new Set(topLevelComments.map((c) => c.id));
+                for (const c of allComments) {
+                    if (!c.parentId) continue;
+                    // 若 parentId 指向二级回复，则归并到所属主评论下展示
+                    const rootId = topIds.has(c.parentId)
+                        ? c.parentId
+                        : (allComments.find((item) => item.id === c.parentId)?.parentId || topLevelComments[0]?.id || c.parentId);
+                    const list = repliesByParent.get(rootId) || [];
+                    list.push(c);
+                    repliesByParent.set(rootId, list);
+                }
+
+                const resolveCommentAuthor = (item: ReadingAnnotation) => {
+                    if (isUserAnnotation(item)) {
+                        return {
+                            name: userDisplayName || "我",
+                            avatar: userAvatarUrl,
+                        };
+                    }
+                    const char = (item.characterId && characterById.get(item.characterId)) || companion;
+                    return {
+                        name: item.characterName || char?.name || "TA",
+                        avatar: char?.avatar || "",
+                    };
+                };
+
+                return (
+                    <div
+                        className="reading-comment-modal-backdrop"
+                        data-no-nav="true"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            setActiveParagraphCommentModal(null);
+                            setParagraphCommentReplyTarget(null);
+                        }}
+                    >
+                        <div
+                            className="reading-comment-modal"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <div className="reading-comment-modal-header">
+                                <span className="reading-comment-modal-header-spacer" aria-hidden="true" />
+                                <span className="reading-comment-modal-title">{allComments.length}条评论</span>
+                                <button
+                                    type="button"
+                                    className={`reading-comment-modal-refresh${generatingParagraphComment ? " is-spinning" : ""}`}
+                                    onClick={() => { void handleRefreshCompanionParagraphComment(); }}
+                                    disabled={generatingParagraphComment || !companionId}
+                                    title={companion ? `让${companion.name}发段评` : "请先选择陪读角色"}
+                                    aria-label="刷新触发陪读角色发送段评"
+                                >
+                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                        <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                        <path d="M3 3v5h5" />
+                                        <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+                                        <path d="M16 16h5v5" />
+                                    </svg>
+                                </button>
+                            </div>
+                            <div className="reading-comment-modal-list">
+                                {topLevelComments.length === 0 ? (
+                                    <div className="reading-comment-modal-empty">
+                                        还没有段评，发一条开启互动，或点击右上角刷新让{companion?.name || "陪读角色"}发段评吧
+                                    </div>
+                                ) : (
+                                    topLevelComments.map((comment) => {
+                                        const author = resolveCommentAuthor(comment);
+                                        const replies = repliesByParent.get(comment.id) || [];
+                                        return (
+                                            <div key={comment.id} className="reading-comment-thread">
+                                                <div className="reading-comment-item">
+                                                    <div className="reading-comment-avatar">
+                                                        {author.avatar ? (
+                                                            // eslint-disable-next-line @next/next/no-img-element
+                                                            <img src={author.avatar} alt="" />
+                                                        ) : (
+                                                            <span>{author.name.slice(0, 1)}</span>
+                                                        )}
+                                                    </div>
+                                                    <div className="reading-comment-main">
+                                                        <div className="reading-comment-name-row">
+                                                            <span className="reading-comment-name">{author.name}</span>
+                                                            <button
+                                                                type="button"
+                                                                className="reading-comment-delete-btn"
+                                                                onClick={() => { void handleDeleteReadingAnnotation(comment.id); }}
+                                                                aria-label="删除段评"
+                                                            >
+                                                                删除
+                                                            </button>
+                                                        </div>
+                                                        <div className="reading-comment-content">{comment.content}</div>
+                                                        <div className="reading-comment-meta">
+                                                            <span className="reading-comment-time">{formatCommentTimestamp(comment.createdAt)}</span>
+                                                            <button
+                                                                type="button"
+                                                                className="reading-comment-reply-btn"
+                                                                onClick={() => {
+                                                                    setParagraphCommentReplyTarget({
+                                                                        id: comment.id,
+                                                                        parentId: comment.id,
+                                                                        authorName: author.name,
+                                                                        content: comment.content,
+                                                                    });
+                                                                }}
+                                                            >
+                                                                回复
+                                                            </button>
+                                                        </div>
+                                                        {replies.length > 0 && (
+                                                            <div className="reading-comment-replies">
+                                                                {replies.map((reply) => {
+                                                                    const replyAuthor = resolveCommentAuthor(reply);
+                                                                    return (
+                                                                        <div key={reply.id} className="reading-comment-reply-item">
+                                                                            <div className="reading-comment-avatar reading-comment-avatar--small">
+                                                                                {replyAuthor.avatar ? (
+                                                                                    // eslint-disable-next-line @next/next/no-img-element
+                                                                                    <img src={replyAuthor.avatar} alt="" />
+                                                                                ) : (
+                                                                                    <span>{replyAuthor.name.slice(0, 1)}</span>
+                                                                                )}
+                                                                            </div>
+                                                                            <div className="reading-comment-main">
+                                                                                <div className="reading-comment-name-row">
+                                                                                    <span className="reading-comment-name">
+                                                                                        {replyAuthor.name}
+                                                                                        {reply.replyToName ? (
+                                                                                            <span className="reading-comment-reply-to"> 回复 {reply.replyToName}</span>
+                                                                                        ) : null}
+                                                                                    </span>
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        className="reading-comment-delete-btn"
+                                                                                        onClick={() => { void handleDeleteReadingAnnotation(reply.id); }}
+                                                                                        aria-label="删除回复"
+                                                                                    >
+                                                                                        删除
+                                                                                    </button>
+                                                                                </div>
+                                                                                <div className="reading-comment-content">{reply.content}</div>
+                                                                                <div className="reading-comment-meta">
+                                                                                    <span className="reading-comment-time">{formatCommentTimestamp(reply.createdAt)}</span>
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        className="reading-comment-reply-btn"
+                                                                                        onClick={() => {
+                                                                                            setParagraphCommentReplyTarget({
+                                                                                                id: reply.id,
+                                                                                                parentId: comment.id,
+                                                                                                authorName: replyAuthor.name,
+                                                                                                content: reply.content,
+                                                                                            });
+                                                                                        }}
+                                                                                    >
+                                                                                        回复
+                                                                                    </button>
+                                                                                </div>
+                                                                            </div>
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })
+                                )}
+                            </div>
+                            <div className="reading-comment-modal-footer">
+                                {paragraphCommentReplyTarget && (
+                                    <div className="reading-comment-reply-banner">
+                                        <span>回复 @{paragraphCommentReplyTarget.authorName}</span>
+                                        <button
+                                            type="button"
+                                            onClick={() => setParagraphCommentReplyTarget(null)}
+                                            aria-label="取消回复"
+                                        >
+                                            取消
+                                        </button>
+                                    </div>
+                                )}
+                                <div className="reading-comment-input-row">
+                                    <input
+                                        type="text"
+                                        className="reading-comment-input"
+                                        value={paragraphCommentDraft}
+                                        onChange={(e) => setParagraphCommentDraft(e.target.value)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === "Enter" && !e.shiftKey) {
+                                                e.preventDefault();
+                                                void handleSendParagraphComment();
+                                            }
+                                        }}
+                                        placeholder={
+                                            paragraphCommentReplyTarget
+                                                ? `回复 ${paragraphCommentReplyTarget.authorName}...`
+                                                : "发一条段评..."
+                                        }
+                                    />
+                                    <button
+                                        type="button"
+                                        className="reading-comment-send-btn"
+                                        disabled={!paragraphCommentDraft.trim()}
+                                        onClick={() => { void handleSendParagraphComment(); }}
+                                    >
+                                        发送
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}
             {shareTarget && shareTarget.length > 0 && (() => {
                 const first = shareTarget[0];
                 const chapter = chapters[first.chapterIndex];

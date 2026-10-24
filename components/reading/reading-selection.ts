@@ -19,6 +19,90 @@ export type ReadingSelectionSegment = {
     end: number;
 };
 
+/** 一个段落内部拆出来的单句区间（含头不含尾，包含句末标点与紧随的后引号/右括号）。 */
+export type ReadingSentenceSpan = {
+    start: number;
+    end: number;
+    text: string;
+};
+
+const SENTENCE_TERMINATORS = new Set(["。", "？", "！", "?", "!", "…", "；", ";"]);
+const SENTENCE_CLOSERS = new Set(["”", "’", "」", "』", "》", "）", "】", "\"", "'", ")", "]"]);
+
+/** 按「。」「？」「！」等句末标点把段落拆成单句区间，保留原段落字符偏移与换行不变。 */
+export function splitParagraphIntoSentences(paragraph: string): ReadingSentenceSpan[] {
+    if (!paragraph) return [];
+    const spans: ReadingSentenceSpan[] = [];
+    const n = paragraph.length;
+    let sentenceStart = 0;
+    let i = 0;
+
+    while (i < n) {
+        // 跳过行内图标占位符 \uFFFCico:N\uFFFC，避免把其中的字符当普通标点
+        if (paragraph[i] === "\uFFFC" && paragraph.slice(i, i + 5) === "\uFFFCico:") {
+            const closeIdx = paragraph.indexOf("\uFFFC", i + 5);
+            if (closeIdx !== -1) {
+                i = closeIdx + 1;
+                continue;
+            }
+        }
+        const ch = paragraph[i];
+        if (ch === "\n") {
+            if (i > sentenceStart) {
+                spans.push({
+                    start: sentenceStart,
+                    end: i,
+                    text: paragraph.slice(sentenceStart, i),
+                });
+            }
+            sentenceStart = i + 1;
+            i += 1;
+            continue;
+        }
+        if (SENTENCE_TERMINATORS.has(ch)) {
+            let end = i + 1;
+            // 连续句末标点（如 ？！、……、！！）合并到同一句末尾
+            while (end < n && SENTENCE_TERMINATORS.has(paragraph[end])) {
+                end += 1;
+            }
+            // 紧跟在句末标点后面的后引号/右括号一并归入本句
+            while (end < n && SENTENCE_CLOSERS.has(paragraph[end])) {
+                end += 1;
+            }
+            spans.push({
+                start: sentenceStart,
+                end,
+                text: paragraph.slice(sentenceStart, end),
+            });
+            sentenceStart = end;
+            i = end;
+            continue;
+        }
+        i += 1;
+    }
+
+    if (sentenceStart < n) {
+        spans.push({
+            start: sentenceStart,
+            end: n,
+            text: paragraph.slice(sentenceStart, n),
+        });
+    }
+
+    return spans.filter((s) => s.text.trim().length > 0);
+}
+
+/** 给定段落与段落内字符偏移，找到所属的单句区间。 */
+export function findSentenceAtOffset(paragraph: string, offset: number): ReadingSentenceSpan | null {
+    const spans = splitParagraphIntoSentences(paragraph);
+    if (spans.length === 0) return null;
+    const clamped = Math.max(0, Math.min(paragraph.length - 1, offset));
+    for (const span of spans) {
+        if (clamped >= span.start && clamped < span.end) return span;
+    }
+    return spans[spans.length - 1] || null;
+}
+
 /** 把一次划选拆成「每段一条」。
  *
  *  跨段落划选以前是直接拒绝的（锚点落不到单一段落上）。其实不必：存储和渲染

@@ -692,6 +692,109 @@ export async function previewReadingDiscussPrompt(
     };
 }
 
+/** 手动触发陪读角色对指定段落发送一条段评（或对段评下的某条评论进行回复） */
+export async function generateParagraphCommentReply(params: {
+    book: Book;
+    chapterTitle: string;
+    paragraphIndex: number;
+    paragraphText: string;
+    surroundingText?: string;
+    existingComments: Array<{ authorName: string; isUser: boolean; content: string; replyToName?: string }>;
+    characterId: string;
+    replyTarget?: { id: string; authorName: string; content: string };
+}): Promise<string> {
+    const {
+        book,
+        chapterTitle,
+        paragraphIndex,
+        paragraphText,
+        surroundingText,
+        existingComments,
+        characterId,
+        replyTarget,
+    } = params;
+    const character = loadCharacters().find((c) => c.id === characterId);
+    if (!character) throw new Error("请先选择陪读角色");
+
+    const commentLines = existingComments.length > 0
+        ? existingComments.map((c, idx) => (
+            `${idx + 1}. ${c.authorName}${c.replyToName ? ` 回复 ${c.replyToName}` : ""}：${c.content}`
+        )).join("\n")
+        : "（暂无段评）";
+
+    const chapterContent = [
+        surroundingText ? `【前后文参考】\n${surroundingText}\n` : "",
+        `【当前段落（第 ${paragraphIndex + 1} 段）】\n${paragraphText}`,
+        "",
+        `【该段落已有段评】\n${commentLines}`,
+    ].filter(Boolean).join("\n");
+
+    const resolved = await resolveReadingInput(characterId, ["reading", "annotate"], {
+        bookTitle: book.title,
+        chapterTitle,
+        chapterContent,
+        annotationHistory: commentLines,
+    });
+    if (!resolved || !resolved.apiConfig) {
+        throw new Error("未找到 API 配置，请在设置中绑定 API");
+    }
+
+    const { input, apiConfig, preset } = resolved;
+    const userName = input.userIdentity?.name ?? "用户";
+    const taskPrompt = replyTarget
+        ? [
+            `<paragraph_comment_task>`,
+            `你正在和${userName}一起阅读《${book.title}》的「${chapterTitle}」。`,
+            `现在你们停在第 ${paragraphIndex + 1} 段（「${paragraphText}」）的段评区。`,
+            `请以你（${character.name}）自己的性格和口吻，直接回复「${replyTarget.authorName}」的这条段评：「${replyTarget.content}」。`,
+            `要求：`,
+            `- 只输出你的回复正文（1~3句话，自然贴合人设与该段原文内容）；`,
+            `- 不要加任何 [批注:...] 标签、不要加角色名前缀或引号包裹、不要带星号/括号动作描写。`,
+            `</paragraph_comment_task>`,
+        ].join("\n")
+        : [
+            `<paragraph_comment_task>`,
+            `你正在和${userName}一起阅读《${book.title}》的「${chapterTitle}」。`,
+            `现在你们停在第 ${paragraphIndex + 1} 段（「${paragraphText}」）的段评区。`,
+            existingComments.length > 0
+                ? `段评区里已经有上面列出的评论，请结合原文和已有评论（尤其是${userName}发的段评），以你（${character.name}）自己的性格和口吻发表一条新的段评或回应。`
+                : `请针对这一段原文，以你（${character.name}）自己的性格和口吻发表一条段评。`,
+            `要求：`,
+            `- 只输出你的段评正文（1~3句话，自然贴合人设与该段原文内容）；`,
+            `- 不要加任何 [批注:...] 标签、不要加角色名前缀或引号包裹、不要带星号/括号动作描写。`,
+            `</paragraph_comment_task>`,
+        ].join("\n");
+
+    const assembled = assemblePromptPayload(input);
+    const messages: LLMMessage[] = assembled.length > 0
+        ? [
+            ...assembled.slice(0, -1),
+            {
+                ...assembled[assembled.length - 1],
+                content: typeof assembled[assembled.length - 1].content === "string"
+                    ? `${assembled[assembled.length - 1].content}\n\n${taskPrompt}`
+                    : taskPrompt,
+            },
+        ]
+        : [{ role: "user", content: `${chapterContent}\n\n${taskPrompt}` }];
+
+    const raw = await callReadingLLM(
+        apiConfig,
+        preset,
+        ensureTrailingUserTurn(messages),
+        character.name,
+        input.regexes,
+        input.appTags,
+        userName,
+    );
+    const cleaned = (raw || "")
+        .replace(/[[［]批注[:：][^\]]*[\]］]/g, "")
+        .replace(/[[［]\s*\/\s*批注\s*[\]］]/g, "")
+        .trim();
+    if (!cleaned) throw new Error("未生成有效段评内容");
+    return cleaned;
+}
+
 /** Generate a chat response in reading discuss mode. */
 export async function generateReadingChat(
     session: ChatSession,
