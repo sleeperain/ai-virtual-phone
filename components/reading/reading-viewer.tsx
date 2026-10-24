@@ -1062,25 +1062,27 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         const nextPara = pIdx + 1 < (chapter?.paragraphs.length || 0) ? stripReadingInlineIconMarkers(chapter?.paragraphs[pIdx + 1] || "").trim() : "";
         const surroundingText = [prevPara, nextPara].filter(Boolean).join("\n");
 
-        const existingComments = annotations
+        const rawExistingComments = annotations
             .filter(
                 (a) =>
                     a.chapterIndex === cIdx &&
                     a.paragraphIndex === pIdx &&
                     !isSentenceNoteAnnotation(a),
             )
-            .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-            .map((a) => ({
-                authorName: isUserAnnotation(a) ? userDisplayName : (a.characterName || companion.name),
-                isUser: isUserAnnotation(a),
-                content: a.content,
-                replyToName: a.replyToName,
-            }));
+            .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+
+        const existingComments = rawExistingComments.map((a) => ({
+            id: a.id,
+            authorName: isUserAnnotation(a) ? userDisplayName : (a.characterName || companion.name),
+            isUser: isUserAnnotation(a),
+            content: a.content,
+            replyToName: a.replyToName,
+        }));
 
         setGeneratingParagraphComment(true);
         setAnnotationError(null);
         try {
-            const replyText = await generateParagraphCommentReply({
+            const replyResult = await generateParagraphCommentReply({
                 book,
                 chapterTitle: chapter?.title || book.title,
                 paragraphIndex: pIdx,
@@ -1096,6 +1098,24 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                     }
                     : undefined,
             });
+
+            // 解析归属：若用户显式选了「回复」某条评论，或模型主动标记回复了某条已有评论，
+            // 一律作为子回复挂在对应主评论（root parentId）下方，绝不单独开顶层评论回复别人
+            let resolvedParentId: string | undefined;
+            let resolvedReplyToName: string | undefined;
+            if (paragraphCommentReplyTarget) {
+                resolvedParentId = paragraphCommentReplyTarget.parentId;
+                resolvedReplyToName = paragraphCommentReplyTarget.authorName;
+            } else if (
+                typeof replyResult.replyToCommentIndex === "number" &&
+                rawExistingComments[replyResult.replyToCommentIndex]
+            ) {
+                const targetAnnotation = rawExistingComments[replyResult.replyToCommentIndex];
+                const targetMeta = existingComments[replyResult.replyToCommentIndex];
+                resolvedParentId = targetAnnotation.parentId || targetAnnotation.id;
+                resolvedReplyToName = targetMeta.authorName;
+            }
+
             const newComment: ReadingAnnotation = {
                 id: `ra_cmt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
                 bookId: book.id,
@@ -1103,14 +1123,14 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                 paragraphIndex: pIdx,
                 characterId: companionId,
                 characterName: companion.name,
-                content: replyText,
+                content: replyResult.content,
                 createdAt: new Date().toISOString(),
                 authorType: "character",
                 annotationKind: "comment",
-                ...(paragraphCommentReplyTarget
+                ...(resolvedParentId
                     ? {
-                        parentId: paragraphCommentReplyTarget.parentId,
-                        replyToName: paragraphCommentReplyTarget.authorName,
+                        parentId: resolvedParentId,
+                        replyToName: resolvedReplyToName,
                     }
                     : {}),
             };

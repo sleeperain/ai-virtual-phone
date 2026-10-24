@@ -692,6 +692,12 @@ export async function previewReadingDiscussPrompt(
     };
 }
 
+export type ParagraphCommentReplyResult = {
+    content: string;
+    /** 若是回复已有评论，返回被回复评论的 index（0-based，对应 existingComments 里的下标） */
+    replyToCommentIndex?: number;
+};
+
 /** 手动触发陪读角色对指定段落发送一条段评（或对段评下的某条评论进行回复） */
 export async function generateParagraphCommentReply(params: {
     book: Book;
@@ -699,10 +705,10 @@ export async function generateParagraphCommentReply(params: {
     paragraphIndex: number;
     paragraphText: string;
     surroundingText?: string;
-    existingComments: Array<{ authorName: string; isUser: boolean; content: string; replyToName?: string }>;
+    existingComments: Array<{ id?: string; authorName: string; isUser: boolean; content: string; replyToName?: string }>;
     characterId: string;
     replyTarget?: { id: string; authorName: string; content: string };
-}): Promise<string> {
+}): Promise<ParagraphCommentReplyResult> {
     const {
         book,
         chapterTitle,
@@ -718,7 +724,7 @@ export async function generateParagraphCommentReply(params: {
 
     const commentLines = existingComments.length > 0
         ? existingComments.map((c, idx) => (
-            `${idx + 1}. ${c.authorName}${c.replyToName ? ` 回复 ${c.replyToName}` : ""}：${c.content}`
+            `[#${idx + 1}] ${c.authorName}${c.replyToName ? ` 回复 ${c.replyToName}` : ""}：${c.content}`
         )).join("\n")
         : "（暂无段评）";
 
@@ -746,24 +752,36 @@ export async function generateParagraphCommentReply(params: {
             `<paragraph_comment_task>`,
             `你正在和${userName}一起阅读《${book.title}》的「${chapterTitle}」。`,
             `现在你们停在第 ${paragraphIndex + 1} 段（「${paragraphText}」）的段评区。`,
-            `请以你（${character.name}）自己的性格和口吻，直接回复「${replyTarget.authorName}」的这条段评：「${replyTarget.content}」。`,
+            `【重要区分】：「段评」是你读完这一段原文后的独立想法；「回复」是针对某条已有评论的对话回应，会直接挂在那条评论下方。`,
+            `当前任务是「回复」：请以你（${character.name}）自己的性格和口吻，直接在该条评论下回复「${replyTarget.authorName}」说的「${replyTarget.content}」。`,
             `要求：`,
-            `- 只输出你的回复正文（1~3句话，自然贴合人设与该段原文内容）；`,
-            `- 不要加任何 [批注:...] 标签、不要加角色名前缀或引号包裹、不要带星号/括号动作描写。`,
+            `- 只输出你的回复正文（1~3句话，自然贴合人设与对方评论内容）；`,
+            `- 不要加任何 [批注:...] 或 [回复:...] 标签、不要加角色名前缀或引号包裹、不要带星号/括号动作描写。`,
             `</paragraph_comment_task>`,
         ].join("\n")
-        : [
-            `<paragraph_comment_task>`,
-            `你正在和${userName}一起阅读《${book.title}》的「${chapterTitle}」。`,
-            `现在你们停在第 ${paragraphIndex + 1} 段（「${paragraphText}」）的段评区。`,
-            existingComments.length > 0
-                ? `段评区里已经有上面列出的评论，请结合原文和已有评论（尤其是${userName}发的段评），以你（${character.name}）自己的性格和口吻发表一条新的段评或回应。`
-                : `请针对这一段原文，以你（${character.name}）自己的性格和口吻发表一条段评。`,
-            `要求：`,
-            `- 只输出你的段评正文（1~3句话，自然贴合人设与该段原文内容）；`,
-            `- 不要加任何 [批注:...] 标签、不要加角色名前缀或引号包裹、不要带星号/括号动作描写。`,
-            `</paragraph_comment_task>`,
-        ].join("\n");
+        : existingComments.length > 0
+            ? [
+                `<paragraph_comment_task>`,
+                `你正在和${userName}一起阅读《${book.title}》的「${chapterTitle}」。`,
+                `现在你们停在第 ${paragraphIndex + 1} 段（「${paragraphText}」）的段评区。`,
+                `【严格区分「段评」与「回复」】：`,
+                `1. 「段评」：是你（${character.name}）读完这段原文以后的独立想法、感慨或吐槽（针对原文内容本身，而不是对某人评论的回话）。若你要发独立段评，请直接输出段评正文，绝对不要在独立段评里隔空回复${userName}或其他人的评论！`,
+                `2. 「回复」：如果你看到上面【该段落已有段评】里某条评论（比如 [#1]、[#2]）想针对它回话互动，必须作为该条评论下方的回复发出，绝不能单独开一条新段评去回复别人！此时请在开头加上标记 [回复:#序号]（例如 [回复:#1] 你的回复内容），系统会自动把它接在对应评论下方。`,
+                `要求：`,
+                `- 二选一：要么输出 [回复:#序号] 回复正文（接在已有评论下方），要么直接输出你读完这段原文的独立段评正文（只谈原文，不对已有评论搭话）；`,
+                `- 正文 1~3 句话，自然贴合人设；不要加 [批注:...] 标签、不要加角色名前缀或引号包裹、不要带星号/括号动作描写。`,
+                `</paragraph_comment_task>`,
+            ].join("\n")
+            : [
+                `<paragraph_comment_task>`,
+                `你正在和${userName}一起阅读《${book.title}》的「${chapterTitle}」。`,
+                `现在你们停在第 ${paragraphIndex + 1} 段（「${paragraphText}」）的段评区。`,
+                `请针对这一段原文，以你（${character.name}）自己的性格和口吻发表一条你读完这段以后的想法（段评）。`,
+                `要求：`,
+                `- 只输出你的段评正文（1~3句话，自然贴合人设与该段原文内容）；`,
+                `- 不要加任何 [批注:...] 标签、不要加角色名前缀或引号包裹、不要带星号/括号动作描写。`,
+                `</paragraph_comment_task>`,
+            ].join("\n");
 
     const assembled = assemblePromptPayload(input);
     const messages: LLMMessage[] = assembled.length > 0
@@ -788,12 +806,36 @@ export async function generateParagraphCommentReply(params: {
         input.appTags,
         userName,
     );
-    const cleaned = (raw || "")
+    let cleaned = (raw || "")
         .replace(/[[［]批注[:：][^\]]*[\]］]/g, "")
         .replace(/[[［]\s*\/\s*批注\s*[\]］]/g, "")
         .trim();
+
+    let replyToCommentIndex: number | undefined;
+    const replyTagMatch = cleaned.match(/^[[［]回复[:：]\s*#?(\d+)\s*[\]］]\s*/);
+    if (replyTagMatch) {
+        const idx = parseInt(replyTagMatch[1], 10) - 1;
+        if (Number.isFinite(idx) && idx >= 0 && idx < existingComments.length) {
+            replyToCommentIndex = idx;
+        }
+        cleaned = cleaned.slice(replyTagMatch[0].length).trim();
+    } else if (!replyTarget && existingComments.length > 0) {
+        // 兜底：若模型未写 [回复:#N] 但写了「回复 XXX：」前缀，同样归入对应评论下
+        const prefixMatch = cleaned.match(/^回复\s*@?([^：:，,\s]{1,20})\s*[：:]\s*/);
+        if (prefixMatch) {
+            const targetName = prefixMatch[1].trim();
+            for (let i = existingComments.length - 1; i >= 0; i -= 1) {
+                if (existingComments[i].authorName === targetName) {
+                    replyToCommentIndex = i;
+                    cleaned = cleaned.slice(prefixMatch[0].length).trim();
+                    break;
+                }
+            }
+        }
+    }
+
     if (!cleaned) throw new Error("未生成有效段评内容");
-    return cleaned;
+    return { content: cleaned, replyToCommentIndex };
 }
 
 /** Generate a chat response in reading discuss mode. */

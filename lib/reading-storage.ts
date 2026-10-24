@@ -274,14 +274,34 @@ export async function saveAnnotations(annotations: ReadingAnnotation[]): Promise
     }
 }
 
-/** 每本书的批注条数（用户 + 角色一起算）。书架上显示用，一次扫全表，
- *  比按书逐次查省往返；批注量再大也就几千条。 */
+/** 判断一条记录是否属于「批注」（句子批注 note），与「段评」（comment）严格区分 */
+export function isReadingNoteAnnotation(annotation: Pick<ReadingAnnotation, "annotationKind" | "quoteEnd">): boolean {
+    if (annotation.annotationKind === "note") return true;
+    if (annotation.annotationKind === "comment") return false;
+    return typeof annotation.quoteEnd === "number" && annotation.quoteEnd > 0;
+}
+
+/** 每本书的批注条数与段评条数分别统计（用户 + 角色一起算）。
+ *  书架上只显示批注条数，不把段评混入批注数量。 */
 export async function countAnnotationsByBook(): Promise<Record<string, number>> {
-    const counts: Record<string, number> = {};
+    const { noteCounts } = await countAnnotationsAndCommentsByBook();
+    return noteCounts;
+}
+
+export async function countAnnotationsAndCommentsByBook(): Promise<{
+    noteCounts: Record<string, number>;
+    commentCounts: Record<string, number>;
+}> {
+    const noteCounts: Record<string, number> = {};
+    const commentCounts: Record<string, number> = {};
     await db.annotations.each((annotation) => {
-        counts[annotation.bookId] = (counts[annotation.bookId] || 0) + 1;
+        if (isReadingNoteAnnotation(annotation)) {
+            noteCounts[annotation.bookId] = (noteCounts[annotation.bookId] || 0) + 1;
+        } else {
+            commentCounts[annotation.bookId] = (commentCounts[annotation.bookId] || 0) + 1;
+        }
     });
-    return counts;
+    return { noteCounts, commentCounts };
 }
 
 export async function deleteAnnotation(annotationId: string): Promise<void> {

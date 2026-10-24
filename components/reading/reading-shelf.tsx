@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { ChevronLeft, Palette, Pin, Settings, UserRound } from "lucide-react";
-import { loadBooks, addBook, updateBook, deleteBook, deleteBookmarksByBook, saveChapters, loadProgress, saveRawFile, countAnnotationsByBook } from "@/lib/reading-storage";
+import { loadBooks, addBook, updateBook, deleteBook, deleteBookmarksByBook, saveChapters, loadProgress, saveRawFile, countAnnotationsAndCommentsByBook } from "@/lib/reading-storage";
 import { loadCharacters } from "@/lib/character-storage";
 import { deleteReadingAssetsByPrefix, loadReadingCover, saveReadingAsset, saveReadingCover } from "@/lib/reading-appearance";
 import { readingImageAssetKey, readingImageAssetPrefix } from "@/lib/reading-inline-image";
@@ -94,8 +94,10 @@ export function ReadingShelf({ onOpenBook, onClose, appearance, backgroundUrl, l
     const [books, setBooks] = useState<Book[]>([]);
     /** bookId → 封面 objectURL；没有封面的书不在这里，走原来那种自己画的封面 */
     const [coverUrls, setCoverUrls] = useState<Record<string, string>>({});
-    /** bookId → 批注条数（用户 + 角色） */
+    /** bookId → 批注条数（仅句子批注，不含段评） */
     const [annotationCounts, setAnnotationCounts] = useState<Record<string, number>>({});
+    /** bookId → 段评条数（与批注分别统计，书架卡片不显示） */
+    const [, setCommentCounts] = useState<Record<string, number>>({});
     /** bookId → 伴读角色名。名字一律从角色数据里取，不写死 */
     const [companionNames, setCompanionNames] = useState<Record<string, string>>({});
     const [progressMap, setProgressMap] = useState<Record<string, {
@@ -106,14 +108,19 @@ export function ReadingShelf({ onOpenBook, onClose, appearance, backgroundUrl, l
         current?: number;
         pageTotal?: number;
         scope?: "book" | "chapter";
+        lastReadAt?: string;
     }>>({});
     const [importing, setImporting] = useState(false);
     const [importStatus, setImportStatus] = useState<string | null>(null);
     const [importError, setImportError] = useState<{ summary: string; detail?: string } | null>(null);
     const [search, setSearch] = useState("");
+    const [showSearchBar, setShowSearchBar] = useState(false);
+    const [showMoreMenu, setShowMoreMenu] = useState(false);
     const [showAppearanceDialog, setShowAppearanceDialog] = useState(false);
     const [showInteractionDialog, setShowInteractionDialog] = useState(false);
     const [showProfileDialog, setShowProfileDialog] = useState(false);
+    const searchInputRef = useRef<HTMLInputElement>(null);
+    const moreMenuWrapRef = useRef<HTMLDivElement>(null);
     /** 长按书卡弹出的操作菜单 */
     const [actionMenuBook, setActionMenuBook] = useState<Book | null>(null);
     /** 「编辑」里正在改的那本书；title/author 是草稿，保存时才落库 */
@@ -160,6 +167,7 @@ export function ReadingShelf({ onOpenBook, onClose, appearance, backgroundUrl, l
                     current: p?.progressCurrent,
                     pageTotal: p?.progressTotal,
                     scope: p?.progressScope,
+                    lastReadAt: p?.lastReadAt,
                 };
                 const companionId = p?.companionCharacterId;
                 const companionName = companionId
@@ -169,10 +177,23 @@ export function ReadingShelf({ onOpenBook, onClose, appearance, backgroundUrl, l
             }
             setProgressMap(map);
             setCompanionNames(companions);
-            setAnnotationCounts(await countAnnotationsByBook().catch(() => ({})));
+            const counts = await countAnnotationsAndCommentsByBook().catch(() => ({ noteCounts: {}, commentCounts: {} }));
+            setAnnotationCounts(counts.noteCounts);
+            setCommentCounts(counts.commentCounts);
         })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    useEffect(() => {
+        if (!showMoreMenu) return;
+        const onPointerDown = (e: PointerEvent) => {
+            if (moreMenuWrapRef.current && !moreMenuWrapRef.current.contains(e.target as Node)) {
+                setShowMoreMenu(false);
+            }
+        };
+        document.addEventListener("pointerdown", onPointerDown);
+        return () => document.removeEventListener("pointerdown", onPointerDown);
+    }, [showMoreMenu]);
 
     // 封面按书逐本取。串行读：这几个资源共用一个 IndexedDB，并发打开会互相 block。
     useEffect(() => {
@@ -325,11 +346,17 @@ export function ReadingShelf({ onOpenBook, onClose, appearance, backgroundUrl, l
     const matchedBooks = search.trim()
         ? books.filter(b => b.title.toLowerCase().includes(search.toLowerCase()) || b.author?.toLowerCase().includes(search.toLowerCase()))
         : books;
-    // 置顶的排最前（多本按置顶时间倒序），其余保持 loadBooks 的导入时间倒序
+    // 排序规则：
+    // 1. 被置顶的书排最前（多本按置顶时间倒序）；
+    // 2. 未置顶的书中，最近打开过的排在上方（按 lastReadAt 倒序），其余按导入时间倒序。
     const filteredBooks = [...matchedBooks].sort((a, b) => {
         if (Boolean(a.pinnedAt) !== Boolean(b.pinnedAt)) return a.pinnedAt ? -1 : 1;
         if (a.pinnedAt && b.pinnedAt) return b.pinnedAt.localeCompare(a.pinnedAt);
-        return 0;
+        const aReadAt = progressMap[a.id]?.lastReadAt || "";
+        const bReadAt = progressMap[b.id]?.lastReadAt || "";
+        if (Boolean(aReadAt) !== Boolean(bReadAt)) return aReadAt ? -1 : 1;
+        if (aReadAt && bReadAt && aReadAt !== bReadAt) return bReadAt.localeCompare(aReadAt);
+        return (b.createdAt || "").localeCompare(a.createdAt || "");
     });
 
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -539,6 +566,9 @@ export function ReadingShelf({ onOpenBook, onClose, appearance, backgroundUrl, l
             }
             setBooks(loadBooks());
             setProgressMap(prev => ({ ...prev, [bookId]: { chapterIndex: 0, total: chapters.length, hasProgress: false } }));
+            const nextCounts = await countAnnotationsAndCommentsByBook().catch(() => ({ noteCounts: {}, commentCounts: {} }));
+            setAnnotationCounts(nextCounts.noteCounts);
+            setCommentCounts(nextCounts.commentCounts);
             setImportStatus(null);
             persistImportDiagnostic(null);
         } catch (err) {
@@ -583,21 +613,92 @@ export function ReadingShelf({ onOpenBook, onClose, appearance, backgroundUrl, l
                         <ChevronLeft size={22} strokeWidth={2.5} />
                     </button>
                     <div className="reading-shelf-actions">
-                        <button className="reading-shelf-action-btn" type="button" onClick={() => setShowProfileDialog(true)} aria-label="阅读账号">
-                            <UserRound size={16} strokeWidth={1.7} />
-                        </button>
-                        <button className="reading-shelf-action-btn" type="button" onClick={() => setShowInteractionDialog(true)} aria-label="阅读设置">
-                            <Settings size={16} strokeWidth={1.7} />
-                        </button>
-                        <button className="reading-shelf-action-btn" type="button" onClick={() => setShowAppearanceDialog(true)} aria-label="阅读外观">
-                            <Palette size={16} strokeWidth={1.7} />
-                        </button>
-                        <label className="reading-shelf-action-btn reading-shelf-action-primary" style={{ cursor: "pointer" }}>
-                            <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M12 5v14M5 12h14" />
+                        <button
+                            className="reading-shelf-action-btn"
+                            type="button"
+                            onClick={() => {
+                                setShowSearchBar((prev) => {
+                                    const next = !prev;
+                                    if (!next) setSearch("");
+                                    else window.setTimeout(() => searchInputRef.current?.focus(), 0);
+                                    return next;
+                                });
+                            }}
+                            aria-label="搜索书籍"
+                            aria-expanded={showSearchBar}
+                        >
+                            <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <circle cx="11" cy="11" r="8" />
+                                <line x1="21" y1="21" x2="16.65" y2="16.65" />
                             </svg>
-                            <input ref={fileRef} type="file" accept=".txt,.epub,.mobi,.azw3,.prc,.pdf" onChange={handleFileUpload} className="hidden" disabled={importing} />
-                        </label>
+                        </button>
+                        <div ref={moreMenuWrapRef} className="reading-shelf-more-wrap">
+                            <button
+                                className="reading-shelf-action-btn"
+                                type="button"
+                                onClick={() => setShowMoreMenu((prev) => !prev)}
+                                aria-label="更多操作"
+                                aria-expanded={showMoreMenu}
+                            >
+                                <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                    <circle cx="12" cy="5" r="1.2" fill="currentColor" />
+                                    <circle cx="12" cy="12" r="1.2" fill="currentColor" />
+                                    <circle cx="12" cy="19" r="1.2" fill="currentColor" />
+                                </svg>
+                            </button>
+                            {showMoreMenu && (
+                                <div className="reading-shelf-more-menu" role="menu">
+                                    <button
+                                        type="button"
+                                        className="reading-shelf-more-item"
+                                        disabled={importing}
+                                        onClick={() => {
+                                            setShowMoreMenu(false);
+                                            fileRef.current?.click();
+                                        }}
+                                    >
+                                        <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                            <path d="M12 5v14M5 12h14" />
+                                        </svg>
+                                        <span>导入图书</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="reading-shelf-more-item"
+                                        onClick={() => {
+                                            setShowMoreMenu(false);
+                                            setShowProfileDialog(true);
+                                        }}
+                                    >
+                                        <UserRound size={16} strokeWidth={1.8} />
+                                        <span>阅读账号</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="reading-shelf-more-item"
+                                        onClick={() => {
+                                            setShowMoreMenu(false);
+                                            setShowInteractionDialog(true);
+                                        }}
+                                    >
+                                        <Settings size={16} strokeWidth={1.8} />
+                                        <span>阅读设置</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="reading-shelf-more-item"
+                                        onClick={() => {
+                                            setShowMoreMenu(false);
+                                            setShowAppearanceDialog(true);
+                                        }}
+                                    >
+                                        <Palette size={16} strokeWidth={1.8} />
+                                        <span>阅读外观</span>
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                        <input ref={fileRef} type="file" accept=".txt,.epub,.mobi,.azw3,.prc,.pdf" onChange={handleFileUpload} className="hidden" disabled={importing} />
                     </div>
                 </div>
                 <div className="reading-shelf-title-stack">
@@ -607,17 +708,20 @@ export function ReadingShelf({ onOpenBook, onClose, appearance, backgroundUrl, l
             </header>
 
             <div className="reading-shelf-body">
-                <div className="px-4 pb-3">
-                    <div className="reading-search-bar">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                        <input
-                            value={search}
-                            onChange={e => setSearch(e.target.value)}
-                            placeholder={`搜索 ${books.length} 本书`}
-                            className="reading-search-input"
-                        />
+                {showSearchBar && (
+                    <div className="px-4 pb-3">
+                        <div className="reading-search-bar">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                            <input
+                                ref={searchInputRef}
+                                value={search}
+                                onChange={e => setSearch(e.target.value)}
+                                placeholder={`搜索 ${books.length} 本书`}
+                                className="reading-search-input"
+                            />
+                        </div>
                     </div>
-                </div>
+                )}
 
                 {importing && (
                     <div className="text-center ts-13 py-2" style={{ color: "var(--reading-warm-brown, #8a5a2b)" }}>
@@ -641,7 +745,7 @@ export function ReadingShelf({ onOpenBook, onClose, appearance, backgroundUrl, l
 
                 {filteredBooks.length === 0 ? (
                     <div className="py-10 text-center ts-14" style={{ color: "var(--reading-warm-ink-tertiary, #999)" }}>
-                        {books.length === 0 ? "还没有书籍，点右上角 + 导入" : "没有匹配的书籍"}
+                        {books.length === 0 ? "还没有书籍，点右上角菜单导入" : "没有匹配的书籍"}
                     </div>
                 ) : (
                     <div className="reading-book-list">
