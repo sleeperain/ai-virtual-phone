@@ -628,6 +628,57 @@ function StatusClock() {
   return <span className="status-time">{label}</span>;
 }
 
+type BatteryManagerLike = {
+  level: number;
+  charging?: boolean;
+  addEventListener?: (type: string, listener: () => void) => void;
+  removeEventListener?: (type: string, listener: () => void) => void;
+};
+
+function StatusBattery() {
+  const [level, setLevel] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (typeof navigator === "undefined") return;
+    const nav = navigator as Navigator & { getBattery?: () => Promise<BatteryManagerLike> };
+    if (typeof nav.getBattery !== "function") return;
+    let cancelled = false;
+    let battery: BatteryManagerLike | null = null;
+    const sync = () => {
+      if (cancelled || !battery) return;
+      const raw = Number(battery.level);
+      if (Number.isFinite(raw)) {
+        setLevel(Math.max(0, Math.min(1, raw)));
+      }
+    };
+    void nav.getBattery().then((b) => {
+      if (cancelled || !b) return;
+      battery = b;
+      sync();
+      b.addEventListener?.("levelchange", sync);
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+      battery?.removeEventListener?.("levelchange", sync);
+    };
+  }, []);
+
+  const barWidth = level === null ? 14 : Math.max(0, Math.min(19, Math.round(level * 19 * 10) / 10));
+  const barFill = level !== null && level < 0.05
+    ? "#ef4444"
+    : level !== null && level < 0.2
+      ? "#eab308"
+      : "currentColor";
+
+  return (
+    <svg viewBox="0 0 26 12" className="status-battery" fill="currentColor">
+      <rect x="0.5" y="0.5" width="22" height="11" rx="2.6" fill="none" stroke="currentColor" strokeOpacity="0.42" strokeWidth="1" />
+      <rect x="22.7" y="4" width="1.8" height="4" rx="0.7" opacity="0.42" />
+      {barWidth > 0 && <rect x="2" y="2" width={barWidth} height="8" rx="1.5" fill={barFill} />}
+    </svg>
+  );
+}
+
 function collectCssOverrides(profile: ThemeProfile): Record<string, string> {
   const overrides: Record<string, string> = {};
   for (const [key, value] of Object.entries(profile.cssOverrides)) {
@@ -4317,11 +4368,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
                     <path d="M131.9,27.8c5.4,0.1,9.8,2,13.6,5.5c1.1,1,1.2,2,0.1,3c-0.9,0.9-1.9,1.8-2.7,2.8c-1.1,1.4-2.1,1.3-3.4,0.2c-3.6-3-7.7-3.7-12.1-1.9c-1.3,0.5-2.4,1.3-3.4,2.2c-0.9,0.8-1.8,0.9-2.6-0.1c-1.1-1.1-2.1-2.2-3.2-3.3c-0.9-1-0.8-1.8,0.1-2.8C122.2,29.8,126.8,27.9,131.9,27.8z" />
                     <path d="M132,41.6c1.8,0,3.5,0.5,5,1.6c0.9,0.6,1.1,1.3,0.2,2.2c-1.5,1.5-2.9,2.9-4.4,4.4c-0.7,0.7-1.2,0.6-1.8,0c-1.5-1.6-2.9-3.1-4.4-4.6c-0.7-0.8-0.5-1.3,0.2-1.9C128.4,42.1,130.1,41.5,132,41.6z" />
                   </svg>
-                  <svg viewBox="0 0 26 12" className="status-battery" fill="currentColor">
-                    <rect x="0.5" y="0.5" width="22" height="11" rx="2.6" fill="none" stroke="currentColor" strokeOpacity="0.42" strokeWidth="1" />
-                    <rect x="22.7" y="4" width="1.8" height="4" rx="0.7" opacity="0.42" />
-                    <rect x="2" y="2" width="14" height="8" rx="1.5" />
-                  </svg>
+                  <StatusBattery />
                 </div>
               </header>
 

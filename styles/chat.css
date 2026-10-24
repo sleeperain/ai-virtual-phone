@@ -4782,15 +4782,15 @@
   line-height: var(--reading-line-height, 1.9);
   color: var(--reading-text-color, var(--reading-warm-ink, #111));
   margin: 0;
-  text-align: justify;
-  text-align-last: justify;
+  text-align: var(--reading-text-align, justify);
+  text-align-last: var(--reading-text-align, justify);
   text-justify: inter-character;
 }
 .reading-line-indent {
   text-indent: 2em;
 }
 .reading-line-seg-end {
-  text-align-last: left;
+  text-align-last: var(--reading-text-align-last, left);
 }
 .reading-line-gap {
   height: 20px;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useContext } from "react";
-import { Plus, RefreshCw, Rss, AlertCircle, FileEdit, Trash2, X, Check, Copy, Folder, FolderPlus, FolderInput, Pencil, ChevronRight, Pin } from "lucide-react";
+import { Plus, RefreshCw, Rss, AlertCircle, FileEdit, Trash2, X, Check, Copy, Folder, FolderPlus, FolderInput, Pencil, ChevronRight, Pin, List } from "lucide-react";
 import { SettingsContext } from "../phone-settings-app";
 import { useLongPressReorder } from "./use-long-press-reorder";
 import { applyGroupOrder } from "@/lib/list-order";
@@ -62,6 +62,8 @@ export function ApiSettings() {
     // Testing and Fetching states
     const [isFetching, setIsFetching] = useState<Record<string, boolean>>({});
     const [fetchedModels, setFetchedModels] = useState<Record<string, string[]>>({});
+    const [modelPickerConfigId, setModelPickerConfigId] = useState<string | null>(null);
+    const [modelSearchQuery, setModelSearchQuery] = useState("");
     const [isTesting, setIsTesting] = useState<Record<string, boolean>>({});
     const [testResult, setTestResult] = useState<Record<string, { success: boolean; message: string }>>({});
 
@@ -281,6 +283,10 @@ export function ApiSettings() {
             }
             setFetchedModels(prev => ({ ...prev, [config.id]: modelNames }));
             setTestResult(prev => ({ ...prev, [config.id]: { success: true, message: `成功获取 ${modelNames.length} 个模型` } }));
+            if (modelNames.length > 0) {
+                setModelSearchQuery("");
+                setModelPickerConfigId(config.id);
+            }
         } catch (error: unknown) {
             const msg = error instanceof Error ? error.message : String(error);
             setTestResult(prev => ({ ...prev, [config.id]: { success: false, message: `拉取失败: ${msg}` } }));
@@ -640,25 +646,27 @@ export function ApiSettings() {
                                         <div className="flex flex-col gap-1">
                                             <label className="menu-desc ml-1">默认模型 (Default Model)</label>
                                             <div className="flex gap-2">
-                                                {fetchedModels[config.id] && fetchedModels[config.id].length > 0 ? (
-                                                    <select
-                                                        value={config.defaultModel}
-                                                        onChange={(e) => updateConfig(config.id, { defaultModel: e.target.value })}
-                                                        className="ui-select flex-1"
+                                                <input
+                                                    type="text"
+                                                    value={config.defaultModel}
+                                                    onChange={(e) => updateConfig(config.id, { defaultModel: e.target.value })}
+                                                    placeholder="gpt-4o, claude-3-opus..."
+                                                    className="ui-input flex-1"
+                                                />
+                                                {fetchedModels[config.id] && fetchedModels[config.id].length > 0 && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setModelSearchQuery("");
+                                                            setModelPickerConfigId(config.id);
+                                                        }}
+                                                        className="ui-btn ui-btn-soft-action shrink-0 px-3"
+                                                        title="从已拉取列表选择模型"
+                                                        aria-label="从已拉取列表选择模型"
                                                     >
-                                                        <option value="">请选择模型...</option>
-                                                        {fetchedModels[config.id].map(m => (
-                                                            <option key={m} value={m}>{m}</option>
-                                                        ))}
-                                                    </select>
-                                                ) : (
-                                                    <input
-                                                        type="text"
-                                                        value={config.defaultModel}
-                                                        onChange={(e) => updateConfig(config.id, { defaultModel: e.target.value })}
-                                                        placeholder="gpt-4o, claude-3-opus..."
-                                                        className="ui-input flex-1"
-                                                    />
+                                                        <List size={16} />
+                                                        <span>模型列表</span>
+                                                    </button>
                                                 )}
                                             </div>
                                         </div>
@@ -826,6 +834,78 @@ export function ApiSettings() {
                             </button>
                         </div>
                     </BottomSheet>
+                );
+            })()}
+
+            {modelPickerConfigId && (() => {
+                const pickerConfig = configs.find(c => c.id === modelPickerConfigId);
+                const allModels = fetchedModels[modelPickerConfigId] || [];
+                const keyword = modelSearchQuery.trim().toLowerCase();
+                const filteredModels = keyword
+                    ? allModels.filter(m => m.toLowerCase().includes(keyword))
+                    : allModels;
+                return (
+                    <div
+                        className="modal-overlay"
+                        data-ui="modal"
+                        onClick={() => setModelPickerConfigId(null)}
+                    >
+                        <div
+                            className="binding-picker-dialog"
+                            role="dialog"
+                            aria-modal="true"
+                            aria-label="选择模型"
+                            onClick={(event) => event.stopPropagation()}
+                        >
+                            <div className="binding-picker-header">
+                                <button
+                                    type="button"
+                                    className="binding-picker-icon-btn"
+                                    onClick={() => setModelPickerConfigId(null)}
+                                    aria-label="关闭"
+                                >
+                                    <X size={17} />
+                                </button>
+                                <h3 className="binding-picker-title">选择模型</h3>
+                                <span className="binding-picker-header-spacer" />
+                            </div>
+                            <div className="binding-picker-body">
+                                <div className="binding-sheet-list">
+                                    <Input
+                                        type="text"
+                                        value={modelSearchQuery}
+                                        onChange={(e) => setModelSearchQuery(e.target.value)}
+                                        placeholder="搜索模型名称..."
+                                    />
+                                    {filteredModels.length === 0 ? (
+                                        <div className="binding-sheet-empty">
+                                            {allModels.length === 0 ? "暂无可选模型" : "未找到匹配的模型"}
+                                        </div>
+                                    ) : (
+                                        filteredModels.map(modelName => {
+                                            const selected = pickerConfig?.defaultModel === modelName;
+                                            return (
+                                                <button
+                                                    key={modelName}
+                                                    type="button"
+                                                    className="binding-sheet-option"
+                                                    data-selected={selected}
+                                                    aria-pressed={selected}
+                                                    onClick={() => {
+                                                        updateConfig(modelPickerConfigId, { defaultModel: modelName });
+                                                        setModelPickerConfigId(null);
+                                                    }}
+                                                >
+                                                    <span className="binding-sheet-check">{selected && <Check size={15} />}</span>
+                                                    <span className="binding-sheet-option-text">{modelName}</span>
+                                                </button>
+                                            );
+                                        })
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 );
             })()}
 

@@ -5,6 +5,7 @@
 // ucal- 前缀一对一换成 caltool-，方便和插件 CSS 逐条对照。
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { ChevronLeft } from "lucide-react";
 import {
     clearCalendarMemos,
     clearUserCalendarEvents,
@@ -118,7 +119,9 @@ function ToolSheet({
         >
             <div className="calendar-edit-modal caltool-modal">
                 <div className="modal-header">
-                    <button type="button" className="modal-header-btn modal-header-btn-muted" aria-label="返回" onClick={onBack}>‹</button>
+                    <button type="button" className="modal-header-btn modal-header-btn-muted" aria-label="返回" onClick={onBack}>
+                        <ChevronLeft size={18} />
+                    </button>
                     <span className="modal-header-title">{title}</span>
                     <button
                         type="button"

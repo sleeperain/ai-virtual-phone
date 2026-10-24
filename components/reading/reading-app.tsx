@@ -325,6 +325,20 @@ export default function ReadingApp({ onClose }: Props) {
         // 否则把批注字号调大以后，署名还是原来那么小，看着像没跟上。
         annotationCardCss("", annotationStyle),
         annotationCardCss('[data-author="user"]', userAnnotationStyle),
+        // 正文文字排版对齐（左对齐 / 右对齐 / 居中对齐 / 两端对齐）
+        (() => {
+            const align = appearance.textAlign ?? "justify";
+            return [
+                ".reading-app-surface .reading-line,",
+                ".reading-app-surface .reading-paragraph {",
+                `  text-align: ${align};`,
+                `  text-align-last: ${align};`,
+                "}",
+                ".reading-app-surface .reading-line-seg-end {",
+                `  text-align-last: ${align === "justify" ? "left" : align};`,
+                "}",
+            ].join("\n");
+        })(),
         // 高亮 / 划线的颜色。自己划的和角色划的分开配，默认也不是一个色系，
         // 一眼看得出这道线是谁划的。没有 data-author 的老数据算自己划的。
         markColorCss("", appearance.highlightColor, appearance.underlineColor),
@@ -346,6 +360,8 @@ export default function ReadingApp({ onClose }: Props) {
         ["--reading-font-size" as "--reading-font-size"]: `${appearance.fontSize}px`,
         ["--reading-text-color" as "--reading-text-color"]: look?.textColor || appearance.textColor,
         ["--reading-line-height" as "--reading-line-height"]: String(appearance.lineHeight),
+        ["--reading-text-align" as "--reading-text-align"]: appearance.textAlign ?? "justify",
+        ["--reading-text-align-last" as "--reading-text-align-last"]: (appearance.textAlign ?? "justify") === "justify" ? "left" : (appearance.textAlign ?? "justify"),
         ["--reading-bg-image" as "--reading-bg-image"]: backgroundLayers,
     } as CSSProperties;
     // 传给阅读器，让它在字体/字号/行距变化后重新分页。批注字体也算进来：

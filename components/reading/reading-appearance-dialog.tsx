@@ -4,14 +4,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Code2, Highlighter, ImagePlus, Palette, Trash2 } from "lucide-react";
 import { ContentDialog } from "@/components/ui/modal";
 import { ReadingSettingsSection } from "./reading-settings-section";
-import { ColorInput, Slider } from "@/components/ui/form";
-import type { ReadingAnnotationFontFamilyId, ReadingAppearance } from "@/lib/reading-appearance";
+import { ColorInput, Select, Slider } from "@/components/ui/form";
+import type { ReadingAnnotationFontFamilyId, ReadingAppearance, ReadingTextAlign } from "@/lib/reading-appearance";
 import {
     READING_ANNOTATION_FONT_SIZE_MAX,
     READING_ANNOTATION_FONT_SIZE_MIN,
     READING_ANNOTATION_STYLE_DEFAULTS,
     READING_BG_BRIGHTNESS_MAX,
     READING_BG_BRIGHTNESS_MIN,
+    READING_TEXT_ALIGN_OPTIONS,
     readingBackgroundOverlay,
     readingMarkColor,
     resolveReadingAnnotationFontFamily,
@@ -242,6 +243,17 @@ export function ReadingAppearanceDialog({ appearance, backgroundUrl, loadedFonts
                         onChange={(e) => setDraft((prev) => ({ ...prev, lineHeight: Number(e.target.value) }))}
                         displayValue={draft.lineHeight.toFixed(1)}
                     />
+                    <label className="reading-settings-label">
+                        <span>文字排版对齐</span>
+                        <Select
+                            value={draft.textAlign ?? "justify"}
+                            onChange={(e) => setDraft((prev) => ({ ...prev, textAlign: e.target.value as ReadingTextAlign }))}
+                        >
+                            {READING_TEXT_ALIGN_OPTIONS.map((option) => (
+                                <option key={option.id} value={option.id}>{option.label}</option>
+                            ))}
+                        </Select>
+                    </label>
                     <div className="reading-settings-color-row reading-look-per-set-row">
                         <span className="reading-settings-label-inline">
                             文字颜色

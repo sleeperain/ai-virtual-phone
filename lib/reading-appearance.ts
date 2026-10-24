@@ -16,11 +16,22 @@ export type ReadingFontFamilyId =
 /** 批注字体可以单独指定，也可以跟随正文（默认）。 */
 export type ReadingAnnotationFontFamilyId = "inherit" | ReadingFontFamilyId;
 
+/** 解析后文字排版对齐方式：左对齐 / 右对齐 / 居中对齐 / 两端对齐（默认） */
+export type ReadingTextAlign = "left" | "right" | "center" | "justify";
+
+export const READING_TEXT_ALIGN_OPTIONS: Array<{ id: ReadingTextAlign; label: string }> = [
+    { id: "left", label: "左对齐" },
+    { id: "right", label: "右对齐" },
+    { id: "center", label: "居中对齐" },
+    { id: "justify", label: "两端对齐" },
+];
+
 export type ReadingAppearance = {
     fontFamily: ReadingFontFamilyId;
     fontSize: number;
     textColor: string;
     lineHeight: number;
+    textAlign?: ReadingTextAlign;
     customFontName?: string;
     /** 缺省即「跟随正文」，老配置读出来就是这个，行为与改动前一致。 */
     annotationFontFamily?: ReadingAnnotationFontFamilyId;
@@ -204,6 +215,7 @@ export const DEFAULT_READING_APPEARANCE: ReadingAppearance = {
     fontSize: 20,
     textColor: "#111111",
     lineHeight: 2.3,
+    textAlign: "justify",
 };
 
 function clamp(value: number, min: number, max: number): number {
@@ -278,9 +290,12 @@ function normalizeAppearance(raw: Partial<ReadingAppearance> | null | undefined)
 
     const charCardColor = color(raw?.annotationCardColor, READING_ANNOTATION_STYLE_DEFAULTS.cardColor);
     const userCardColor = color(raw?.userAnnotationCardColor, READING_ANNOTATION_STYLE_DEFAULTS.userCardColor);
+    const textAlign: ReadingTextAlign = READING_TEXT_ALIGN_OPTIONS.some((option) => option.id === raw?.textAlign)
+        ? raw!.textAlign!
+        : "justify";
 
     return {
-        fontFamily, fontSize, textColor, lineHeight, customFontName,
+        fontFamily, fontSize, textColor, lineHeight, textAlign, customFontName,
         annotationFontFamily, annotationCustomFontName,
         annotationFontSize: annotationSize(raw?.annotationFontSize),
         annotationLineHeight: annotationLine(raw?.annotationLineHeight),

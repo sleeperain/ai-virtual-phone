@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { Columns2, Settings2 } from "lucide-react";
+import { ChevronLeft, Columns2, Settings2 } from "lucide-react";
 import type { CalendarScheduleItem } from "@/lib/calendar-types";
 import type { MenstrualDayState } from "@/lib/menstrual-storage";
 import { formatIsoDate, parseIsoDate, timeToMinutes } from "@/lib/calendar-utils";
@@ -336,7 +336,7 @@ export function CalendarDetailPage({
     <div className="calendar-page calendar-page-detail">
       <div className="calendar-apple-topbar">
         <button type="button" className="calendar-pill-btn calendar-back-btn" onClick={onBack}>
-          <span aria-hidden="true">‹</span> {backLabel}
+          <ChevronLeft size={19} /> {backLabel}
         </button>
         <span className="calendar-topbar-space" />
         <button type="button" className="calendar-icon-btn" onClick={onOpenDaysPicker} aria-label="每页天数">
