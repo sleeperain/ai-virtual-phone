@@ -2513,6 +2513,18 @@ async function generateNativeChatCompletion(
         }
     }
 
+    // Memory: increment event counter + check if summarization needed (non-blocking)
+    // Native tool loop previously returned early without triggering auto-summarization!
+    (async () => {
+        try {
+            incrementEventCounter(character.id); // user message
+            incrementEventCounter(character.id); // AI reply
+            await maybeRunSummarization(character.id, character.name);
+        } catch (err) {
+            console.warn("[ChatEngine] Native memory counter/summarization failed:", err);
+        }
+    })();
+
     return { parts };
 }
 

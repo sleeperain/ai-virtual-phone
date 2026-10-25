@@ -36,17 +36,31 @@ export async function retrieveMemoriesForPrompt(
         return longTermEntries;
     }
 
-    // Strategy 2: vector recall enabled + embedding API configured → vector search, fill by relevance
+    // Strategy 2: vector recall enabled + embedding API configured → vector + keyword hybrid score, fill by relevance
     const embeddingApiConfig = config.vectorRecallEnabled ? resolveAuxiliaryApiConfig("embeddingApiConfigId") : null;
     if (embeddingApiConfig && resolveEmbeddingModel(embeddingApiConfig)) {
         const queryEmbedding = await generateEmbedding(currentContext, embeddingApiConfig);
         if (queryEmbedding) {
             const withEmbeddings = longTermEntries.filter(m => m.embedding && m.embedding.length > 0);
             if (withEmbeddings.length > 0) {
-                const scored = withEmbeddings.map(entry => ({
-                    entry,
-                    score: cosineSimilarity(queryEmbedding, entry.embedding!),
-                }));
+                const lowerCtx = currentContext.toLowerCase();
+                const scored = withEmbeddings.map(entry => {
+                    let score = cosineSimilarity(queryEmbedding, entry.embedding!);
+                    const kws = Array.isArray(entry.metadata?.keywords)
+                        ? (entry.metadata.keywords as unknown[]).map(String)
+                        : [];
+                    if (kws.length > 0) {
+                        let hits = 0;
+                        for (const kw of kws) {
+                            const norm = kw.trim().toLowerCase();
+                            if (norm && lowerCtx.includes(norm)) hits++;
+                        }
+                        if (hits > 0) {
+                            score += Math.min(0.18, hits * 0.05);
+                        }
+                    }
+                    return { entry, score };
+                });
                 scored.sort((a, b) => b.score - a.score);
                 return fillByBudget(scored.map(s => s.entry), budget);
             }

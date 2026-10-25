@@ -352,14 +352,23 @@ export default function MusicPlayer() {
         setShowPlaylistPicker(false);
     }, [neteaseId]);
 
-    // ── Listen Together State ──
+    // ── Listen Together & Share Menu State ──
     const [listenTogether, setListenTogether] = useState<ListenTogetherSession | null>(null);
     const [listenSeconds, setListenSeconds] = useState(0);
+    const [shareMenuAnchor, setShareMenuAnchor] = useState<"top" | "bottom" | null>(null);
+    const [showInviteFriendsModal, setShowInviteFriendsModal] = useState(false);
+    const [friendCandidates, setFriendCandidates] = useState<Array<{
+        sessionId: string;
+        contactId: string;
+        name: string;
+        avatar: string | null;
+        bio?: string;
+    }>>([]);
 
     const resolveListenTogetherSession = useCallback(async (sessionId: string, contactId?: string) => {
         const sessions = loadChatSessions();
-        const sess = sessions.find(s => s.id === sessionId);
-        const cid = contactId || sess?.contactId || "";
+        const sess = sessions.find(s => s.id === sessionId) || (contactId ? sessions.find(s => !s.isGroup && s.contactId === contactId) : undefined);
+        const cid = contactId || sess?.contactId || sessionId;
         const chars = loadCharacters();
         const char = chars.find(c => c.id === cid);
         const charName = sess?.alias || char?.name || sess?.groupName || "TA";
@@ -382,13 +391,14 @@ export default function MusicPlayer() {
             }
         }
 
-        const statsKey = LISTEN_TOGETHER_STATS_PREFIX + (cid || sessionId);
+        const keyId = cid || sessionId;
+        const statsKey = LISTEN_TOGETHER_STATS_PREFIX + keyId;
         const savedSecs = Number(kvGet(statsKey) || "0");
         const initialSecs = Number.isFinite(savedSecs) && savedSecs >= 0 ? Math.floor(savedSecs) : 0;
 
         const nextSession: ListenTogetherSession = {
-            sessionId,
-            contactId: cid || sessionId,
+            sessionId: sess?.id || sessionId,
+            contactId: keyId,
             charName,
             charAvatar,
             userAvatar,
@@ -397,7 +407,7 @@ export default function MusicPlayer() {
         setListenTogether(nextSession);
         setListenSeconds(initialSecs);
         try {
-            kvSet(LISTEN_TOGETHER_SESSION_KEY, JSON.stringify({ sessionId, contactId: cid }));
+            kvSet(LISTEN_TOGETHER_SESSION_KEY, JSON.stringify({ sessionId: nextSession.sessionId, contactId: keyId }));
         } catch { /* ignore */ }
     }, []);
 
@@ -407,60 +417,87 @@ export default function MusicPlayer() {
             const raw = kvGet(LISTEN_TOGETHER_SESSION_KEY);
             if (!raw) return;
             const parsed = JSON.parse(raw) as { sessionId?: string; contactId?: string };
-            if (parsed?.sessionId) {
-                void resolveListenTogetherSession(parsed.sessionId, parsed.contactId);
+            if (parsed?.sessionId || parsed?.contactId) {
+                void resolveListenTogetherSession(parsed.sessionId || parsed.contactId!, parsed.contactId);
             }
         } catch { /* ignore */ }
     }, [resolveListenTogetherSession]);
 
-    // Listen for share selection event from mini-chat
+    // Listen for explicit listen-together start event
     useEffect(() => {
         const handler = (e: Event) => {
             const detail = (e as CustomEvent<{ sessionId?: string; contactId?: string }>).detail;
-            if (!detail?.sessionId) return;
-            void resolveListenTogetherSession(detail.sessionId, detail.contactId);
+            if (!detail?.sessionId && !detail?.contactId) return;
+            void resolveListenTogetherSession(detail.sessionId || detail.contactId!, detail.contactId);
         };
         window.addEventListener("music-listen-together-start", handler);
         return () => window.removeEventListener("music-listen-together-start", handler);
     }, [resolveListenTogetherSession]);
 
-    // Accumulate listen-together duration while playing
+    // Sync duration from global MusicProvider ticker (which runs even when MusicPlayer is closed)
     useEffect(() => {
-        if (!listenTogether || !player.isPlaying) return;
+        if (!listenTogether) return;
         const statsKey = LISTEN_TOGETHER_STATS_PREFIX + listenTogether.contactId;
-        const timer = setInterval(() => {
-            setListenSeconds(prev => {
-                const next = prev + 1;
-                try { kvSet(statsKey, String(next)); } catch { /* ignore */ }
-                return next;
-            });
-        }, 1000);
-        return () => clearInterval(timer);
-    }, [listenTogether, player.isPlaying]);
+        const saved = Number(kvGet(statsKey) || "0");
+        if (Number.isFinite(saved) && saved >= 0) {
+            setListenSeconds(Math.floor(saved));
+        }
+        const onTick = (e: Event) => {
+            const detail = (e as CustomEvent<{ contactId?: string; seconds?: number }>).detail;
+            if (detail?.contactId === listenTogether.contactId && typeof detail.seconds === "number") {
+                setListenSeconds(detail.seconds);
+            }
+        };
+        window.addEventListener("music-listen-together-tick", onTick);
+        return () => window.removeEventListener("music-listen-together-tick", onTick);
+    }, [listenTogether]);
 
     const exitListenTogether = useCallback(() => {
         setListenTogether(null);
         try { kvSet(LISTEN_TOGETHER_SESSION_KEY, ""); } catch { /* ignore */ }
     }, []);
 
-    const openShareViaChat = useCallback(() => {
+    const handleShareToChat = useCallback(() => {
+        setShareMenuAnchor(null);
         if (!player.currentTrack) return;
-        if (!listenTogether) {
-            const sessions = loadChatSessions();
-            const firstSession = sessions.find(s => !s.isGroup && s.contactId) || sessions[0];
-            if (firstSession) {
-                void resolveListenTogetherSession(firstSession.id, firstSession.contactId);
-            } else {
-                const chars = loadCharacters();
-                if (chars[0]) {
-                    void resolveListenTogetherSession(chars[0].id, chars[0].id);
-                }
-            }
-        }
         window.dispatchEvent(new CustomEvent("open-mini-chat", {
             detail: { share: { type: "music", title: player.currentTrack.title, artist: player.currentTrack.artist } },
         }));
-    }, [player.currentTrack, listenTogether, resolveListenTogetherSession]);
+    }, [player.currentTrack]);
+
+    const handleOpenInviteFriends = useCallback(async () => {
+        setShareMenuAnchor(null);
+        const sessions = loadChatSessions();
+        const chars = loadCharacters();
+        const directSessionByCharId = new Map<string, ReturnType<typeof loadChatSessions>[number]>();
+        for (const s of sessions) {
+            if (!s.isGroup && s.contactId && !directSessionByCharId.has(s.contactId)) {
+                directSessionByCharId.set(s.contactId, s);
+            }
+        }
+        const list = await Promise.all(chars.map(async (char) => {
+            const sess = directSessionByCharId.get(char.id);
+            let avatar = char.avatar || null;
+            if (sess?.avatarOverrides?.[char.id]) {
+                const overrideUrl = await getChatImageFromIndexedDB(sess.avatarOverrides[char.id]).catch(() => null);
+                if (overrideUrl) avatar = overrideUrl;
+            }
+            return {
+                sessionId: sess?.id || char.id,
+                contactId: char.id,
+                name: sess?.alias || char.name || "TA",
+                avatar,
+                bio: char.description?.slice(0, 36) || "",
+            };
+        }));
+        setFriendCandidates(list);
+        setShowInviteFriendsModal(true);
+    }, []);
+
+    const handleSelectInviteFriend = useCallback((candidate: { sessionId: string; contactId: string }) => {
+        setShowInviteFriendsModal(false);
+        void resolveListenTogetherSession(candidate.sessionId, candidate.contactId);
+    }, [resolveListenTogetherSession]);
 
     const openMiniChat = useCallback(() => {
         window.dispatchEvent(new CustomEvent("open-mini-chat"));
@@ -629,14 +666,43 @@ export default function MusicPlayer() {
                             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
                         </svg>
                     </button>
-                    <button className="music-player-ctrl-btn mp-top-btn" onClick={openShareViaChat} title="分享到聊天">
-                        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                            <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" />
-                            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-                        </svg>
-                    </button>
+                    <div className="mp-share-menu-wrap">
+                        <button
+                            type="button"
+                            className="music-player-ctrl-btn mp-top-btn"
+                            onClick={() => setShareMenuAnchor(prev => prev === "top" ? null : "top")}
+                            title="分享"
+                        >
+                            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                                <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" />
+                                <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+                            </svg>
+                        </button>
+                        {shareMenuAnchor === "top" && (
+                            <div className="mp-share-dropdown mp-share-dropdown--top" onClick={e => e.stopPropagation()}>
+                                <button type="button" className="mp-share-dropdown-item" onClick={handleShareToChat}>
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                                    </svg>
+                                    <span>分享至...</span>
+                                </button>
+                                <button type="button" className="mp-share-dropdown-item" onClick={() => { void handleOpenInviteFriends(); }}>
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                                        <circle cx="9" cy="7" r="4" />
+                                        <line x1="19" y1="8" x2="19" y2="14" />
+                                        <line x1="22" y1="11" x2="16" y2="11" />
+                                    </svg>
+                                    <span>邀请好友一起听</span>
+                                </button>
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
+            {shareMenuAnchor && (
+                <div className="mp-share-menu-backdrop" onClick={() => setShareMenuAnchor(null)} />
+            )}
 
             {/* Listen Together banner (between header and body) */}
             {listenTogether && (
@@ -833,14 +899,77 @@ export default function MusicPlayer() {
                     </svg>
                     <span>{commentTotal > 0 ? formatCount(commentTotal) : "评论"}</span>
                 </button>
-                <button className="mp-social-btn" onClick={openShareViaChat}>
-                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" />
-                        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-                    </svg>
-                    <span>分享</span>
-                </button>
+                <div className="mp-share-menu-wrap">
+                    <button
+                        type="button"
+                        className="mp-social-btn"
+                        onClick={() => setShareMenuAnchor(prev => prev === "bottom" ? null : "bottom")}
+                    >
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" />
+                            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+                        </svg>
+                        <span>分享</span>
+                    </button>
+                    {shareMenuAnchor === "bottom" && (
+                        <div className="mp-share-dropdown mp-share-dropdown--bottom" onClick={e => e.stopPropagation()}>
+                            <button type="button" className="mp-share-dropdown-item" onClick={handleShareToChat}>
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                                </svg>
+                                <span>分享至...</span>
+                            </button>
+                            <button type="button" className="mp-share-dropdown-item" onClick={() => { void handleOpenInviteFriends(); }}>
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                                    <circle cx="9" cy="7" r="4" />
+                                    <line x1="19" y1="8" x2="19" y2="14" />
+                                    <line x1="22" y1="11" x2="16" y2="11" />
+                                </svg>
+                                <span>邀请好友一起听</span>
+                            </button>
+                        </div>
+                    )}
+                </div>
             </div>
+
+            {/* Invite friends to listen together modal */}
+            {showInviteFriendsModal && (
+                <div className="music-playlist-picker-overlay" onClick={() => setShowInviteFriendsModal(false)}>
+                    <div className="music-playlist-picker mp-invite-friends-modal" onClick={e => e.stopPropagation()}>
+                        <div className="music-playlist-picker-header">
+                            <span>邀请好友一起听</span>
+                            <button className="music-playlist-picker-close" onClick={() => setShowInviteFriendsModal(false)}>
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                            </button>
+                        </div>
+                        <div className="music-playlist-picker-list">
+                            {friendCandidates.length === 0 ? (
+                                <div className="music-playlist-picker-loading">暂无可邀请的好友</div>
+                            ) : friendCandidates.map(friend => (
+                                <button
+                                    key={friend.contactId}
+                                    type="button"
+                                    className="music-playlist-picker-item mp-invite-friend-item"
+                                    onClick={() => handleSelectInviteFriend(friend)}
+                                >
+                                    <div className="mp-invite-friend-avatar">
+                                        {friend.avatar ? (
+                                            <img src={friend.avatar} alt="" />
+                                        ) : (
+                                            <span>{friend.name.slice(0, 1) || "TA"}</span>
+                                        )}
+                                    </div>
+                                    <div className="music-playlist-picker-info">
+                                        <div className="music-playlist-picker-name">{friend.name}</div>
+                                        {friend.bio ? <div className="music-playlist-picker-count">{friend.bio}</div> : null}
+                                    </div>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Queue drawer */}
             {showQueue && (

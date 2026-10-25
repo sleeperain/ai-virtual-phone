@@ -4269,14 +4269,27 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                                     <div className="reading-comment-main">
                                                         <div className="reading-comment-name-row">
                                                             <span className="reading-comment-name">{author.name}</span>
-                                                            <button
-                                                                type="button"
-                                                                className="reading-comment-delete-btn"
-                                                                onClick={() => { void handleDeleteReadingAnnotation(comment.id); }}
-                                                                aria-label="删除段评"
-                                                            >
-                                                                删除
-                                                            </button>
+                                                            <div className="reading-comment-head-actions">
+                                                                <button
+                                                                    type="button"
+                                                                    className="reading-comment-edit-btn"
+                                                                    onClick={() => {
+                                                                        setEditingAnnotation(comment);
+                                                                        setEditingText(comment.content);
+                                                                    }}
+                                                                    aria-label="编辑段评"
+                                                                >
+                                                                    编辑
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    className="reading-comment-delete-btn"
+                                                                    onClick={() => { void handleDeleteReadingAnnotation(comment.id); }}
+                                                                    aria-label="删除段评"
+                                                                >
+                                                                    删除
+                                                                </button>
+                                                            </div>
                                                         </div>
                                                         <div className="reading-comment-content">{comment.content}</div>
                                                         <div className="reading-comment-meta">
@@ -4318,14 +4331,27 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                                                                             <span className="reading-comment-reply-to"> 回复 {reply.replyToName}</span>
                                                                                         ) : null}
                                                                                     </span>
-                                                                                    <button
-                                                                                        type="button"
-                                                                                        className="reading-comment-delete-btn"
-                                                                                        onClick={() => { void handleDeleteReadingAnnotation(reply.id); }}
-                                                                                        aria-label="删除回复"
-                                                                                    >
-                                                                                        删除
-                                                                                    </button>
+                                                                                    <div className="reading-comment-head-actions">
+                                                                                        <button
+                                                                                            type="button"
+                                                                                            className="reading-comment-edit-btn"
+                                                                                            onClick={() => {
+                                                                                                setEditingAnnotation(reply);
+                                                                                                setEditingText(reply.content);
+                                                                                            }}
+                                                                                            aria-label="编辑回复"
+                                                                                        >
+                                                                                            编辑
+                                                                                        </button>
+                                                                                        <button
+                                                                                            type="button"
+                                                                                            className="reading-comment-delete-btn"
+                                                                                            onClick={() => { void handleDeleteReadingAnnotation(reply.id); }}
+                                                                                            aria-label="删除回复"
+                                                                                        >
+                                                                                            删除
+                                                                                        </button>
+                                                                                    </div>
                                                                                 </div>
                                                                                 <div className="reading-comment-content">{reply.content}</div>
                                                                                 <div className="reading-comment-meta">

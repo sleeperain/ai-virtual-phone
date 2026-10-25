@@ -8395,6 +8395,13 @@
   color: var(--reading-warm-ink-tertiary, #999);
   font-size: calc(11.5px * var(--app-text-scale, 1));
 }
+.reading-comment-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.reading-comment-edit-btn,
 .reading-comment-delete-btn {
   border: 0;
   background: transparent;
@@ -8426,9 +8433,94 @@
   background: transparent;
   padding: 0;
   font-size: calc(11px * var(--app-text-scale, 1));
-  font-weight: 500;
-  color: var(--reading-warm-brown, #8a5a2b);
+  font-weight: 400;
+  color: var(--reading-warm-ink-tertiary, #999);
   cursor: pointer;
+}
+
+/* ══ 记忆库：Markdown、检索关键词与未解决问题标记 ══ */
+.mem-unresolved-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: rgba(217, 119, 6, 0.14);
+  color: #d97706;
+  font-size: calc(8.5px * var(--app-text-scale, 1));
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+.mem-markdown-body h1,
+.mem-markdown-body h2,
+.mem-markdown-body h3,
+.mem-markdown-body h4 {
+  font-size: calc(12.5px * var(--app-text-scale, 1));
+  font-weight: 700;
+  color: var(--c-text-title);
+  margin: 6px 0 3px;
+}
+.mem-markdown-body h1:first-child,
+.mem-markdown-body h2:first-child,
+.mem-markdown-body h3:first-child {
+  margin-top: 0;
+}
+.mem-markdown-body ul,
+.mem-markdown-body ol {
+  margin: 3px 0;
+  padding-left: 16px;
+}
+.mem-markdown-body li {
+  margin: 2px 0;
+}
+.mem-structured-footer {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--c-panel-border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mem-unresolved-box {
+  padding: 6px 9px;
+  border-radius: 10px;
+  background: rgba(217, 119, 6, 0.08);
+  border: 1px solid rgba(217, 119, 6, 0.22);
+  font-size: calc(11px * var(--app-text-scale, 1));
+  color: var(--c-text-title);
+}
+.mem-unresolved-title {
+  font-weight: 700;
+  color: #b45309;
+  display: block;
+  margin-bottom: 2px;
+}
+.mem-unresolved-list {
+  margin: 0;
+  padding-left: 15px;
+  line-height: 1.5;
+}
+.mem-keywords-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+.mem-keywords-label {
+  font-size: calc(10px * var(--app-text-scale, 1));
+  color: var(--c-text);
+  opacity: 0.7;
+  font-weight: 600;
+}
+.mem-keyword-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--c-text) 8%, transparent);
+  color: var(--c-text-title);
+  font-size: calc(10px * var(--app-text-scale, 1));
+  font-weight: 600;
 }
 /* 回复列表位于主评论 reading-comment-main 内，天然与第一行头像右侧的昵称左对齐 */
 .reading-comment-replies {

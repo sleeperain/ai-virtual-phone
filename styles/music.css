@@ -5029,9 +5029,9 @@
 
 .music-float-corner-btn {
     position: absolute;
-    top: 6px;
-    width: 24px;
-    height: 24px;
+    top: 5px;
+    width: 28px;
+    height: 28px;
     border: none;
     background: transparent;
     color: rgba(40, 44, 52, 0.72);
@@ -5127,8 +5127,8 @@
 }
 
 .music-float-ctrl-btn {
-    width: 32px;
-    height: 32px;
+    width: 36px;
+    height: 36px;
     flex-shrink: 0;
     border: none;
     background: transparent;
@@ -5153,8 +5153,8 @@
 }
 
 .music-float-ctrl-play {
-    width: 38px;
-    height: 38px;
+    width: 44px;
+    height: 44px;
     border-radius: 50%;
     border: 1.5px solid rgba(44, 49, 58, 0.65);
     background: rgba(255, 255, 255, 0.25);
@@ -5288,8 +5288,8 @@
 }
 
 .mp-listen-avatar {
-    width: 34px;
-    height: 34px;
+    width: 51px;
+    height: 51px;
     border-radius: 50%;
     overflow: hidden;
     background: rgba(255, 255, 255, 0.14);
@@ -5298,7 +5298,7 @@
     align-items: center;
     justify-content: center;
     color: #ffffff;
-    font-size: calc(12px * var(--app-text-scale, 1));
+    font-size: calc(16px * var(--app-text-scale, 1));
     font-weight: 600;
     flex-shrink: 0;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
@@ -5313,6 +5313,107 @@
 
 .mp-listen-avatar-char {
     margin-left: -4px;
+}
+
+/* ── Share Dropdown Menu & Invite Friends Modal ── */
+.mp-share-menu-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+
+.mp-share-menu-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 65;
+    background: transparent;
+}
+
+.mp-share-dropdown {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 6px);
+    z-index: 68;
+    min-width: 162px;
+    padding: 6px;
+    border-radius: 14px;
+    background: rgba(22, 25, 36, 0.94);
+    backdrop-filter: blur(20px) saturate(150%);
+    -webkit-backdrop-filter: blur(20px) saturate(150%);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.mp-share-dropdown--bottom {
+    top: calc(100% + 4px);
+    right: 0;
+}
+
+.mp-social {
+    overflow: visible;
+    padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+}
+
+.mp-top {
+    z-index: 66;
+}
+
+.mp-social {
+    z-index: 66;
+}
+
+.mp-share-dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    padding: 9px 11px;
+    border: none;
+    border-radius: 10px;
+    background: transparent;
+    color: #f3f5fa;
+    font-size: calc(12px * var(--app-text-scale, 1));
+    font-family: inherit;
+    font-weight: 500;
+    text-align: left;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.mp-share-dropdown-item:active {
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.mp-share-dropdown-item svg {
+    flex-shrink: 0;
+    opacity: 0.85;
+}
+
+.mp-invite-friend-avatar {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    overflow: hidden;
+    flex-shrink: 0;
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: calc(14px * var(--app-text-scale, 1));
+    font-weight: 600;
+}
+
+.mp-invite-friend-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
 }
 
 .mp-listen-text {

@@ -28,7 +28,10 @@ import {
 } from "@/lib/memory-storage";
 import { hydrateChatStorage } from "@/lib/chat-storage";
 import { loadNativeTimeline, type NativeTimelineEntry } from "@/lib/short-term-assembler";
-import { runSummarizationPipeline } from "@/lib/memory-summarizer";
+import { runSummarizationPipeline, extractMemoryStructuredMeta, stripMemoryStructuredSections } from "@/lib/memory-summarizer";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import remarkBreaks from "remark-breaks";
 import { runCoreMemoryPipeline } from "@/lib/core-memory-builder";
 import { resolveAuxiliaryApiConfig, resolveUserIdentity } from "@/lib/settings-storage";
 import { generateEmbedding, resolveEmbeddingModel } from "@/lib/memory-embedding";
@@ -592,8 +595,12 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             const type = memoryEditor.type;
             const source = memoryEditor.entry;
             const contentChanged = !source || source.content.trim() !== content;
+            const structuredMeta = type === "long_term" ? extractMemoryStructuredMeta(content) : { keywords: [], unresolvedIssues: [] };
+            const embeddingText = structuredMeta.keywords.length > 0
+                ? `关键词：${structuredMeta.keywords.join("、")}\n${content}`
+                : content;
             const embedding = type === "long_term"
-                ? (contentChanged ? await maybeBuildManualMemoryEmbedding(type, content) : source?.embedding)
+                ? (contentChanged ? await maybeBuildManualMemoryEmbedding(type, embeddingText) : source?.embedding)
                 : undefined;
             const entry: MemoryEntry = source
                 ? {
@@ -605,6 +612,9 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                         ...(source.metadata ?? {}),
                         origin: isManualMemoryEntry(source) ? "user_manual" : "user_edited",
                         editedByUser: true,
+                        keywords: structuredMeta.keywords,
+                        unresolvedIssues: structuredMeta.unresolvedIssues,
+                        hasUnresolved: structuredMeta.unresolvedIssues.length > 0,
                     },
                 }
                 : {
@@ -619,6 +629,8 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                     updatedAt: now,
                     metadata: {
                         origin: "user_manual",
+                        ...(structuredMeta.keywords.length > 0 ? { keywords: structuredMeta.keywords } : {}),
+                        ...(structuredMeta.unresolvedIssues.length > 0 ? { unresolvedIssues: structuredMeta.unresolvedIssues, hasUnresolved: true } : {}),
                     },
                 };
 
@@ -678,66 +690,107 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                         </button>
                     </div>
                 ) : (
-                    entries.map(entry => (
-                        <div
-                            key={entry.id}
-                            className={`g-card memory-report-card${entryMenuId === entry.id ? " is-menu-open" : ""}`}
-                            onClick={() => {
-                                if (entryMenuId) {
-                                    setEntryMenuId(null);
-                                    return;
-                                }
-                                setExpandedId(expandedId === entry.id ? null : entry.id);
-                            }}
-                        >
-                            <div className="mem-report-head">
-                                <span className="ts-11 text-secondary" style={{ letterSpacing: "1px" }}>[ DATE: {relativeTime(entry.createdAt)} ]</span>
-                                <div className="mem-report-actions">
-                                    <span className={`mem-origin-badge ${isManualMemoryEntry(entry) ? "is-manual" : ""}`}>
-                                        {isManualMemoryEntry(entry) ? "MANUAL" : "AUTO"}
-                                    </span>
-                                    <div className="mem-entry-menu-wrap">
-                                        <button
-                                            className="mem-entry-menu-btn"
-                                            onClick={(event) => {
-                                                event.stopPropagation();
-                                                setEntryMenuId(prev => prev === entry.id ? null : entry.id);
-                                            }}
-                                            title="更多"
-                                        >
-                                            <MoreHorizontal size={18} />
-                                        </button>
-                                        {entryMenuId === entry.id && (
-                                            <div className="mem-entry-menu" onClick={event => event.stopPropagation()}>
-                                                <button onClick={() => openEditMemoryEditor(entry)}>
-                                                    <Edit3 size={13} />
-                                                    <span>编辑</span>
-                                                </button>
-                                                <button
-                                                    className="is-danger"
-                                                    onClick={() => {
-                                                        setEntryMenuId(null);
-                                                        setConfirmDeleteEntryId(entry.id);
-                                                    }}
-                                                >
-                                                    <Trash2 size={13} />
-                                                    <span>删除</span>
-                                                </button>
+                    entries.map(entry => {
+                        const parsedMeta = extractMemoryStructuredMeta(entry.content);
+                        const keywords = Array.isArray(entry.metadata?.keywords) && (entry.metadata.keywords as unknown[]).length > 0
+                            ? (entry.metadata.keywords as unknown[]).map(String)
+                            : parsedMeta.keywords;
+                        const unresolvedIssues = Array.isArray(entry.metadata?.unresolvedIssues) && (entry.metadata.unresolvedIssues as unknown[]).length > 0
+                            ? (entry.metadata.unresolvedIssues as unknown[]).map(String)
+                            : parsedMeta.unresolvedIssues;
+                        const isExpanded = expandedId === entry.id;
+                        const cleanBody = (keywords.length > 0 || unresolvedIssues.length > 0)
+                            ? (stripMemoryStructuredSections(entry.content) || entry.content)
+                            : entry.content;
+                        const displayMarkdown = isExpanded || cleanBody.length <= 160
+                            ? cleanBody
+                            : cleanBody.slice(0, 160) + "...";
+
+                        return (
+                            <div
+                                key={entry.id}
+                                className={`g-card memory-report-card${entryMenuId === entry.id ? " is-menu-open" : ""}`}
+                                onClick={() => {
+                                    if (entryMenuId) {
+                                        setEntryMenuId(null);
+                                        return;
+                                    }
+                                    setExpandedId(isExpanded ? null : entry.id);
+                                }}
+                            >
+                                <div className="mem-report-head">
+                                    <span className="ts-11 text-secondary" style={{ letterSpacing: "1px" }}>[ DATE: {relativeTime(entry.createdAt)} ]</span>
+                                    <div className="mem-report-actions">
+                                        {unresolvedIssues.length > 0 && (
+                                            <span className="mem-unresolved-badge" title={`未解决问题：${unresolvedIssues.join("；")}`}>
+                                                待解决 {unresolvedIssues.length}
+                                            </span>
+                                        )}
+                                        <span className={`mem-origin-badge ${isManualMemoryEntry(entry) ? "is-manual" : ""}`}>
+                                            {isManualMemoryEntry(entry) ? "MANUAL" : "AUTO"}
+                                        </span>
+                                        <div className="mem-entry-menu-wrap">
+                                            <button
+                                                className="mem-entry-menu-btn"
+                                                onClick={(event) => {
+                                                    event.stopPropagation();
+                                                    setEntryMenuId(prev => prev === entry.id ? null : entry.id);
+                                                }}
+                                                title="更多"
+                                            >
+                                                <MoreHorizontal size={18} />
+                                            </button>
+                                            {entryMenuId === entry.id && (
+                                                <div className="mem-entry-menu" onClick={event => event.stopPropagation()}>
+                                                    <button onClick={() => openEditMemoryEditor(entry)}>
+                                                        <Edit3 size={13} />
+                                                        <span>编辑</span>
+                                                    </button>
+                                                    <button
+                                                        className="is-danger"
+                                                        onClick={() => {
+                                                            setEntryMenuId(null);
+                                                            setConfirmDeleteEntryId(entry.id);
+                                                        }}
+                                                    >
+                                                        <Trash2 size={13} />
+                                                        <span>删除</span>
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="ts-12 leading-[1.7] mem-markdown-body chat-markdown">
+                                    <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+                                        {displayMarkdown}
+                                    </ReactMarkdown>
+                                </div>
+                                {(unresolvedIssues.length > 0 || keywords.length > 0) && (
+                                    <div className="mem-structured-footer">
+                                        {unresolvedIssues.length > 0 && (
+                                            <div className="mem-unresolved-box">
+                                                <span className="mem-unresolved-title">⚠️ 未解决问题：</span>
+                                                <ul className="mem-unresolved-list">
+                                                    {unresolvedIssues.map((issue, idx) => (
+                                                        <li key={idx}>{issue}</li>
+                                                    ))}
+                                                </ul>
+                                            </div>
+                                        )}
+                                        {keywords.length > 0 && (
+                                            <div className="mem-keywords-row">
+                                                <span className="mem-keywords-label">向量检索词：</span>
+                                                {keywords.map((kw, idx) => (
+                                                    <span key={idx} className="mem-keyword-chip">{kw}</span>
+                                                ))}
                                             </div>
                                         )}
                                     </div>
-                                </div>
+                                )}
                             </div>
-                            <div className="ts-12 leading-[1.7]">
-                                {expandedId === entry.id
-                                    ? entry.content
-                                    : entry.content.length > 100
-                                        ? entry.content.slice(0, 100) + "..."
-                                        : entry.content
-                                }
-                            </div>
-                        </div>
-                    ))
+                        );
+                    })
                 )}
             </>
         );

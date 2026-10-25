@@ -282,10 +282,10 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
                         title="打开音乐播放页"
                         aria-label="打开音乐播放页"
                     >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                            <circle cx="12" cy="12" r="9" />
-                            <circle cx="12" cy="12" r="2.6" />
-                            <path d="M14.8 9.2a4 4 0 0 1 0 5.6" />
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M9 18V5l12-2v13" />
+                            <circle cx="6" cy="18" r="3" />
+                            <circle cx="18" cy="16" r="3" />
                         </svg>
                     </button>
                     <button
@@ -342,12 +342,12 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
                             aria-label="锁定桌面歌词"
                         >
                             {locked ? (
-                                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                                     <rect x="5" y="11" width="14" height="10" rx="2" />
                                     <path d="M8 11V7a4 4 0 0 1 8 0v4" />
                                 </svg>
                             ) : (
-                                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                                     <rect x="5" y="11" width="14" height="10" rx="2" />
                                     <path d="M8 11V7a4 4 0 0 1 7.75-1.3" />
                                 </svg>
@@ -362,7 +362,7 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
                             title="上一首"
                             aria-label="上一首"
                         >
-                            <svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
                                 <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
                             </svg>
                         </button>
@@ -376,11 +376,11 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
                             aria-label={player.isPlaying ? "暂停" : "播放"}
                         >
                             {player.isPlaying ? (
-                                <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+                                <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor">
                                     <path d="M6 4h4v16H6zm8 0h4v16h-4z" />
                                 </svg>
                             ) : (
-                                <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+                                <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor">
                                     <path d="M8 5v14l11-7z" />
                                 </svg>
                             )}
@@ -394,7 +394,7 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
                             title="下一首"
                             aria-label="下一首"
                         >
-                            <svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
                                 <path d="M6 18l8.5-6L6 6v12zm8.5 0h2V6h-2v12z" />
                             </svg>
                         </button>
@@ -415,7 +415,7 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
                             title="歌词设置"
                             aria-label="歌词设置"
                         >
-                            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                            <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                                 <circle cx="12" cy="12" r="3" />
                                 <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
                             </svg>

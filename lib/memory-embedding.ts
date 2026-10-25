@@ -143,7 +143,10 @@ export function keywordSearch(
     }
 
     const scored: MemorySearchResult[] = memories.map(entry => {
-        const entryTokens = extractTokens(entry.content);
+        const kws = Array.isArray(entry.metadata?.keywords)
+            ? (entry.metadata.keywords as unknown[]).map(String).join(" ")
+            : "";
+        const entryTokens = extractTokens(kws ? `${kws} ${entry.content}` : entry.content);
         if (entryTokens.length === 0) return { entry, score: 0 };
         let matched = 0;
         for (const qt of queryTokens) {

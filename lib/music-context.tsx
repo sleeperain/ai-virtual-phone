@@ -72,9 +72,11 @@ export function useMusicControlsOptional(): MusicControlsValue | null {
     return useContext(MusicControlsContext);
 }
 
-// ── Queue persistence ──
+// ── Queue & Listen Together persistence ──
 
 const QUEUE_STORAGE_KEY = "ai_phone_music_queue_v1";
+export const LISTEN_TOGETHER_SESSION_KEY = "ai_phone_music_listen_together_session_v1";
+export const LISTEN_TOGETHER_STATS_PREFIX = "ai_phone_music_listen_together_secs_";
 registerKvMigration(QUEUE_STORAGE_KEY);
 const QUEUE_MAX_SIZE = 200;
 
@@ -112,6 +114,30 @@ export function MusicProvider({ children }: { children: ReactNode }) {
     useEffect(() => {
         persistQueue(queue);
     }, [queue]);
+
+    // Global Listen Together duration tracker: continues counting whenever music is playing
+    // in a listen-together session, even if the user navigates away from MusicPlayer / MusicApp.
+    // Stops immediately when music pauses.
+    useEffect(() => {
+        if (!isPlaying) return;
+        const timer = setInterval(() => {
+            try {
+                const raw = kvGet(LISTEN_TOGETHER_SESSION_KEY);
+                if (!raw) return;
+                const parsed = JSON.parse(raw) as { sessionId?: string; contactId?: string };
+                const keyId = parsed?.contactId || parsed?.sessionId;
+                if (!keyId) return;
+                const statsKey = LISTEN_TOGETHER_STATS_PREFIX + keyId;
+                const prev = Number(kvGet(statsKey) || "0");
+                const next = (Number.isFinite(prev) && prev >= 0 ? Math.floor(prev) : 0) + 1;
+                kvSet(statsKey, String(next));
+                window.dispatchEvent(new CustomEvent("music-listen-together-tick", {
+                    detail: { contactId: keyId, seconds: next },
+                }));
+            } catch { /* ignore */ }
+        }, 1000);
+        return () => clearInterval(timer);
+    }, [isPlaying]);
 
     /** Wrapped setQueue with max size enforcement */
     const setQueue = useCallback((tracks: MusicTrack[]) => {
