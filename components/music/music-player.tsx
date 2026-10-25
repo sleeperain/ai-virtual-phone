@@ -11,12 +11,38 @@ import { extractCoverPalette, DEFAULT_COVER_PALETTE, type CoverPalette } from "@
 import {
     getUserPlaylists, addTracksToPlaylist, removeTracksFromPlaylist, getNeteasePlayInfo,
     isNeteaseConfigured, recordTrackPlaylist, removeTrackPlaylistRecord, getTrackPlaylistId,
-    getSongCommentPage, getNeteaseSongDetail,
+    getSongCommentPage, getNeteaseSongDetail, getNeteaseLyrics,
     type NeteasePlaylist,
 } from "@/lib/music-service";
 import MusicCommentsPage from "./music-comments";
 import MusicArtistPage from "./music-artist";
 import { loadMusicBg, playerBgStyle, MUSIC_BG_EVENT, type MusicBgConfig } from "@/lib/music-bg";
+import { loadCharacters } from "@/lib/character-storage";
+import { loadChatSessions } from "@/lib/chat-storage";
+import { resolveUserIdentity } from "@/lib/settings-storage";
+import { getChatImageFromIndexedDB } from "@/lib/chat-asset-storage";
+
+type ListenTogetherSession = {
+    sessionId: string;
+    contactId: string;
+    charName: string;
+    charAvatar: string | null;
+    userAvatar: string | null;
+    userName: string;
+};
+
+const LISTEN_TOGETHER_SESSION_KEY = "ai_phone_music_listen_together_session_v1";
+const LISTEN_TOGETHER_STATS_PREFIX = "ai_phone_music_listen_together_secs_";
+
+function formatListenDuration(totalSeconds: number): string {
+    const secs = Math.max(0, Math.floor(totalSeconds));
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    const s = secs % 60;
+    if (h > 0) return `${h}小时${m}分钟`;
+    if (m > 0) return `${m}分${s}秒`;
+    return `${s}秒`;
+}
 
 const PLAY_MODE_ICONS: Record<PlayMode, { svg: string; label: string }> = {
     sequence: {
@@ -326,12 +352,115 @@ export default function MusicPlayer() {
         setShowPlaylistPicker(false);
     }, [neteaseId]);
 
+    // ── Listen Together State ──
+    const [listenTogether, setListenTogether] = useState<ListenTogetherSession | null>(null);
+    const [listenSeconds, setListenSeconds] = useState(0);
+
+    const resolveListenTogetherSession = useCallback(async (sessionId: string, contactId?: string) => {
+        const sessions = loadChatSessions();
+        const sess = sessions.find(s => s.id === sessionId);
+        const cid = contactId || sess?.contactId || "";
+        const chars = loadCharacters();
+        const char = chars.find(c => c.id === cid);
+        const charName = sess?.alias || char?.name || sess?.groupName || "TA";
+        const identity = resolveUserIdentity(cid || undefined, "chat");
+        const userName = identity?.name || "我";
+
+        let charAvatar = char?.avatar || null;
+        let userAvatar = identity?.avatarUrl || null;
+
+        if (sess?.avatarOverrides) {
+            const selfOverrideId = sess.avatarOverrides["self"];
+            if (selfOverrideId) {
+                const url = await getChatImageFromIndexedDB(selfOverrideId).catch(() => null);
+                if (url) userAvatar = url;
+            }
+            const charOverrideId = cid ? sess.avatarOverrides[cid] : undefined;
+            if (charOverrideId) {
+                const url = await getChatImageFromIndexedDB(charOverrideId).catch(() => null);
+                if (url) charAvatar = url;
+            }
+        }
+
+        const statsKey = LISTEN_TOGETHER_STATS_PREFIX + (cid || sessionId);
+        const savedSecs = Number(kvGet(statsKey) || "0");
+        const initialSecs = Number.isFinite(savedSecs) && savedSecs >= 0 ? Math.floor(savedSecs) : 0;
+
+        const nextSession: ListenTogetherSession = {
+            sessionId,
+            contactId: cid || sessionId,
+            charName,
+            charAvatar,
+            userAvatar,
+            userName,
+        };
+        setListenTogether(nextSession);
+        setListenSeconds(initialSecs);
+        try {
+            kvSet(LISTEN_TOGETHER_SESSION_KEY, JSON.stringify({ sessionId, contactId: cid }));
+        } catch { /* ignore */ }
+    }, []);
+
+    // Restore persisted listen-together session on mount
+    useEffect(() => {
+        try {
+            const raw = kvGet(LISTEN_TOGETHER_SESSION_KEY);
+            if (!raw) return;
+            const parsed = JSON.parse(raw) as { sessionId?: string; contactId?: string };
+            if (parsed?.sessionId) {
+                void resolveListenTogetherSession(parsed.sessionId, parsed.contactId);
+            }
+        } catch { /* ignore */ }
+    }, [resolveListenTogetherSession]);
+
+    // Listen for share selection event from mini-chat
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const detail = (e as CustomEvent<{ sessionId?: string; contactId?: string }>).detail;
+            if (!detail?.sessionId) return;
+            void resolveListenTogetherSession(detail.sessionId, detail.contactId);
+        };
+        window.addEventListener("music-listen-together-start", handler);
+        return () => window.removeEventListener("music-listen-together-start", handler);
+    }, [resolveListenTogetherSession]);
+
+    // Accumulate listen-together duration while playing
+    useEffect(() => {
+        if (!listenTogether || !player.isPlaying) return;
+        const statsKey = LISTEN_TOGETHER_STATS_PREFIX + listenTogether.contactId;
+        const timer = setInterval(() => {
+            setListenSeconds(prev => {
+                const next = prev + 1;
+                try { kvSet(statsKey, String(next)); } catch { /* ignore */ }
+                return next;
+            });
+        }, 1000);
+        return () => clearInterval(timer);
+    }, [listenTogether, player.isPlaying]);
+
+    const exitListenTogether = useCallback(() => {
+        setListenTogether(null);
+        try { kvSet(LISTEN_TOGETHER_SESSION_KEY, ""); } catch { /* ignore */ }
+    }, []);
+
     const openShareViaChat = useCallback(() => {
         if (!player.currentTrack) return;
+        if (!listenTogether) {
+            const sessions = loadChatSessions();
+            const firstSession = sessions.find(s => !s.isGroup && s.contactId) || sessions[0];
+            if (firstSession) {
+                void resolveListenTogetherSession(firstSession.id, firstSession.contactId);
+            } else {
+                const chars = loadCharacters();
+                if (chars[0]) {
+                    void resolveListenTogetherSession(chars[0].id, chars[0].id);
+                }
+            }
+        }
         window.dispatchEvent(new CustomEvent("open-mini-chat", {
             detail: { share: { type: "music", title: player.currentTrack.title, artist: player.currentTrack.artist } },
         }));
-    }, [player.currentTrack]);
+    }, [player.currentTrack, listenTogether, resolveListenTogetherSession]);
 
     const openMiniChat = useCallback(() => {
         window.dispatchEvent(new CustomEvent("open-mini-chat"));
@@ -377,7 +506,21 @@ export default function MusicPlayer() {
                 showMusicToast(info.reason || "加载失败，请稍后重试", 2600);
                 return;
             }
-            player.playUrl(info.url, target);
+            let resolvedTarget = target;
+            if (!target.lyrics) {
+                const [detail, lyrics] = await Promise.all([
+                    getNeteaseSongDetail(nid).catch(() => null),
+                    getNeteaseLyrics(nid).catch(() => ""),
+                ]);
+                resolvedTarget = {
+                    ...target,
+                    title: detail?.name || target.title,
+                    artist: detail?.artists || target.artist,
+                    coverUrl: detail?.coverUrl || target.coverUrl,
+                    lyrics: lyrics || target.lyrics,
+                };
+            }
+            player.playUrl(info.url, resolvedTarget);
             if (info.trial) showMusicToast("VIP 歌曲，当前播放 30 秒试听", 2600);
             return;
         }
@@ -460,6 +603,22 @@ export default function MusicPlayer() {
                     </button>
                 </div>
                 <div className="mp-top-actions">
+                    <button
+                        type="button"
+                        className="music-player-ctrl-btn mp-top-btn mp-lyric-toggle-btn"
+                        {...(!player.floatDismissed ? { "data-active": "" } : {})}
+                        onClick={player.toggleFloat}
+                        title={!player.floatDismissed ? "关闭桌面歌词" : "开启桌面歌词"}
+                    >
+                        <span className="mp-lyric-toggle-text">词</span>
+                        {!player.floatDismissed && (
+                            <span className="mp-lyric-toggle-badge" aria-hidden="true">
+                                <svg width="7" height="7" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                                    <polyline points="2.5 6.5 5 9 9.5 3.5" />
+                                </svg>
+                            </span>
+                        )}
+                    </button>
                     <button className="music-player-ctrl-btn mp-top-btn" onClick={togglePlayerStyle} title={playerStyle === "vinyl" ? "切换现代样式" : "切换黑胶样式"}>
                         <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                             <circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none" />
@@ -478,6 +637,38 @@ export default function MusicPlayer() {
                     </button>
                 </div>
             </div>
+
+            {/* Listen Together banner (between header and body) */}
+            {listenTogether && (
+                <div className="mp-listen-together">
+                    <div className="mp-listen-avatars">
+                        <div className="mp-listen-avatar mp-listen-avatar-user">
+                            {listenTogether.userAvatar ? (
+                                <img src={listenTogether.userAvatar} alt="" />
+                            ) : (
+                                <span>{listenTogether.userName.slice(0, 1) || "我"}</span>
+                            )}
+                        </div>
+                        <div className="mp-listen-avatar mp-listen-avatar-char">
+                            {listenTogether.charAvatar ? (
+                                <img src={listenTogether.charAvatar} alt="" />
+                            ) : (
+                                <span>{listenTogether.charName.slice(0, 1) || "TA"}</span>
+                            )}
+                        </div>
+                    </div>
+                    <div className="mp-listen-text">
+                        {listenTogether.charName} 就在你身边，一起听了 {formatListenDuration(listenSeconds)}
+                    </div>
+                    <button
+                        type="button"
+                        className="mp-listen-exit"
+                        onClick={exitListenTogether}
+                    >
+                        退出
+                    </button>
+                </div>
+            )}
 
             {/* Body — cover / vinyl / glow lyrics */}
             <div className="mp-body">

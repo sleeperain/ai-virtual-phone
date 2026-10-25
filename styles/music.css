@@ -4986,3 +4986,267 @@
     font-size: calc(9px*var(--app-text-scale,1));
     color: color-mix(in srgb, var(--c-music-text) 55%, transparent);
 }
+
+/* ═══════════════════════════════════════════════════════
+   Desktop Floating Lyrics Widget (.music-float-lyrics)
+   ═══════════════════════════════════════════════════════ */
+
+.music-float-lyrics {
+    position: absolute;
+    z-index: 55;
+    width: 342px;
+    max-width: calc(100% - 16px);
+    padding: 8px 28px;
+    border-radius: 16px;
+    background: transparent;
+    border: 1px solid transparent;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    touch-action: none;
+    cursor: grab;
+    user-select: none;
+    transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, padding 0.2s ease;
+}
+
+.music-float-lyrics[data-expanded] {
+    background: rgba(255, 255, 255, 0.72);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    border-color: rgba(255, 255, 255, 0.85);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.14);
+    padding: 16px 28px 12px;
+}
+
+.music-float-lyrics[data-locked] {
+    pointer-events: none;
+    cursor: default;
+}
+
+.music-float-close {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: transparent;
+    color: rgba(40, 44, 52, 0.7);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+    transition: background 0.15s, color 0.15s;
+}
+
+.music-float-close:active {
+    background: rgba(0, 0, 0, 0.08);
+    color: #111;
+}
+
+.music-float-lines {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    text-align: center;
+}
+
+.music-float-line {
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.4;
+}
+
+.music-float-line-active {
+    font-size: calc(14px * var(--app-text-scale, 1));
+    font-weight: 600;
+}
+
+.music-float-line-fill {
+    display: inline-block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: bottom;
+    background-image: linear-gradient(
+        90deg,
+        #ff5468 0%,
+        #ff5468 var(--lyric-progress, 0%),
+        rgba(35, 40, 48, 0.88) var(--lyric-progress, 0%),
+        rgba(35, 40, 48, 0.88) 100%
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    filter: drop-shadow(0 1px 2px rgba(255, 255, 255, 0.85));
+}
+
+.music-float-line-next {
+    font-size: calc(12px * var(--app-text-scale, 1));
+    font-weight: 500;
+    color: rgba(50, 56, 66, 0.75);
+    text-shadow: 0 1px 2px rgba(255, 255, 255, 0.85);
+}
+
+.music-float-line-empty {
+    font-size: calc(13px * var(--app-text-scale, 1));
+    font-weight: 500;
+    color: rgba(50, 56, 66, 0.8);
+    text-shadow: 0 1px 2px rgba(255, 255, 255, 0.85);
+    padding: 6px 0;
+}
+
+.music-float-bar {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-evenly;
+    margin-top: 10px;
+    padding-top: 6px;
+    border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.music-float-ctrl-btn {
+    flex: 1;
+    height: 30px;
+    border: none;
+    background: transparent;
+    color: #2c313a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+    border-radius: 8px;
+    transition: transform 0.15s, background 0.15s, color 0.15s;
+}
+
+.music-float-ctrl-btn:active {
+    transform: scale(0.9);
+    background: rgba(0, 0, 0, 0.06);
+}
+
+.music-float-ctrl-play {
+    color: #ff5468;
+}
+
+/* ═══════════════════════════════════════════════════════
+   Full Player — Top Bar "词" Pure Text Toggle Button & Badge
+   ═══════════════════════════════════════════════════════ */
+
+.mp-lyric-toggle-btn {
+    position: relative;
+    font-size: calc(14.5px * var(--app-text-scale, 1));
+    font-weight: 600;
+    font-family: inherit;
+    color: var(--c-music-accent);
+    padding: 0;
+}
+
+.mp-lyric-toggle-btn[data-active] {
+    color: var(--c-music-text);
+}
+
+.mp-lyric-toggle-text {
+    line-height: 1;
+}
+
+.mp-lyric-toggle-badge {
+    position: absolute;
+    right: 3px;
+    bottom: 4px;
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    background: #ffffff;
+    color: #10131c;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+}
+
+/* ═══════════════════════════════════════════════════════
+   Full Player — Listen Together Banner
+   ═══════════════════════════════════════════════════════ */
+
+.mp-listen-together {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 16px 2px;
+    flex-shrink: 0;
+    gap: 5px;
+}
+
+.mp-listen-avatars {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.mp-listen-avatar {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.14);
+    border: 1.5px solid rgba(255, 255, 255, 0.65);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #ffffff;
+    font-size: calc(12px * var(--app-text-scale, 1));
+    font-weight: 600;
+    flex-shrink: 0;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+.mp-listen-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.mp-listen-avatar-char {
+    margin-left: -4px;
+}
+
+.mp-listen-text {
+    font-size: calc(11px * var(--app-text-scale, 1));
+    color: #ffffff;
+    text-align: center;
+    line-height: 1.4;
+    letter-spacing: 0.02em;
+    opacity: 0.92;
+}
+
+.mp-listen-exit {
+    border: none;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.85);
+    font-size: calc(11px * var(--app-text-scale, 1));
+    font-family: inherit;
+    padding: 0 4px 1px;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    line-height: 1.3;
+    transition: opacity 0.15s;
+}
+
+.mp-listen-exit:active {
+    opacity: 0.6;
+}

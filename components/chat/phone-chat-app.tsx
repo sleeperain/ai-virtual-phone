@@ -178,6 +178,15 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
                         label: `${sharePayload.title} - ${sharePayload.artist}`,
                     },
                 });
+                window.dispatchEvent(new CustomEvent("music-listen-together-start", {
+                    detail: {
+                        sessionId: sess.id,
+                        contactId: sess.contactId,
+                        isGroup: Boolean(sess.isGroup),
+                        groupName: sess.groupName,
+                        alias: sess.alias,
+                    },
+                }));
             } else {
                 const content = formatXiaohongshuShareForPrompt({
                     author: sharePayload.authorName,

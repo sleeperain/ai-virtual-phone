@@ -39,6 +39,8 @@ export type MusicActions = {
     setVolume: (vol: number) => void;
     stop: () => void;
     dismissFloat: () => void;
+    showFloat: () => void;
+    toggleFloat: () => void;
     openFullPlayer: () => void;
     closeFullPlayer: () => void;
 };
@@ -194,11 +196,24 @@ export function MusicProvider({ children }: { children: ReactNode }) {
         cleanupBlobUrl();
         audio.pause();
 
-        // Netease tracks: fetch play URL from API
+        // Netease tracks: fetch play URL & missing lyrics/detail from API
         if (track.id.startsWith("netease_")) {
             const nid = parseInt(track.id.replace("netease_", ""), 10);
             const playUrl = await getNeteasePlayUrl(nid);
             if (!playUrl) return;
+            if (!track.lyrics) {
+                const [detail, lyrics] = await Promise.all([
+                    getNeteaseSongDetail(nid).catch(() => null),
+                    getNeteaseLyrics(nid).catch(() => ""),
+                ]);
+                track = {
+                    ...track,
+                    title: detail?.name || track.title,
+                    artist: detail?.artists || track.artist,
+                    coverUrl: detail?.coverUrl || track.coverUrl,
+                    lyrics: lyrics || track.lyrics,
+                };
+            }
             audio.src = playUrl;
         } else {
             // Local tracks: load blob from IndexedDB
@@ -324,11 +339,18 @@ export function MusicProvider({ children }: { children: ReactNode }) {
     }, []);
 
     const dismissFloat = useCallback(() => {
-        audioRef.current?.pause();
         setFloatDismissed(true);
     }, []);
 
-    const openFullPlayer = useCallback(() => { setFloatDismissed(false); setShowFullPlayer(true); }, []);
+    const showFloat = useCallback(() => {
+        setFloatDismissed(false);
+    }, []);
+
+    const toggleFloat = useCallback(() => {
+        setFloatDismissed(prev => !prev);
+    }, []);
+
+    const openFullPlayer = useCallback(() => { setShowFullPlayer(true); }, []);
     const closeFullPlayer = useCallback(() => setShowFullPlayer(false), []);
 
     const playResolvedTrack = useCallback(async (track: MusicTrack): Promise<{ ok: boolean; message: string; track?: MusicTrack }> => {
@@ -449,11 +471,11 @@ export function MusicProvider({ children }: { children: ReactNode }) {
     const controlsValue = useMemo<MusicControlsValue>(() => ({
         currentTrack, isPlaying, duration, playMode, queue, volume, showFullPlayer, floatDismissed,
         playTrack, playUrl, pause, resume, togglePlay, next, prev, seek,
-        setPlayMode, setQueue, removeFromQueue, setVolume, stop, dismissFloat, openFullPlayer, closeFullPlayer,
+        setPlayMode, setQueue, removeFromQueue, setVolume, stop, dismissFloat, showFloat, toggleFloat, openFullPlayer, closeFullPlayer,
     }), [
         currentTrack, isPlaying, duration, playMode, queue, volume, showFullPlayer, floatDismissed,
         playTrack, playUrl, pause, resume, togglePlay, next, prev, seek,
-        setQueue, removeFromQueue, setVolume, stop, dismissFloat, openFullPlayer, closeFullPlayer,
+        setQueue, removeFromQueue, setVolume, stop, dismissFloat, showFloat, toggleFloat, openFullPlayer, closeFullPlayer,
     ]);
 
     const value = useMemo<MusicContextValue>(() => ({
