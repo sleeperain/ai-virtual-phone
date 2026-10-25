@@ -595,7 +595,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             const type = memoryEditor.type;
             const source = memoryEditor.entry;
             const contentChanged = !source || source.content.trim() !== content;
-            const structuredMeta = type === "long_term" ? extractMemoryStructuredMeta(content) : { keywords: [], unresolvedIssues: [] };
+            const structuredMeta = type === "long_term" ? extractMemoryStructuredMeta(content) : { keywords: [] };
             const embeddingText = structuredMeta.keywords.length > 0
                 ? `关键词：${structuredMeta.keywords.join("、")}\n${content}`
                 : content;
@@ -613,8 +613,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                         origin: isManualMemoryEntry(source) ? "user_manual" : "user_edited",
                         editedByUser: true,
                         keywords: structuredMeta.keywords,
-                        unresolvedIssues: structuredMeta.unresolvedIssues,
-                        hasUnresolved: structuredMeta.unresolvedIssues.length > 0,
                     },
                 }
                 : {
@@ -630,7 +628,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                     metadata: {
                         origin: "user_manual",
                         ...(structuredMeta.keywords.length > 0 ? { keywords: structuredMeta.keywords } : {}),
-                        ...(structuredMeta.unresolvedIssues.length > 0 ? { unresolvedIssues: structuredMeta.unresolvedIssues, hasUnresolved: true } : {}),
                     },
                 };
 
@@ -695,13 +692,8 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                         const keywords = Array.isArray(entry.metadata?.keywords) && (entry.metadata.keywords as unknown[]).length > 0
                             ? (entry.metadata.keywords as unknown[]).map(String)
                             : parsedMeta.keywords;
-                        const unresolvedIssues = Array.isArray(entry.metadata?.unresolvedIssues) && (entry.metadata.unresolvedIssues as unknown[]).length > 0
-                            ? (entry.metadata.unresolvedIssues as unknown[]).map(String)
-                            : parsedMeta.unresolvedIssues;
                         const isExpanded = expandedId === entry.id;
-                        const cleanBody = (keywords.length > 0 || unresolvedIssues.length > 0)
-                            ? (stripMemoryStructuredSections(entry.content) || entry.content)
-                            : entry.content;
+                        const cleanBody = stripMemoryStructuredSections(entry.content) || entry.content;
                         const displayMarkdown = isExpanded || cleanBody.length <= 160
                             ? cleanBody
                             : cleanBody.slice(0, 160) + "...";
@@ -721,11 +713,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                 <div className="mem-report-head">
                                     <span className="ts-11 text-secondary" style={{ letterSpacing: "1px" }}>[ DATE: {relativeTime(entry.createdAt)} ]</span>
                                     <div className="mem-report-actions">
-                                        {unresolvedIssues.length > 0 && (
-                                            <span className="mem-unresolved-badge" title={`未解决问题：${unresolvedIssues.join("；")}`}>
-                                                待解决 {unresolvedIssues.length}
-                                            </span>
-                                        )}
                                         <span className={`mem-origin-badge ${isManualMemoryEntry(entry) ? "is-manual" : ""}`}>
                                             {isManualMemoryEntry(entry) ? "MANUAL" : "AUTO"}
                                         </span>
@@ -766,26 +753,14 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                         {displayMarkdown}
                                     </ReactMarkdown>
                                 </div>
-                                {(unresolvedIssues.length > 0 || keywords.length > 0) && (
+                                {keywords.length > 0 && (
                                     <div className="mem-structured-footer">
-                                        {unresolvedIssues.length > 0 && (
-                                            <div className="mem-unresolved-box">
-                                                <span className="mem-unresolved-title">⚠️ 未解决问题：</span>
-                                                <ul className="mem-unresolved-list">
-                                                    {unresolvedIssues.map((issue, idx) => (
-                                                        <li key={idx}>{issue}</li>
-                                                    ))}
-                                                </ul>
-                                            </div>
-                                        )}
-                                        {keywords.length > 0 && (
-                                            <div className="mem-keywords-row">
-                                                <span className="mem-keywords-label">向量检索词：</span>
-                                                {keywords.map((kw, idx) => (
-                                                    <span key={idx} className="mem-keyword-chip">{kw}</span>
-                                                ))}
-                                            </div>
-                                        )}
+                                        <div className="mem-keywords-row">
+                                            <span className="mem-keywords-label">向量检索词：</span>
+                                            {keywords.map((kw, idx) => (
+                                                <span key={idx} className="mem-keyword-chip">{kw}</span>
+                                            ))}
+                                        </div>
                                     </div>
                                 )}
                             </div>

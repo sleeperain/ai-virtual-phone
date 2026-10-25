@@ -467,31 +467,56 @@ export default function MusicPlayer() {
 
     const handleOpenInviteFriends = useCallback(async () => {
         setShareMenuAnchor(null);
-        const sessions = loadChatSessions();
-        const chars = loadCharacters();
-        const directSessionByCharId = new Map<string, ReturnType<typeof loadChatSessions>[number]>();
-        for (const s of sessions) {
-            if (!s.isGroup && s.contactId && !directSessionByCharId.has(s.contactId)) {
-                directSessionByCharId.set(s.contactId, s);
-            }
-        }
-        const list = await Promise.all(chars.map(async (char) => {
-            const sess = directSessionByCharId.get(char.id);
-            let avatar = char.avatar || null;
-            if (sess?.avatarOverrides?.[char.id]) {
-                const overrideUrl = await getChatImageFromIndexedDB(sess.avatarOverrides[char.id]).catch(() => null);
-                if (overrideUrl) avatar = overrideUrl;
-            }
-            return {
-                sessionId: sess?.id || char.id,
-                contactId: char.id,
-                name: sess?.alias || char.name || "TA",
-                avatar,
-                bio: char.description?.slice(0, 36) || "",
-            };
-        }));
-        setFriendCandidates(list);
         setShowInviteFriendsModal(true);
+        try {
+            const sessions = loadChatSessions();
+            const chars = loadCharacters();
+            const directSessionByCharId = new Map<string, ReturnType<typeof loadChatSessions>[number]>();
+            for (const s of sessions) {
+                if (!s.isGroup && s.contactId && !directSessionByCharId.has(s.contactId)) {
+                    directSessionByCharId.set(s.contactId, s);
+                }
+            }
+            const list: Array<{
+                sessionId: string;
+                contactId: string;
+                name: string;
+                avatar: string | null;
+                bio?: string;
+            }> = [];
+            const seenCharIds = new Set<string>();
+            for (const char of chars) {
+                seenCharIds.add(char.id);
+                const sess = directSessionByCharId.get(char.id);
+                let avatar = char.avatar || null;
+                if (sess?.avatarOverrides?.[char.id]) {
+                    const overrideUrl = await getChatImageFromIndexedDB(sess.avatarOverrides[char.id]).catch(() => null);
+                    if (overrideUrl) avatar = overrideUrl;
+                }
+                list.push({
+                    sessionId: sess?.id || char.id,
+                    contactId: char.id,
+                    name: sess?.alias || char.name || "TA",
+                    avatar,
+                    bio: char.description?.slice(0, 36) || "",
+                });
+            }
+            // Fallback: include any 1-on-1 chat sessions whose contactId wasn't in chars list
+            for (const s of sessions) {
+                if (!s.isGroup && s.contactId && !seenCharIds.has(s.contactId)) {
+                    seenCharIds.add(s.contactId);
+                    list.push({
+                        sessionId: s.id,
+                        contactId: s.contactId,
+                        name: s.alias || s.groupName || "TA",
+                        avatar: null,
+                    });
+                }
+            }
+            setFriendCandidates(list);
+        } catch (err) {
+            console.error("[MusicPlayer] Failed to load invite friend candidates:", err);
+        }
     }, []);
 
     const handleSelectInviteFriend = useCallback((candidate: { sessionId: string; contactId: string }) => {
@@ -626,7 +651,7 @@ export default function MusicPlayer() {
             </div>
 
             {/* Header */}
-            <div className="mp-top">
+            <div className="mp-top" {...(shareMenuAnchor === "top" ? { "data-menu-open": "" } : {})}>
                 <button className="music-player-close" onClick={player.closeFullPlayer}>
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
                         <path d="M15 19 8 12l7-7" />
@@ -874,7 +899,7 @@ export default function MusicPlayer() {
             </div>
 
             {/* Social row: like / comments / share */}
-            <div className="mp-social">
+            <div className="mp-social" {...(shareMenuAnchor === "bottom" ? { "data-menu-open": "" } : {})}>
                 <button className="mp-social-btn" {...(liked ? { "data-liked": "" } : {})} onClick={handleLike}>
                     {liked ? (
                         <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" stroke="none">

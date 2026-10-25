@@ -31,28 +31,27 @@ const LEGACY_SUMMARIZATION_PROMPT_SIGNATURE = "不要包含格式标记";
 
 export type ParsedMemoryMetadata = {
     keywords: string[];
-    unresolvedIssues: string[];
 };
 
 /**
- * Strip the trailing structured sections (### 未解决问题 & **检索关键词**) from display body
- * so they aren't rendered twice when the card footer already displays them as badges/boxes.
+ * Strip the trailing structured sections (**检索关键词** & legacy ### 未解决问题 / ### 事件总结 header) from display body
+ * so they aren't rendered twice when the card footer already displays keywords as chips.
  */
 export function stripMemoryStructuredSections(content: string): string {
     return content
+        .replace(/^###\s*事件总结\s*\n+/i, "")
         .replace(/\n*###\s*未解决问题[\s\S]*?(?=\n###|\n\*\*检索关键词\*\*|\n检索关键词|$)/gi, "")
         .replace(/\n*(?:\*\*检索关键词\*\*|检索关键词|关键词)\s*[：:][^\n]*/gi, "")
         .trim();
 }
 
 /**
- * Extract vector retrieval keywords and unresolved issues from Markdown memory content.
+ * Extract vector retrieval keywords from Markdown memory content.
  */
 export function extractMemoryStructuredMeta(content: string): ParsedMemoryMetadata {
     const keywords: string[] = [];
-    const unresolvedIssues: string[] = [];
 
-    // 1. Extract keywords from **检索关键词**：... or 检索关键词：... or [关键词：...]
+    // Extract keywords from **检索关键词**：... or 检索关键词：... or [关键词：...]
     const kwMatch = content.match(/(?:\*\*检索关键词\*\*|检索关键词|关键词)\s*[：:]\s*([^\n]+)/i);
     if (kwMatch?.[1]) {
         const rawList = kwMatch[1]
@@ -65,30 +64,7 @@ export function extractMemoryStructuredMeta(content: string): ParsedMemoryMetada
         }
     }
 
-    // 2. Extract unresolved issues section or [ ] / [未解决] items
-    const unresolvedSectionMatch = content.match(/###\s*未解决问题[\s\S]*?(?=\n###|\n\*\*检索关键词\*\*|\n检索关键词|$)/i);
-    if (unresolvedSectionMatch?.[0]) {
-        const lines = unresolvedSectionMatch[0].split("\n").slice(1);
-        for (const line of lines) {
-            const cleaned = line
-                .replace(/^\s*[-*•]\s*(?:\[\s*[xX ]?\s*\]\s*)?/, "")
-                .replace(/^\*\*|\*\*$/g, "")
-                .trim();
-            if (!cleaned || /^(?:无|暂无|没有|无未解决问题|无待办事项)[。.]?$/.test(cleaned)) continue;
-            if (!unresolvedIssues.includes(cleaned)) unresolvedIssues.push(cleaned);
-        }
-    }
-
-    // Also catch explicit inline markers like [ ] outside the section
-    const inlineCheckboxLines = content.match(/^\s*[-*]\s*\[\s*\]\s*(.+)$/gm) || [];
-    for (const rawLine of inlineCheckboxLines) {
-        const item = rawLine.replace(/^\s*[-*]\s*\[\s*\]\s*/, "").trim();
-        if (item && !/^(?:无|暂无|没有)/.test(item) && !unresolvedIssues.includes(item)) {
-            unresolvedIssues.push(item);
-        }
-    }
-
-    return { keywords, unresolvedIssues };
+    return { keywords };
 }
 
 /**
@@ -207,16 +183,16 @@ export async function runSummarizationPipeline(
 
     const { eventsText, earliest, latest } = formatted;
 
-    // Use user-editable prompt template from config; auto-upgrade legacy default prompt that forbade markdown
+    // Use user-editable prompt template from config; auto-upgrade legacy default prompt
     const rawSavedPrompt = config.summarizationPrompt?.trim() || "";
-    const isLegacyDefault = rawSavedPrompt.includes(LEGACY_SUMMARIZATION_PROMPT_SIGNATURE);
+    const isLegacyDefault = rawSavedPrompt.includes(LEGACY_SUMMARIZATION_PROMPT_SIGNATURE) || rawSavedPrompt.includes("### 未解决问题");
     let promptTemplate = (!rawSavedPrompt || isLegacyDefault)
         ? DEFAULT_SUMMARIZATION_PROMPT
         : rawSavedPrompt;
 
-    // Ensure custom prompts also instruct Markdown, keywords extraction, and unresolved issues marking
+    // Ensure custom prompts also instruct Markdown and keywords extraction
     if (!promptTemplate.includes("检索关键词")) {
-        promptTemplate += `\n\n补充输出要求：请使用 Markdown 格式输出；如有未兑现的约定、待办或未解决的问题，请单独在「### 未解决问题」小节用 \`- [ ]\` 标记列出（无则写「无」）；末尾必须附上「**检索关键词**：关键词1、关键词2...」供向量模型读取。`;
+        promptTemplate += `\n\n补充输出要求：请使用 Markdown 格式输出；末尾必须附上「**检索关键词**：关键词1、关键词2...」供向量模型读取。`;
     }
 
     const summaryPrompt = promptTemplate
@@ -251,7 +227,7 @@ export async function runSummarizationPipeline(
     }
 
     const summary = result.content.trim();
-    const { keywords, unresolvedIssues } = extractMemoryStructuredMeta(summary);
+    const { keywords } = extractMemoryStructuredMeta(summary);
 
     // Generate embedding for the summary (prioritize extracted keywords + summary for higher vector recall accuracy)
     let embedding: number[] | undefined;
@@ -299,7 +275,6 @@ export async function runSummarizationPipeline(
             timeSpan: `${earliest} ~ ${latest}`,
             sourceSessionIds,
             ...(keywords.length > 0 ? { keywords } : {}),
-            ...(unresolvedIssues.length > 0 ? { unresolvedIssues, hasUnresolved: true } : {}),
         },
     };
     await saveMemoryEntry(longTermEntry);

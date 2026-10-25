@@ -5348,20 +5348,13 @@
 }
 
 .mp-share-dropdown--bottom {
-    top: calc(100% + 4px);
+    top: auto;
+    bottom: calc(100% + 6px);
     right: 0;
 }
 
-.mp-social {
-    overflow: visible;
-    padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
-}
-
-.mp-top {
-    z-index: 66;
-}
-
-.mp-social {
+.mp-top[data-menu-open],
+.mp-social[data-menu-open] {
     z-index: 66;
 }
 
