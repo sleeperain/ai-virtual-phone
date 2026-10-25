@@ -3179,18 +3179,37 @@ async function persistMemoryWriteRequest(
         };
     }
 
-    const now = new Date().toISOString();
+    const nowDate = new Date();
+    const now = nowDate.toISOString();
+    const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
+    const eventDate = `${nowDate.getFullYear()}-${pad(nowDate.getMonth() + 1)}-${pad(nowDate.getDate())}`;
+    const cleanContent = request.content
+        .replace(/^(?:\d{4}年)?\d{1,2}月\d{1,2}日(?:[上中下]午|早[上晨]|傍晚|晚上|深夜|凌晨|中午)?[，,、：\s]*/g, "")
+        .replace(/^(?:今天|今日|刚才|刚刚)[，,、：\s]*/g, "")
+        .trim() || request.content;
+    const autoKeywords = Array.from(new Set(
+        cleanContent
+            .split(/[，。！？；：、,.!?:;\s（）()“”"'\n]+/)
+            .map(s => s.trim())
+            .filter(s => s.length >= 2 && s.length <= 8)
+            .slice(0, 6),
+    ));
+
     const entry: MemoryEntry = {
         id: `mem_lt_manual_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         characterId: request.characterId,
         sourceApp: "chat",
         type: "long_term",
-        content: request.content,
+        content: cleanContent,
         importance: request.importance,
+        accessCount: 0,
         createdAt: now,
         updatedAt: now,
         metadata: {
             origin: "ai_tool",
+            eventDate,
+            accessCount: 0,
+            keywords: autoKeywords,
             sessionId: request.sessionId,
             ...(request.reason ? { reason: request.reason } : {}),
             ...(options?.approvedByUser ? { approvedByUser: true } : {}),

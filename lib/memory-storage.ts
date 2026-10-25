@@ -96,7 +96,58 @@ export async function loadMemoryEntriesByType(
     type: MemoryEntry["type"],
 ): Promise<MemoryEntry[]> {
     const entries = await loadMemoryEntries(characterId);
-    return entries.filter(entry => entry.type === type);
+    const filtered = entries.filter(entry => entry.type === type);
+    // 按时间从最近到最远排序（最新的在最上方）
+    filtered.sort((a, b) => {
+        const dateA = String(a.metadata?.eventDate ?? "");
+        const dateB = String(b.metadata?.eventDate ?? "");
+        if (dateA && dateB && dateA !== dateB) {
+            return dateB.localeCompare(dateA);
+        }
+        return b.createdAt.localeCompare(a.createdAt);
+    });
+    return filtered;
+}
+
+/**
+ * Increment accessCount for memories retrieved and injected into AI prompt.
+ */
+export async function incrementMemoryAccessCounts(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    const db = await openDb();
+    if (!db) return;
+    try {
+        const tx = db.transaction(STORE_NAME, "readwrite");
+        const store = tx.objectStore(STORE_NAME);
+        for (const id of ids) {
+            const getReq = store.get(id);
+            getReq.onsuccess = () => {
+                const entry = getReq.result as MemoryEntry | undefined;
+                if (!entry) return;
+                const currentCount = typeof entry.accessCount === "number"
+                    ? entry.accessCount
+                    : (typeof entry.metadata?.accessCount === "number" ? Number(entry.metadata.accessCount) : 0);
+                const nextCount = currentCount + 1;
+                store.put({
+                    ...entry,
+                    accessCount: nextCount,
+                    metadata: {
+                        ...(entry.metadata ?? {}),
+                        accessCount: nextCount,
+                        lastAccessedAt: new Date().toISOString(),
+                    },
+                });
+            };
+        }
+        await new Promise<void>((res, rej) => {
+            tx.oncomplete = () => res();
+            tx.onerror = () => rej(tx.error);
+        });
+    } catch {
+        // Ignore non-critical access count persistence error
+    } finally {
+        db.close();
+    }
 }
 
 export async function deleteMemoryEntry(id: string): Promise<void> {

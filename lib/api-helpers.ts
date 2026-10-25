@@ -377,7 +377,9 @@ export function stripHallucinatedTimestamps(text: string): string {
 
 export function stripReasoningMarkup(text: string): string {
     return text
-        .replace(/<(?:think|thinking)>[\s\S]*?<\/(?:think|thinking)>/gi, "")
+        .replace(/<(?:think|thinking|thought)>[\s\S]*?<\/(?:think|thinking|thought)>/gi, "")
+        .replace(/^[\s\S]*?<\/(?:think|thinking|thought)>/i, "")
+        .replace(/<(?:think|thinking|thought)>[\s\S]*$/i, "")
         .trim();
 }
 
@@ -410,8 +412,13 @@ export function extractLLMContent(data: Record<string, unknown>, provider?: stri
     const openai = d?.choices?.[0]?.message?.content;
     if (openai) raw = String(openai).trim();
 
-    // Anthropic Messages API
-    if (!raw) { const anthropic = d?.content?.[0]?.text; if (anthropic) raw = String(anthropic).trim(); }
+    // Anthropic Messages API (skip thinking blocks, take text blocks)
+    if (!raw && Array.isArray(d?.content)) {
+        const textBlocks = d.content
+            .filter((b: any) => b && b.type !== "thinking" && b.type !== "redacted_thinking" && typeof b.text === "string" && b.text.trim())
+            .map((b: any) => String(b.text).trim());
+        if (textBlocks.length > 0) raw = textBlocks.join("\n\n");
+    }
 
     // Google Gemini
     if (!raw) raw = extractGeminiVisibleText(d?.candidates?.[0]?.content?.parts);
@@ -425,10 +432,9 @@ export function extractLLMContent(data: Record<string, unknown>, provider?: stri
     // Fallback: try choices[0].text (older completions API)
     if (!raw) { const legacy = d?.choices?.[0]?.text; if (legacy) raw = String(legacy).trim(); }
 
-    // Last resort: reasoning models (DeepSeek-R1 / v4-pro) put their output in
-    // reasoning_content and may leave content empty when max_tokens is exhausted
-    // mid-thought. Surface the reasoning rather than reporting an empty response.
-    if (!raw) { const reasoning = d?.choices?.[0]?.message?.reasoning_content; if (reasoning) raw = String(reasoning).trim(); }
+    // Never fall back to reasoning_content / thinking: when max_tokens is exhausted
+    // mid-thought, returning reasoning_content pollutes memory summaries and background
+    // tasks with raw chain-of-thought.
 
     if (!raw) return null;
 

@@ -113,7 +113,22 @@ type MemoryEditorState = {
     type: MemoryEntry["type"];
     entry?: MemoryEntry;
     content: string;
+    importance: number; // 1-10
+    keywordsText: string;
 };
+
+function formatEntryDateLabel(entry: MemoryEntry): string {
+    const eventDate = typeof entry.metadata?.eventDate === "string" ? entry.metadata.eventDate.trim() : "";
+    const d = new Date(entry.createdAt);
+    const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
+    const createdDate = !isNaN(d.getTime())
+        ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+        : entry.createdAt.slice(0, 16);
+    if (eventDate) {
+        return `事件日期: ${eventDate} · 入库: ${createdDate}`;
+    }
+    return `入库: ${createdDate}`;
+}
 
 const memorySettingsIconStyle = (color: string): CSSProperties => ({
     "--icon-color": color,
@@ -264,6 +279,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const [entryMenuId, setEntryMenuId] = useState<string | null>(null);
     const [memoryEditor, setMemoryEditor] = useState<MemoryEditorState | null>(null);
     const [savingMemory, setSavingMemory] = useState(false);
+    const [embeddingAll, setEmbeddingAll] = useState(false);
     const [summarizeRangeOpen, setSummarizeRangeOpen] = useState(false);
     const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
     const [appBudgetOpen, setAppBudgetOpen] = useState(false);
@@ -567,52 +583,133 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         }
     };
 
+    const handleBackfillEmbeddings = async () => {
+        if (!selectedCharId || embeddingAll) return;
+        const embeddingApiConfig = resolveAuxiliaryApiConfig("embeddingApiConfigId");
+        if (!embeddingApiConfig || !resolveEmbeddingModel(embeddingApiConfig)) {
+            showNotice("请先在「设置 → 绑定配置 → 辅助 API 绑定」中配置向量检索 (Embedding) 模型");
+            return;
+        }
+        const missing = longTermEntries.filter(e => !Array.isArray(e.embedding) || e.embedding.length === 0);
+        if (missing.length === 0) {
+            showNotice("当前所有长期记忆均已生成向量");
+            return;
+        }
+        setEmbeddingAll(true);
+        let done = 0;
+        try {
+            for (const item of missing) {
+                const parsed = extractMemoryStructuredMeta(item.content);
+                const kws = Array.isArray(item.metadata?.keywords) && (item.metadata.keywords as unknown[]).length > 0
+                    ? (item.metadata.keywords as unknown[]).map(String)
+                    : parsed.keywords;
+                const cleanBody = stripMemoryStructuredSections(item.content) || item.content;
+                const embInput = kws.length > 0 ? `关键词：${kws.join("、")}\n${cleanBody}` : cleanBody;
+                const emb = await generateEmbedding(embInput, embeddingApiConfig);
+                if (emb && emb.length > 0) {
+                    const updated: MemoryEntry = {
+                        ...item,
+                        embedding: emb,
+                        metadata: {
+                            ...(item.metadata ?? {}),
+                            ...(kws.length > 0 ? { keywords: kws } : {}),
+                        },
+                    };
+                    await saveMemoryEntry(updated);
+                    done += 1;
+                }
+            }
+            await loadDetailData(selectedCharId);
+            showNotice(done > 0 ? `已成功为 ${done}/${missing.length} 条记忆补全向量` : "向量生成失败，请检查 Embedding API 配置");
+        } catch (err) {
+            showNotice("补全向量出错: " + String(err));
+        } finally {
+            setEmbeddingAll(false);
+        }
+    };
+
     const openCreateMemoryEditor = (type: MemoryEntry["type"]) => {
         setEntryMenuId(null);
-        setMemoryEditor({ type, content: "" });
+        setMemoryEditor({
+            type,
+            content: "",
+            importance: type === "core" ? 10 : 8,
+            keywordsText: "",
+        });
     };
 
     const openEditMemoryEditor = (entry: MemoryEntry) => {
         setEntryMenuId(null);
-        setMemoryEditor({ type: entry.type, entry, content: entry.content });
+        const parsedMeta = extractMemoryStructuredMeta(entry.content);
+        const existingKeywords = Array.isArray(entry.metadata?.keywords) && (entry.metadata.keywords as unknown[]).length > 0
+            ? (entry.metadata.keywords as unknown[]).map(String)
+            : parsedMeta.keywords;
+        const cleanBody = stripMemoryStructuredSections(entry.content) || entry.content;
+        const impScore = Math.max(1, Math.min(10, Math.round((Number.isFinite(entry.importance) ? entry.importance : 0.8) * 10)));
+        setMemoryEditor({
+            type: entry.type,
+            entry,
+            content: cleanBody,
+            importance: impScore,
+            keywordsText: existingKeywords.join("、"),
+        });
     };
 
     const handleSaveManualMemory = async () => {
         if (!selectedCharId || !memoryEditor || savingMemory) return;
-        const content = memoryEditor.content.trim();
-        if (!content) {
+        const rawContent = memoryEditor.content.trim();
+        if (!rawContent) {
             showNotice("记忆内容不能为空");
             return;
         }
-        if (content.length > MANUAL_MEMORY_CONTENT_LIMIT) {
+        if (rawContent.length > MANUAL_MEMORY_CONTENT_LIMIT) {
             showNotice(`记忆内容过长，请控制在 ${MANUAL_MEMORY_CONTENT_LIMIT} 字以内`);
             return;
         }
 
         setSavingMemory(true);
         try {
-            const now = new Date().toISOString();
+            const nowDate = new Date();
+            const now = nowDate.toISOString();
+            const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
+            const todayKey = `${nowDate.getFullYear()}-${pad(nowDate.getMonth() + 1)}-${pad(nowDate.getDate())}`;
             const type = memoryEditor.type;
             const source = memoryEditor.entry;
-            const contentChanged = !source || source.content.trim() !== content;
-            const structuredMeta = type === "long_term" ? extractMemoryStructuredMeta(content) : { keywords: [] };
-            const embeddingText = structuredMeta.keywords.length > 0
-                ? `关键词：${structuredMeta.keywords.join("、")}\n${content}`
-                : content;
+            const structuredMeta = extractMemoryStructuredMeta(rawContent);
+            const cleanContent = stripMemoryStructuredSections(rawContent) || rawContent;
+            const manualKeywords = memoryEditor.keywordsText
+                .split(/[、，,；;|/\s]+/)
+                .map(s => s.trim())
+                .filter(Boolean);
+            const finalKeywords = manualKeywords.length > 0 ? manualKeywords : structuredMeta.keywords;
+            const normalizedImportance = Math.max(0.1, Math.min(1, Number((memoryEditor.importance / 10).toFixed(2))));
+
+            const contentChanged = !source || source.content.trim() !== cleanContent || finalKeywords.join(",") !== (Array.isArray(source.metadata?.keywords) ? source.metadata.keywords.join(",") : "");
+            const embeddingText = finalKeywords.length > 0
+                ? `关键词：${finalKeywords.join("、")}\n${cleanContent}`
+                : cleanContent;
             const embedding = type === "long_term"
-                ? (contentChanged ? await maybeBuildManualMemoryEmbedding(type, embeddingText) : source?.embedding)
+                ? (contentChanged || !source?.embedding?.length ? await maybeBuildManualMemoryEmbedding(type, embeddingText) : source?.embedding)
                 : undefined;
+            const existingAccessCount = typeof source?.accessCount === "number"
+                ? source.accessCount
+                : (typeof source?.metadata?.accessCount === "number" ? Number(source.metadata.accessCount) : 0);
+
             const entry: MemoryEntry = source
                 ? {
                     ...source,
-                    content,
+                    content: cleanContent,
                     embedding,
+                    importance: normalizedImportance,
+                    accessCount: existingAccessCount,
                     updatedAt: now,
                     metadata: {
                         ...(source.metadata ?? {}),
+                        eventDate: typeof source.metadata?.eventDate === "string" ? source.metadata.eventDate : source.createdAt.slice(0, 10),
                         origin: isManualMemoryEntry(source) ? "user_manual" : "user_edited",
                         editedByUser: true,
-                        keywords: structuredMeta.keywords,
+                        accessCount: existingAccessCount,
+                        keywords: finalKeywords,
                     },
                 }
                 : {
@@ -620,22 +717,25 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                     characterId: selectedCharId,
                     sourceApp: "chat",
                     type,
-                    content,
+                    content: cleanContent,
                     embedding,
-                    importance: type === "core" ? 0.95 : 0.8,
+                    importance: normalizedImportance,
+                    accessCount: 0,
                     createdAt: now,
                     updatedAt: now,
                     metadata: {
                         origin: "user_manual",
-                        ...(structuredMeta.keywords.length > 0 ? { keywords: structuredMeta.keywords } : {}),
+                        eventDate: todayKey,
+                        accessCount: 0,
+                        keywords: finalKeywords,
                     },
                 };
 
             await saveMemoryEntry(entry);
             if (type === "core") {
-                setCoreEntries(prev => source ? prev.map(item => item.id === entry.id ? entry : item) : [...prev, entry]);
+                setCoreEntries(prev => source ? prev.map(item => item.id === entry.id ? entry : item) : [entry, ...prev]);
             } else {
-                setLongTermEntries(prev => source ? prev.map(item => item.id === entry.id ? entry : item) : [...prev, entry]);
+                setLongTermEntries(prev => source ? prev.map(item => item.id === entry.id ? entry : item) : [entry, ...prev]);
             }
             setMemoryEditor(null);
             setExpandedId(entry.id);
@@ -651,6 +751,9 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
 
     const renderMemoryEntries = (type: MemoryEntry["type"], entries: MemoryEntry[], emptyText: string) => {
         const label = type === "core" ? "核心记忆" : "长期记忆";
+        const missingVectorCount = type === "long_term"
+            ? entries.filter(e => !Array.isArray(e.embedding) || e.embedding.length === 0).length
+            : 0;
         return (
             <>
                 {entries.length > 0 && (
@@ -662,6 +765,17 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                             <Plus size={15} strokeWidth={1.8} />
                             <span>新增{label}</span>
                         </button>
+                        {type === "long_term" && missingVectorCount > 0 && (
+                            <button
+                                className="mem-entry-add-btn"
+                                onClick={() => void handleBackfillEmbeddings()}
+                                disabled={embeddingAll}
+                                title="为尚未生成向量的旧记忆计算 Embedding 向量"
+                            >
+                                <Zap size={14} strokeWidth={1.8} />
+                                <span>{embeddingAll ? "向量化中..." : `补全向量(${missingVectorCount})`}</span>
+                            </button>
+                        )}
                         <button
                             className="mem-entry-clear-btn"
                             onClick={() => setConfirmClearAll(true)}
@@ -692,11 +806,17 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                         const keywords = Array.isArray(entry.metadata?.keywords) && (entry.metadata.keywords as unknown[]).length > 0
                             ? (entry.metadata.keywords as unknown[]).map(String)
                             : parsedMeta.keywords;
+                        const accessCount = typeof entry.accessCount === "number"
+                            ? entry.accessCount
+                            : (typeof entry.metadata?.accessCount === "number" ? Number(entry.metadata.accessCount) : 0);
+                        const importanceVal = Number.isFinite(entry.importance) ? entry.importance : (parsedMeta.importance ?? 0.8);
+                        const importanceScore = Math.max(1, Math.min(10, Math.round(importanceVal * 10)));
+                        const hasVector = Array.isArray(entry.embedding) && entry.embedding.length > 0;
                         const isExpanded = expandedId === entry.id;
                         const cleanBody = stripMemoryStructuredSections(entry.content) || entry.content;
-                        const displayMarkdown = isExpanded || cleanBody.length <= 160
+                        const displayMarkdown = isExpanded || cleanBody.length <= 180
                             ? cleanBody
-                            : cleanBody.slice(0, 160) + "...";
+                            : cleanBody.slice(0, 180) + "...";
 
                         return (
                             <div
@@ -711,7 +831,9 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                 }}
                             >
                                 <div className="mem-report-head">
-                                    <span className="ts-11 text-secondary" style={{ letterSpacing: "1px" }}>[ DATE: {relativeTime(entry.createdAt)} ]</span>
+                                    <span className="ts-11 text-secondary" style={{ letterSpacing: "0.5px" }}>
+                                        [ {formatEntryDateLabel(entry)} ]
+                                    </span>
                                     <div className="mem-report-actions">
                                         <span className={`mem-origin-badge ${isManualMemoryEntry(entry) ? "is-manual" : ""}`}>
                                             {isManualMemoryEntry(entry) ? "MANUAL" : "AUTO"}
@@ -753,16 +875,31 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                         {displayMarkdown}
                                     </ReactMarkdown>
                                 </div>
-                                {keywords.length > 0 && (
-                                    <div className="mem-structured-footer">
-                                        <div className="mem-keywords-row">
-                                            <span className="mem-keywords-label">向量检索词：</span>
-                                            {keywords.map((kw, idx) => (
-                                                <span key={idx} className="mem-keyword-chip">{kw}</span>
-                                            ))}
-                                        </div>
+                                <div className="mem-structured-footer">
+                                    <div className="mem-stats-row">
+                                        <span className="mem-stat-pill">
+                                            重要性 <strong>{importanceScore}/10</strong>
+                                        </span>
+                                        <span className="mem-stat-pill">
+                                            访问次数 <strong>{accessCount}</strong>
+                                        </span>
+                                        {type === "long_term" && (
+                                            <span className={`mem-stat-pill ${hasVector ? "is-vector-ok" : "is-vector-missing"}`}>
+                                                {hasVector ? "● 已向量化" : "○ 未向量化"}
+                                            </span>
+                                        )}
                                     </div>
-                                )}
+                                    <div className="mem-keywords-row">
+                                        <span className="mem-keywords-label">检索关键词：</span>
+                                        {keywords.length > 0 ? (
+                                            keywords.map((kw, idx) => (
+                                                <span key={idx} className="mem-keyword-chip">{kw}</span>
+                                            ))
+                                        ) : (
+                                            <span className="mem-keywords-empty">未设置（点右上角编辑补充）</span>
+                                        )}
+                                    </div>
+                                </div>
                             </div>
                         );
                     })
@@ -868,10 +1005,36 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                     <textarea
                                         className="ui-textarea mem-edit-textarea"
                                         value={memoryEditor.content}
-                                        placeholder={placeholder}
+                                        placeholder={`${placeholder}（无需包含日期与具体时间，系统会自动记录入库时间）`}
                                         disabled={savingMemory}
                                         onChange={event => setMemoryEditor(prev => prev ? { ...prev, content: event.target.value } : prev)}
                                     />
+                                    <div className="mem-edit-meta-fields">
+                                        <div className="mem-edit-field-row">
+                                            <label className="mem-edit-field-label">重要性：{memoryEditor.importance}/10（权重越高，注入时越靠前）</label>
+                                            <input
+                                                type="range"
+                                                min={1}
+                                                max={10}
+                                                step={1}
+                                                value={memoryEditor.importance}
+                                                disabled={savingMemory}
+                                                onChange={e => setMemoryEditor(prev => prev ? { ...prev, importance: Number(e.target.value) } : prev)}
+                                                className="ui-slider"
+                                            />
+                                        </div>
+                                        <div className="mem-edit-field-row">
+                                            <label className="mem-edit-field-label">检索关键词（用顿号或逗号分隔）</label>
+                                            <input
+                                                type="text"
+                                                className="ui-input ts-12"
+                                                value={memoryEditor.keywordsText}
+                                                placeholder="例如：窄门、法语、银翼杀手、约定"
+                                                disabled={savingMemory}
+                                                onChange={e => setMemoryEditor(prev => prev ? { ...prev, keywordsText: e.target.value } : prev)}
+                                            />
+                                        </div>
+                                    </div>
                                     <div className={`mem-edit-footer ${overLimit ? "is-over-limit" : ""}`}>
                                         <span>{isCore ? "CORE" : "LONG TERM"}</span>
                                         <span>{contentLength}/{MANUAL_MEMORY_CONTENT_LIMIT}</span>

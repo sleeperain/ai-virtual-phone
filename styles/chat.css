@@ -8469,6 +8469,56 @@
   flex-direction: column;
   gap: 6px;
 }
+.mem-stats-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.mem-stat-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--c-text) 6%, transparent);
+  color: var(--c-text);
+  font-size: calc(10px * var(--app-text-scale, 1));
+}
+.mem-stat-pill strong {
+  color: var(--c-text-title);
+  font-weight: 700;
+}
+.mem-stat-pill.is-vector-ok {
+  color: #16a34a;
+  background: rgba(22, 163, 74, 0.1);
+  font-weight: 600;
+}
+.mem-stat-pill.is-vector-missing {
+  color: var(--c-text);
+  opacity: 0.55;
+}
+.mem-keywords-empty {
+  font-size: calc(10px * var(--app-text-scale, 1));
+  color: var(--c-text);
+  opacity: 0.45;
+}
+.mem-edit-meta-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 0;
+}
+.mem-edit-field-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mem-edit-field-label {
+  font-size: calc(11px * var(--app-text-scale, 1));
+  font-weight: 600;
+  color: var(--c-text-title);
+}
 .mem-keywords-row {
   display: flex;
   flex-wrap: wrap;
