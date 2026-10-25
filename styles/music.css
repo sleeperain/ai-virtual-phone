@@ -4994,10 +4994,10 @@
 .music-float-lyrics {
     position: absolute;
     z-index: 55;
-    width: 342px;
+    width: 320px;
     max-width: calc(100% - 16px);
-    padding: 8px 28px;
-    border-radius: 16px;
+    padding: 8px 26px;
+    border-radius: 18px;
     background: transparent;
     border: 1px solid transparent;
     box-sizing: border-box;
@@ -5008,16 +5008,18 @@
     touch-action: none;
     cursor: grab;
     user-select: none;
-    transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, padding 0.2s ease;
+    transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, padding 0.2s ease, width 0.15s ease;
 }
 
 .music-float-lyrics[data-expanded] {
-    background: rgba(255, 255, 255, 0.72);
-    backdrop-filter: blur(18px);
-    -webkit-backdrop-filter: blur(18px);
-    border-color: rgba(255, 255, 255, 0.85);
-    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.14);
-    padding: 16px 28px 12px;
+    background: rgba(255, 255, 255, 0.26);
+    backdrop-filter: blur(20px) saturate(140%);
+    -webkit-backdrop-filter: blur(20px) saturate(140%);
+    border-color: rgba(255, 255, 255, 0.45);
+    box-shadow:
+        inset 0 1px 0.5px rgba(255, 255, 255, 0.55),
+        0 8px 26px rgba(0, 0, 0, 0.1);
+    padding: 16px 16px 12px;
 }
 
 .music-float-lyrics[data-locked] {
@@ -5025,31 +5027,41 @@
     cursor: default;
 }
 
-.music-float-close {
+.music-float-corner-btn {
     position: absolute;
     top: 6px;
-    right: 6px;
     width: 24px;
     height: 24px;
     border: none;
     background: transparent;
-    color: rgba(40, 44, 52, 0.7);
+    color: rgba(40, 44, 52, 0.72);
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
     padding: 0;
-    transition: background 0.15s, color 0.15s;
+    transition: background 0.15s, color 0.15s, transform 0.15s;
 }
 
-.music-float-close:active {
-    background: rgba(0, 0, 0, 0.08);
+.music-float-corner-btn:active {
+    background: rgba(255, 255, 255, 0.35);
     color: #111;
+    transform: scale(0.9);
+}
+
+.music-float-open-player {
+    left: 7px;
+}
+
+.music-float-close {
+    right: 7px;
 }
 
 .music-float-lines {
     width: 100%;
+    padding: 0 14px;
+    box-sizing: border-box;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -5066,7 +5078,7 @@
 }
 
 .music-float-line-active {
-    font-size: calc(14px * var(--app-text-scale, 1));
+    font-size: calc(var(--float-lyric-size, 14px) * var(--app-text-scale, 1));
     font-weight: 600;
 }
 
@@ -5078,29 +5090,29 @@
     vertical-align: bottom;
     background-image: linear-gradient(
         90deg,
-        #ff5468 0%,
-        #ff5468 var(--lyric-progress, 0%),
-        rgba(35, 40, 48, 0.88) var(--lyric-progress, 0%),
-        rgba(35, 40, 48, 0.88) 100%
+        var(--float-lyric-color, #C58B8B) 0%,
+        var(--float-lyric-color, #C58B8B) var(--lyric-progress, 0%),
+        rgba(42, 47, 55, 0.85) var(--lyric-progress, 0%),
+        rgba(42, 47, 55, 0.85) 100%
     );
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
-    filter: drop-shadow(0 1px 2px rgba(255, 255, 255, 0.85));
+    filter: drop-shadow(0 1px 2px rgba(255, 255, 255, 0.82));
 }
 
 .music-float-line-next {
-    font-size: calc(12px * var(--app-text-scale, 1));
+    font-size: calc(var(--float-lyric-next-size, 12px) * var(--app-text-scale, 1));
     font-weight: 500;
-    color: rgba(50, 56, 66, 0.75);
-    text-shadow: 0 1px 2px rgba(255, 255, 255, 0.85);
+    color: rgba(52, 58, 68, 0.72);
+    text-shadow: 0 1px 2px rgba(255, 255, 255, 0.82);
 }
 
 .music-float-line-empty {
-    font-size: calc(13px * var(--app-text-scale, 1));
+    font-size: calc(var(--float-lyric-size, 14px) * var(--app-text-scale, 1));
     font-weight: 500;
-    color: rgba(50, 56, 66, 0.8);
-    text-shadow: 0 1px 2px rgba(255, 255, 255, 0.85);
+    color: var(--float-lyric-color, #C58B8B);
+    text-shadow: 0 1px 2px rgba(255, 255, 255, 0.82);
     padding: 6px 0;
 }
 
@@ -5108,15 +5120,16 @@
     width: 100%;
     display: flex;
     align-items: center;
-    justify-content: space-evenly;
+    justify-content: space-between;
     margin-top: 10px;
-    padding-top: 6px;
-    border-top: 1px solid rgba(0, 0, 0, 0.06);
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.35);
 }
 
 .music-float-ctrl-btn {
-    flex: 1;
-    height: 30px;
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
     border: none;
     background: transparent;
     color: #2c313a;
@@ -5125,17 +5138,95 @@
     justify-content: center;
     cursor: pointer;
     padding: 0;
-    border-radius: 8px;
+    border-radius: 50%;
     transition: transform 0.15s, background 0.15s, color 0.15s;
 }
 
 .music-float-ctrl-btn:active {
     transform: scale(0.9);
-    background: rgba(0, 0, 0, 0.06);
+    background: rgba(255, 255, 255, 0.35);
+}
+
+.music-float-ctrl-btn[data-active] {
+    color: var(--float-lyric-color, #C58B8B);
+    background: rgba(255, 255, 255, 0.38);
 }
 
 .music-float-ctrl-play {
-    color: #ff5468;
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(44, 49, 58, 0.65);
+    background: rgba(255, 255, 255, 0.25);
+    color: #2c313a;
+}
+
+.music-float-settings-row {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.music-float-swatches {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.music-float-swatch {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(255, 255, 255, 0.75);
+    padding: 0;
+    cursor: pointer;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+    transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+}
+
+.music-float-swatch[data-selected] {
+    transform: scale(1.16);
+    border-color: #ffffff;
+    box-shadow: 0 0 0 2px rgba(44, 49, 58, 0.55);
+}
+
+.music-float-size-btns {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.music-float-size-btn {
+    height: 24px;
+    min-width: 34px;
+    padding: 0 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.6);
+    background: rgba(255, 255, 255, 0.35);
+    color: #2c313a;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.15s, background 0.15s, opacity 0.15s;
+}
+
+.music-float-size-btn:active:not(:disabled) {
+    transform: scale(0.92);
+    background: rgba(255, 255, 255, 0.55);
+}
+
+.music-float-size-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
 }
 
 /* ═══════════════════════════════════════════════════════
