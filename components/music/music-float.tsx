@@ -3,12 +3,38 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMusicPlayerOptional } from "@/lib/music-context";
-import { kvGet, kvSet } from "@/lib/kv-db";
+import { kvGet, kvSet, registerKvMigration } from "@/lib/kv-db";
 
 const DRAG_START_THRESHOLD = 5;
 
 const FLOAT_COLOR_KEY = "ai_phone_music_float_color_v1";
 const FLOAT_SIZE_KEY = "ai_phone_music_float_size_v1";
+/** 悬浮窗被拖到哪儿了 */
+const FLOAT_POS_KEY = "ai_phone_music_float_pos_v1";
+// 桌面歌词的配色 / 字号 / 位置都是用户自己调出来的，要跟着 kv 一起迁移和兜底，
+// 不然 kv 水合失败时这几项会静默读回默认值。
+registerKvMigration(FLOAT_COLOR_KEY);
+registerKvMigration(FLOAT_SIZE_KEY);
+registerKvMigration(FLOAT_POS_KEY);
+
+const DEFAULT_FLOAT_POS = { x: 24, y: 120 };
+
+/** 读回上次拖到的位置。数据坏了就回默认位置，不能让整块飘到屏幕外。 */
+function loadFloatPos(): { x: number; y: number } {
+    if (typeof window === "undefined") return DEFAULT_FLOAT_POS;
+    try {
+        const raw = kvGet(FLOAT_POS_KEY);
+        if (!raw) return DEFAULT_FLOAT_POS;
+        const parsed = JSON.parse(raw) as { x?: unknown; y?: unknown };
+        if (typeof parsed.x === "number" && typeof parsed.y === "number"
+            && Number.isFinite(parsed.x) && Number.isFinite(parsed.y)) {
+            return { x: parsed.x, y: parsed.y };
+        }
+    } catch {
+        // 坏数据当成没有
+    }
+    return DEFAULT_FLOAT_POS;
+}
 
 const MORANDI_COLORS = [
     { id: "rose", label: "灰粉", value: "#C58B8B" },
@@ -45,7 +71,7 @@ function parseLyrics(lrc: string): LyricLine[] {
 export default function MusicFloat({ hidden }: { hidden?: boolean }) {
     const player = useMusicPlayerOptional();
     const floatRef = useRef<HTMLDivElement>(null);
-    const [pos, setPos] = useState({ x: 24, y: 120 });
+    const [pos, setPos] = useState(loadFloatPos);
     const [expanded, setExpanded] = useState(false);
     const [locked, setLocked] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
@@ -71,6 +97,7 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
             if (Number.isFinite(s) && s >= MIN_FONT_SIZE && s <= MAX_FONT_SIZE) {
                 setFontSize(s);
             }
+            setPos(loadFloatPos());
         }, 350);
         return () => clearTimeout(timer);
     }, []);
@@ -153,6 +180,12 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
         }
     }, [clampPos]);
 
+    /** 落位并记住：下次打开桌面歌词还在这个位置 */
+    const commitPos = useCallback((next: { x: number; y: number }) => {
+        setPos(next);
+        try { kvSet(FLOAT_POS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+    }, []);
+
     const finishPointer = useCallback((e: React.PointerEvent) => {
         const d = dragRef.current;
         if (!d.active || d.pointerId !== e.pointerId) return;
@@ -165,15 +198,21 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
         if (d.moved) {
             const dx = e.clientX - d.startX;
             const dy = e.clientY - d.startY;
-            setPos(clampPos(d.origX + dx, d.origY + dy));
+            commitPos(clampPos(d.origX + dx, d.origY + dy));
             return;
         }
 
         if (!locked) {
-            setExpanded(true);
-            requestAnimationFrame(() => setPos(p => clampPos(p.x, p.y)));
+            // 点一下歌词 = 展开完整悬浮窗；再点一下 = 收起，只留两行歌词
+            setExpanded(prev => {
+                const next = !prev;
+                if (!next) setShowSettings(false);
+                // 展开 / 收起都会改高度，位置得重新夹一次别越界
+                requestAnimationFrame(() => setPos(p => clampPos(p.x, p.y)));
+                return next;
+            });
         }
-    }, [clampPos, locked]);
+    }, [clampPos, commitPos, locked]);
 
     const handleLockClick = useCallback((e: React.MouseEvent) => {
         e.stopPropagation();
@@ -209,6 +248,33 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
     }, [floatDismissed]);
 
     const lyrics = useMemo(() => parseLyrics(player?.currentTrack?.lyrics || ""), [player?.currentTrack?.lyrics]);
+
+    // ── 长句左右滑动 ──
+    // 一句歌词比悬浮窗还宽时，让它跟着播放进度横向挪，唱到哪儿看哪儿。
+    // 这里先单独算一次「当前是哪句」，只是因为 hooks 不能写在下面那个提前 return 之后。
+    const measureTime = player?.currentTime ?? 0;
+    let measureIdx = -1;
+    for (let i = lyrics.length - 1; i >= 0; i--) {
+        if (measureTime >= lyrics[i].time) { measureIdx = i; break; }
+    }
+    const activeMeasureText = lyrics.length > 0
+        ? (lyrics[measureIdx >= 0 ? measureIdx : 0]?.text || "")
+        : "";
+    const activeLineRef = useRef<HTMLSpanElement>(null);
+    /** 当前行那个裁切盒：量「文字多宽」和「盒子多宽」都拿它当基准 */
+    const activeLineWrapRef = useRef<HTMLDivElement>(null);
+    /** 这一句比可视宽度多出多少像素；0 表示不用挪 */
+    const [lineOverflow, setLineOverflow] = useState(0);
+
+    useEffect(() => {
+        const span = activeLineRef.current;
+        const wrap = activeLineWrapRef.current;
+        if (!span || !wrap) { setLineOverflow(0); return; }
+        // 文字整行不裁（scrollWidth 是全长），由外层盒子负责裁——
+        // 这样给文字加位移时，露出来的才是「下一段字」而不是空白
+        const overflow = Math.max(0, Math.ceil(span.scrollWidth - wrap.clientWidth));
+        setLineOverflow(prev => (prev === overflow ? prev : overflow));
+    }, [activeMeasureText, fontSize, expanded, lyricColor]);
 
     if (!player || !player.currentTrack || hidden || player.floatDismissed) return null;
 
@@ -311,10 +377,23 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
             <div className="music-float-lines">
                 {hasLyrics ? (
                     <>
-                        <div className="music-float-line music-float-line-active">
+                        <div
+                            className="music-float-line music-float-line-active"
+                            ref={activeLineWrapRef}
+                            // 长句要跟着唱的位置挪：这时必须左对齐从头排，
+                            // 否则居中排会让超出部分从左边溢出去，第一个字直接看不见
+                            style={lineOverflow > 0 ? { textAlign: "left" } : undefined}
+                        >
                             <span
+                                ref={activeLineRef}
                                 className="music-float-line-fill"
-                                style={{ "--lyric-progress": `${(lineProgress * 100).toFixed(1)}%` } as React.CSSProperties}
+                                style={{
+                                    "--lyric-progress": `${(lineProgress * 100).toFixed(1)}%`,
+                                    // 这句放不下就按播放进度往左挪：唱到最后一个字刚好挪到底
+                                    transform: lineOverflow > 0
+                                        ? `translateX(${-Math.round(lineOverflow * Math.max(0, Math.min(1, lineProgress)))}px)`
+                                        : undefined,
+                                } as React.CSSProperties}
                             >
                                 {currentLine?.text || " "}
                             </span>

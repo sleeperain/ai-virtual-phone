@@ -35,6 +35,9 @@ export type ReadingShareAnnotation = {
     content: string;
     /** 自己写的和角色写的各用各自配置的字体和便签色 */
     authorType: "user" | "character";
+    /** 段评不是批注，摘抄图里不该出现。调用方漏过滤时绘制这层再兜一次底。
+     *  缺省按批注处理（老调用方没有这个字段）。 */
+    kind?: "note" | "comment";
 };
 
 export type ReadingShareFonts = {
@@ -1285,7 +1288,13 @@ const RENDERERS: Record<ReadingShareTemplate, (ctx: Ctx) => number> = {
 };
 
 /** 画出摘抄图。返回的 canvas 已经是最终像素，直接 toBlob 就能存。 */
-export function renderReadingShareCard(input: ReadingShareCardInput): HTMLCanvasElement {
+export function renderReadingShareCard(rawInput: ReadingShareCardInput): HTMLCanvasElement {
+    // 摘抄图只放正文（划线那段）和批注文字。段评是段落下面那一串评论和回复，
+    // 既不是对这句话的心得，也会把版面撑得没法看——这里兜底再滤一次，
+    // 免得别的调用方（片刻纪事等）传进来又混上。
+    const input: ReadingShareCardInput = rawInput.annotations.some(annotation => annotation.kind === "comment")
+        ? { ...rawInput, annotations: rawInput.annotations.filter(annotation => annotation.kind !== "comment") }
+        : rawInput;
     const preset = READING_SHARE_TEMPLATE_PRESETS[input.template];
     const palette: ReadingSharePalette = {
         background: input.palette?.background || preset.background,

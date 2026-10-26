@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMusicPlayer, type PlayMode } from "@/lib/music-context";
 import { scrollElementWithinContainer } from "@/lib/dom-scroll";
-import { kvGet, kvSet } from "@/lib/kv-db";
+import { kvGet, kvSet, registerKvMigration } from "@/lib/kv-db";
 import { extractCoverPalette, DEFAULT_COVER_PALETTE, type CoverPalette } from "@/lib/cover-color";
 import {
     getUserPlaylists, addTracksToPlaylist, removeTracksFromPlaylist, getNeteasePlayInfo,
@@ -33,15 +33,20 @@ type ListenTogetherSession = {
 
 const LISTEN_TOGETHER_SESSION_KEY = "ai_phone_music_listen_together_session_v1";
 const LISTEN_TOGETHER_STATS_PREFIX = "ai_phone_music_listen_together_secs_";
+/** 播放页样式（现代封面 / 黑胶）的存储键 */
+const PLAYER_STYLE_KEY = "music-player-style";
+// 播放页样式是用户选过的偏好，跟其它 kv 一起水合 / localStorage 兜底
+registerKvMigration(PLAYER_STYLE_KEY);
 
+/** 一起听时长：不满一分钟就写「小于1分钟」（不再一秒一秒地跳），
+ *  满一小时写「x小时y分钟」。 */
 function formatListenDuration(totalSeconds: number): string {
     const secs = Math.max(0, Math.floor(totalSeconds));
+    if (secs < 60) return "小于1分钟";
     const h = Math.floor(secs / 3600);
     const m = Math.floor((secs % 3600) / 60);
-    const s = secs % 60;
     if (h > 0) return `${h}小时${m}分钟`;
-    if (m > 0) return `${m}分${s}秒`;
-    return `${s}秒`;
+    return `${m}分钟`;
 }
 
 const PLAY_MODE_ICONS: Record<PlayMode, { svg: string; label: string }> = {
@@ -90,7 +95,7 @@ export default function MusicPlayer() {
     const [dragTime, setDragTime] = useState(0);
     const [view, setView] = useState<BodyView>("cover");
     const [playerStyle, setPlayerStyle] = useState<PlayerStyle>(() =>
-        (typeof window !== "undefined" && kvGet("music-player-style") === "vinyl") ? "vinyl" : "modern");
+        (typeof window !== "undefined" && kvGet(PLAYER_STYLE_KEY) === "vinyl") ? "vinyl" : "modern");
     const [showQueue, setShowQueue] = useState(false);
     const [showComments, setShowComments] = useState(false);
     const [artistView, setArtistView] = useState<{ id: number; name: string } | null>(null);
@@ -109,7 +114,7 @@ export default function MusicPlayer() {
     // and custom background. Re-read a few times until hydration has settled.
     useEffect(() => {
         const timers = [300, 1200, 3000].map(ms => setTimeout(() => {
-            const stored = kvGet("music-player-style");
+            const stored = kvGet(PLAYER_STYLE_KEY);
             if (stored === "vinyl" || stored === "modern") {
                 setPlayerStyle(prev => (prev === stored ? prev : stored));
             }
@@ -244,7 +249,7 @@ export default function MusicPlayer() {
     const togglePlayerStyle = useCallback(() => {
         setPlayerStyle(prev => {
             const next: PlayerStyle = prev === "modern" ? "vinyl" : "modern";
-            try { kvSet("music-player-style", next); } catch { /* ignore */ }
+            try { kvSet(PLAYER_STYLE_KEY, next); } catch { /* ignore */ }
             showMusicToast(next === "vinyl" ? "已切换为黑胶唱片样式" : "已切换为现代封面样式");
             return next;
         });

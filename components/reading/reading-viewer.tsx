@@ -32,10 +32,10 @@ import {
 } from "@/lib/reading-memory";
 import { annotationExportFileName, buildAnnotationMarkdown } from "@/lib/reading-export";
 import { downloadFile } from "@/lib/download-utils";
-import { collectSelectionSegments, splitParagraphIntoSentences, type ReadingSelectionSegment } from "./reading-selection";
+import { collectSelectionSegments, splitParagraphIntoSentences, textOffsetWithin, type ReadingSelectionSegment } from "./reading-selection";
 import { isUserAnnotation, type ReadingBookmark, type ReadingMark, type ReadingMarkStyle } from "@/lib/reading-types";
 import { generateAnnotationBatch, generateParagraphCommentReply, generateReadingChat, parseReadingDiscussResponse, summarizeReadingRange, type ReadingDiscussAction, type ReadingDiscussContext } from "@/lib/reading-engine";
-import { loadReadingProfile, loadReadingProfileAvatar } from "@/lib/reading-profile";
+import { READING_PROFILE_CHANGED_EVENT, loadReadingProfile, loadReadingProfileAvatar } from "@/lib/reading-profile";
 import { loadChatMessages, pushChatMessage, deleteChatMessage, editChatMessage, loadChatContacts, createOrGetSession, isReadingDiscussMessage } from "@/lib/chat-storage";
 import type { ChatMessage, ChatSession } from "@/lib/chat-storage";
 import { loadCharacters } from "@/lib/character-storage";
@@ -76,6 +76,13 @@ function isSentenceNoteAnnotation(annotation: ReadingAnnotation): boolean {
     if (annotation.annotationKind === "note") return true;
     if (annotation.annotationKind === "comment") return false;
     return typeof annotation.quoteEnd === "number" && annotation.quoteEnd > 0;
+}
+
+/** 段评：挂在段落下面的一串评论和回复。和「批注」（写在某句话 / 某段旁边的）
+ *  是两回事——段评不进摘抄图、不进批注提示词，记忆里也不该被说成批注。
+ *  老数据没有 annotationKind 字段，一律按批注处理。 */
+function isCommentAnnotation(annotation: ReadingAnnotation): boolean {
+    return annotation.annotationKind === "comment";
 }
 
 function formatCommentTimestamp(iso: string): string {
@@ -633,16 +640,33 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
             return {};
         });
     }, []);
+    // 阅读账号的头像和昵称。换了账号以后，段评里自己发的那几条要立刻换头像，
+    // 所以这里除了挂载时读一次，还要监听保存事件重读——不能只在挂载时读一次，
+    // 那就是「换了头像段评不跟着变」的老毛病。
+    const [readingProfileName, setReadingProfileName] = useState(() => loadReadingProfile().name);
     useEffect(() => {
-        let revoked = false;
+        let alive = true;
         let url = "";
-        void loadReadingProfileAvatar().then((blob) => {
-            if (revoked || !blob || blob.size === 0) return;
+        const refresh = async () => {
+            const profile = loadReadingProfile();
+            if (!alive) return;
+            setReadingProfileName(profile.name);
+            const blob = await loadReadingProfileAvatar().catch(() => null);
+            if (!alive) return;
+            if (url) { URL.revokeObjectURL(url); url = ""; }
+            if (!blob || blob.size === 0) {
+                setReadingProfileAvatarUrl("");
+                return;
+            }
             url = URL.createObjectURL(blob);
             setReadingProfileAvatarUrl(url);
-        }).catch(() => {});
+        };
+        void refresh();
+        const onChange = () => { void refresh(); };
+        window.addEventListener(READING_PROFILE_CHANGED_EVENT, onChange);
         return () => {
-            revoked = true;
+            alive = false;
+            window.removeEventListener(READING_PROFILE_CHANGED_EVENT, onChange);
             if (url) URL.revokeObjectURL(url);
         };
     }, []);
@@ -650,10 +674,11 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         () => resolveUserIdentity(companionId || undefined, "reading"),
         [companionId],
     );
-    // 批注/段评署名优先用阅读账号昵称或绑定的用户身份，不写死
+    // 批注/段评署名优先用阅读账号昵称或绑定的用户身份，不写死。
+    // readingProfileName 是这次会话里读到的账号昵称（换账号会刷新），排最前。
     const userDisplayName = useMemo(
-        () => loadReadingProfile().name.trim() || userIdentity?.name?.trim() || "我",
-        [userIdentity],
+        () => readingProfileName.trim() || userIdentity?.name?.trim() || "我",
+        [readingProfileName, userIdentity],
     );
     const userAvatarUrl = readingProfileAvatarUrl || userIdentity?.avatarUrl || "";
     const characterById = useMemo(() => {
@@ -703,6 +728,171 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         return () => observer.disconnect();
     }, []);
 
+
+    // ── 句子的左右拖动把手 ──────────────────────────────────
+    // 点一句先把它选中，两端各出一个圆点；拖圆点就能把范围往前 / 往后拉，
+    // 一直拉到相邻那句就是跨句划线。结果存回 sentenceMenu，
+    // 后面的「高亮 / 划线 / 批注 / 分享」全都按这个范围走。
+    const [sentenceHandles, setSentenceHandles] = useState<{
+        start: { x: number; y: number };
+        end: { x: number; y: number };
+    } | null>(null);
+    const sentenceDragRef = useRef<{ side: "start" | "end"; pointerId: number } | null>(null);
+
+    /** 段落内第 offset 个字符所在字的屏幕位置，用来把把手贴到字上 */
+    const paragraphOffsetRect = useCallback((cIdx: number, pIdx: number, offset: number): DOMRect | null => {
+        const surface = surfaceRef.current;
+        if (!surface) return null;
+        const lines = surface.querySelectorAll<HTMLElement>(`[data-chapter="${cIdx}"][data-paragraph="${pIdx}"]`);
+        for (const line of Array.from(lines)) {
+            const lineStart = Number(line.dataset.charstart || 0);
+            const lineLength = (line.textContent || "").length;
+            if (offset < lineStart || offset > lineStart + lineLength) continue;
+            const local = offset - lineStart;
+            const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+            let acc = 0;
+            let node = walker.nextNode();
+            while (node) {
+                const length = (node.textContent || "").length;
+                if (local <= acc + length) {
+                    const range = document.createRange();
+                    const from = Math.max(0, Math.min(length, local - acc));
+                    try {
+                        range.setStart(node, from);
+                        range.setEnd(node, Math.min(length, from + 1));
+                    } catch {
+                        return null;
+                    }
+                    const rect = range.getBoundingClientRect();
+                    if (rect && (rect.width > 0 || rect.height > 0)) return rect;
+                }
+                acc += length;
+                node = walker.nextNode();
+            }
+        }
+        return null;
+    }, []);
+
+    /** 屏幕坐标落在正文的哪个位置（章 / 段 / 段内偏移）。拖动时靠它换算。 */
+    const offsetFromPoint = useCallback((x: number, y: number): { chapterIndex: number; paragraphIndex: number; offset: number } | null => {
+        const doc = document as Document & {
+            caretRangeFromPoint?: (px: number, py: number) => Range | null;
+            caretPositionFromPoint?: (px: number, py: number) => { offsetNode: Node; offset: number } | null;
+        };
+        let container: Node | null = null;
+        let offset = 0;
+        if (typeof doc.caretRangeFromPoint === "function") {
+            const range = doc.caretRangeFromPoint(x, y);
+            if (range) { container = range.startContainer; offset = range.startOffset; }
+        }
+        if (!container && typeof doc.caretPositionFromPoint === "function") {
+            const position = doc.caretPositionFromPoint(x, y);
+            if (position) { container = position.offsetNode; offset = position.offset; }
+        }
+        if (!container) return null;
+        const element = container.nodeType === Node.TEXT_NODE ? container.parentElement : container as HTMLElement;
+        const line = element?.closest<HTMLElement>("[data-paragraph]");
+        if (!line) return null;
+        const chapterIndex = Number(line.dataset.chapter);
+        const paragraphIndex = Number(line.dataset.paragraph);
+        if (!Number.isFinite(chapterIndex) || !Number.isFinite(paragraphIndex)) return null;
+        const lineStart = Number(line.dataset.charstart || 0);
+        const local = textOffsetWithin(line, container, offset);
+        return { chapterIndex, paragraphIndex, offset: lineStart + local };
+    }, []);
+
+    /** 把两个把手摆到当前选区两端。位置没变就不 setState——滚动时每帧都会调它，
+     *  无脑写 state 会把整页重渲染一遍。 */
+    const syncSentenceHandles = useCallback(() => {
+        if (!sentenceMenu) { setSentenceHandles(null); return; }
+        const { chapterIndex: cIdx, paragraphIndex: pIdx, start, end } = sentenceMenu;
+        const startRect = paragraphOffsetRect(cIdx, pIdx, start);
+        const endRect = paragraphOffsetRect(cIdx, pIdx, Math.max(start + 1, end) - 1);
+        if (!startRect || !endRect) { setSentenceHandles(null); return; }
+        // 换算成相对阅读区的位置：把手是阅读区里的绝对定位元素，
+        // 这样手机壳整体缩放时也不会和文字错位
+        const surfaceRect = surfaceRef.current?.getBoundingClientRect();
+        const originX = surfaceRect?.left ?? 0;
+        const originY = surfaceRect?.top ?? 0;
+        const next = {
+            start: {
+                x: startRect.left + startRect.width / 2 - originX,
+                y: startRect.top + startRect.height / 2 - originY,
+            },
+            end: {
+                x: endRect.right - endRect.width / 2 - originX,
+                y: endRect.top + endRect.height / 2 - originY,
+            },
+        };
+        setSentenceHandles((prev) => (
+            prev
+            && Math.abs(prev.start.x - next.start.x) < 0.5
+            && Math.abs(prev.start.y - next.start.y) < 0.5
+            && Math.abs(prev.end.x - next.end.x) < 0.5
+            && Math.abs(prev.end.y - next.end.y) < 0.5
+                ? prev
+                : next
+        ));
+    }, [paragraphOffsetRect, sentenceMenu]);
+
+    useLayoutEffect(() => {
+        syncSentenceHandles();
+    }, [syncSentenceHandles]);
+
+    // 滚一滚、转个屏，字的位置就变了，把手跟着重新贴一次
+    useEffect(() => {
+        if (!sentenceMenu) return;
+        const body = scrollRef.current;
+        const onShift = () => syncSentenceHandles();
+        body?.addEventListener("scroll", onShift, { passive: true });
+        window.addEventListener("resize", onShift);
+        return () => {
+            body?.removeEventListener("scroll", onShift);
+            window.removeEventListener("resize", onShift);
+        };
+    }, [sentenceMenu, syncSentenceHandles]);
+
+    /** 拖把手：按手指下的字反过来改选区的起点 / 终点 */
+    useEffect(() => {
+        const onMove = (e: PointerEvent) => {
+            const drag = sentenceDragRef.current;
+            if (!drag || drag.pointerId !== e.pointerId) return;
+            e.preventDefault();
+            setSentenceMenu((prev) => {
+                if (!prev) return prev;
+                const hit = offsetFromPoint(e.clientX, e.clientY);
+                if (!hit) return prev;
+                // 把手只在本段内有效。跨段划线还是长按选字那条路，
+                // 硬把范围接到别段很容易一次选出一大截。
+                if (hit.chapterIndex !== prev.chapterIndex || hit.paragraphIndex !== prev.paragraphIndex) return prev;
+                const paragraph = chapters[prev.chapterIndex]?.paragraphs[prev.paragraphIndex] || "";
+                if (paragraph.length === 0) return prev;
+                let start = prev.start;
+                let end = prev.end;
+                if (drag.side === "start") {
+                    start = Math.min(hit.offset, end - 1);
+                } else {
+                    end = Math.max(hit.offset, start + 1);
+                }
+                start = Math.max(0, Math.min(paragraph.length - 1, start));
+                end = Math.max(start + 1, Math.min(paragraph.length, end));
+                if (start === prev.start && end === prev.end) return prev;
+                const text = stripReadingInlineIconMarkers(paragraph.slice(start, end)).trim();
+                return { ...prev, start, end, text: text || prev.text };
+            });
+        };
+        const onUp = (e: PointerEvent) => {
+            if (sentenceDragRef.current?.pointerId === e.pointerId) sentenceDragRef.current = null;
+        };
+        window.addEventListener("pointermove", onMove, { passive: false });
+        window.addEventListener("pointerup", onUp);
+        window.addEventListener("pointercancel", onUp);
+        return () => {
+            window.removeEventListener("pointermove", onMove);
+            window.removeEventListener("pointerup", onUp);
+            window.removeEventListener("pointercancel", onUp);
+        };
+    }, [chapters, offsetFromPoint]);
 
     /** 松手后读取选区：定位到覆盖的每一段，换算成段落内字符区间 */
     const captureSelection = useCallback(() => {
@@ -934,6 +1124,9 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                 quote: annotation.quote,
                 content: annotation.content,
                 createdAt: annotation.createdAt,
+                // 段评和批注分开记：混成一种，记忆区和提示词就会把两者说串
+                annotationKind: isCommentAnnotation(annotation) ? "comment" as const : "note" as const,
+                ...(isCommentAnnotation(annotation) ? { paragraphIndex: annotation.paragraphIndex } : {}),
             }));
 
     /** 按章折叠的列表壳。当前章默认展开，其余收起，长书里才好找。 */
@@ -1352,12 +1545,14 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                 );
             }
             if (to > from) {
+                // 用「有交集」而不是「完全相等」：拖把手把范围拉长以后，
+                // 起点 / 终点不再正好落在句子边界上，但这一句确实在选中的范围里。
                 const isSelectedSentence =
                     sentenceMenu !== null &&
                     sentenceMenu.chapterIndex === item.chapterIndex &&
                     sentenceMenu.paragraphIndex === item.paragraphIndex &&
-                    sentenceMenu.start === span.start &&
-                    sentenceMenu.end === span.end;
+                    sentenceMenu.start < span.end &&
+                    sentenceMenu.end > span.start;
                 nodes.push(
                     <span
                         key={`sent-${span.start}-${idx}`}
@@ -1707,7 +1902,10 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         const groups = await Promise.all(chapterIndexes.map((idx) => loadAnnotations(book.id, idx)));
         return groups
             .flat()
-            .filter((annotation) => itemKeys.has(`${annotation.chapterIndex}:${annotation.paragraphIndex}`));
+            .filter((annotation) => itemKeys.has(`${annotation.chapterIndex}:${annotation.paragraphIndex}`))
+            // 只把「批注」当已有批注给模型看。段评是段落下面那一串评论（还能互相回复），
+            // 混进批注历史里模型会以为「这段已经批注过了」，写出来的就不是批注。
+            .filter((annotation) => !isCommentAnnotation(annotation));
     }, [book.id]);
 
     const ensurePdfPageRangeParsed = useCallback(async (startPage: number, endPage: number): Promise<BookChapter[]> => {
@@ -4010,6 +4208,28 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                     </div>
                 </ContentDialog>
             )}
+            {/* 选中句子后两端的拖动把手：往左 / 往右拖就能扩大划线范围 */}
+            {sentenceMenu && sentenceHandles && (
+                <>
+                    {(["start", "end"] as const).map((side) => (
+                        <button
+                            key={side}
+                            type="button"
+                            className="reading-sentence-handle"
+                            data-side={side}
+                            data-no-nav="true"
+                            aria-label={side === "start" ? "拖动改变起点" : "拖动改变终点"}
+                            style={{ left: sentenceHandles[side].x, top: sentenceHandles[side].y }}
+                            onPointerDown={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                sentenceDragRef.current = { side, pointerId: e.pointerId };
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                        />
+                    ))}
+                </>
+            )}
             {selectionInfo && (
                 <div
                     className="reading-selection-menu"
@@ -4438,10 +4658,13 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                     .reduce((sum, paragraph) => sum + paragraph.length, 0) + first.start;
                 const chapterChars = chapterCharStats.lengths[first.chapterIndex] || 0;
                 const withinChapter = chapterChars > 0 ? charsBefore / chapterChars : 0;
-                // 这几段上已有的批注也能一起带进图里
+                // 这几段上已有的批注也能一起带进图里。
+                // 段评（段落下面那一串评论和回复）不进摘抄图：分享的是这段话和批注心得，
+                // 不是评论区。
                 const markedParagraphs = new Set(shareTarget.map(item => `${item.chapterIndex}:${item.paragraphIndex}`));
                 const relatedAnnotations = annotations
                     .filter(annotation => markedParagraphs.has(`${annotation.chapterIndex}:${annotation.paragraphIndex}`))
+                    .filter(annotation => !isCommentAnnotation(annotation))
                     .sort((a, b) => a.paragraphIndex - b.paragraphIndex || a.createdAt.localeCompare(b.createdAt))
                     .map(annotation => ({
                         name: isUserAnnotation(annotation) ? (userDisplayName || "我") : (annotation.characterName || "TA"),

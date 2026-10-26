@@ -29,6 +29,12 @@ export type ReadingAnnotationMemo = {
     quote?: string;
     content: string;
     createdAt: string;
+    /** 这条是「批注」还是「段评」。
+     *  段评是挂在段落底下的一串评论（含互相回复），批注是写在某句话旁边的。
+     *  两者混着记，记忆区和提示词就会把段评说成批注、把回复顺序讲串。 */
+    annotationKind?: "note" | "comment";
+    /** 段评挂在第几段（0 起）。批注靠 quote 定位，不需要这个。 */
+    paragraphIndex?: number;
 };
 
 export function loadReadingAnnotationMemos(): ReadingAnnotationMemo[] {
@@ -82,9 +88,11 @@ export function deleteReadingAnnotationMemo(annotationId: string): void {
     if (next.length !== existing.length) persist(next);
 }
 
-/** 记忆区里的标签，交给 formatStoredPromptEventContent 补时间戳 */
+/** 记忆区里的标签，交给 formatStoredPromptEventContent 补时间戳。
+ *  段评和批注是两回事：段评挂在整段下面（还能互相回复），批注写在某句话旁边。 */
 export function readingMemoLabel(memo: ReadingAnnotationMemo): string {
-    return memo.kind === "summary" ? "共读摘要" : "批注";
+    if (memo.kind === "summary") return "共读摘要";
+    return memo.annotationKind === "comment" ? "段评" : "批注";
 }
 
 /** 记忆区里那一行，带 [标签] 头交给 formatStoredPromptEventContent 补时间。
@@ -100,6 +108,12 @@ export function formatReadingAnnotationMemo(
         return `[共读摘要]${params.userName}和${params.characterName}读了《${memo.bookTitle}》${range}：${memo.content}`;
     }
     const who = memo.authorType === "user" ? params.userName : params.characterName;
+    if (memo.annotationKind === "comment") {
+        // 段评说的是「这一段下面的评论」，不是某句话的批注，
+        // 所以不能写成「在「…」旁写道」
+        const where = typeof memo.paragraphIndex === "number" ? `第${memo.paragraphIndex + 1}段` : "";
+        return `[段评]《${memo.bookTitle}》${chapter}${where} ${who}评论：${memo.content}`;
+    }
     const where = memo.quote ? `在「${memo.quote}」旁` : "";
     return `[批注]《${memo.bookTitle}》${chapter} ${who}${where}写道：${memo.content}`;
 }

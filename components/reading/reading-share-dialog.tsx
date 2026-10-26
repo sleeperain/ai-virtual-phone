@@ -23,6 +23,7 @@ import {
     type ReadingShareTemplate,
 } from "@/lib/reading-share-card";
 import { ReadingPresetBar } from "./reading-preset-bar";
+import { MediaPreviewOverlay } from "@/components/chat/media-preview-overlay";
 import { ColorInput } from "@/components/ui/form";
 import {
     READING_ANNOTATION_STYLE_DEFAULTS,
@@ -208,6 +209,7 @@ export function ReadingShareDialog({
     const [withTheirs, setWithTheirs] = useState(hasTheirs);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    /** 预览区的挂载点：画好的 canvas 直接换进去 */
     const previewRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const avatarRef = useRef<CanvasImageSource | null>(null);
@@ -304,6 +306,37 @@ export function ReadingShareDialog({
         return () => { cancelled = true; };
     }, [align, avatarShape, palette, ratio, template, withMine, withTheirs, signer, signerOrder, merged, mixed, segmentJoin, userAlign, tintUser, charFont]);
 
+    /** 点预览图放大看。直接复用朋友圈/聊天那套全屏图片预览，手势和按钮都一致。 */
+    const [zoomUrl, setZoomUrl] = useState<string | null>(null);
+    const zoomUrlRef = useRef<string | null>(null);
+    const closeZoom = () => {
+        if (zoomUrlRef.current) {
+            URL.revokeObjectURL(zoomUrlRef.current);
+            zoomUrlRef.current = null;
+        }
+        setZoomUrl(null);
+    };
+    const openZoom = async () => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        try {
+            const blob = await readingShareCardToBlob(canvas);
+            if (zoomUrlRef.current) URL.revokeObjectURL(zoomUrlRef.current);
+            const url = URL.createObjectURL(blob);
+            zoomUrlRef.current = url;
+            setZoomUrl(url);
+        } catch {
+            // 预览打不开就维持小图，不影响存图
+        }
+    };
+    // 弹窗关掉时把预览用的 objectURL 放掉，否则一直占着内存
+    useEffect(() => () => {
+        if (zoomUrlRef.current) {
+            URL.revokeObjectURL(zoomUrlRef.current);
+            zoomUrlRef.current = null;
+        }
+    }, []);
+
     const handleDownload = async () => {
         const canvas = canvasRef.current;
         if (!canvas) return;
@@ -329,7 +362,18 @@ export function ReadingShareDialog({
             onCancel={onClose}
         >
             <div className="reading-settings-grid">
-                <div className="reading-share-preview" ref={previewRef} />
+                {/* 预览图外面套一层：原来那个 div 的样式一行不动，上面盖一层透明按钮接点击 */}
+                <div className="reading-share-zoom-wrap">
+                    <div className="reading-share-preview" ref={previewRef} />
+                    <button
+                        type="button"
+                        className="reading-share-zoom-hit"
+                        onClick={() => { void openZoom(); }}
+                        aria-label="放大预览"
+                        title="点一下放大看"
+                    />
+                    <span className="reading-share-zoom-hint" aria-hidden="true">轻点放大</span>
+                </div>
 
                 <div className="reading-share-templates">
                     {READING_SHARE_TEMPLATES.map((option) => (
@@ -507,6 +551,13 @@ export function ReadingShareDialog({
                     </div>
                 )}
             </div>
+            {zoomUrl && (
+                <MediaPreviewOverlay
+                    imageUrl={zoomUrl}
+                    saveFilename={`${filePrefix}-${contentRef.current.bookTitle || "未命名"}.png`}
+                    onClose={closeZoom}
+                />
+            )}
         </ContentDialog>
     );
 }

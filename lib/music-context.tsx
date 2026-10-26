@@ -5,7 +5,7 @@ import { createContext, useContext, useState, useRef, useCallback, useEffect, us
 import type { MusicTrack } from "./music-storage";
 import { getAudioBlob, markTrackPlayed } from "./music-storage";
 import { findPlayableMatch, getNeteaseLyrics, getNeteasePlayUrl, getNeteasePlayInfo, getNeteaseSongDetail } from "./music-service";
-import { kvGet, kvSet, registerKvMigration } from "./kv-db";
+import { kvGet, kvSet, registerDynamicPrefix, registerKvMigration } from "./kv-db";
 import { registerMusicControlBridge } from "./music-control-bridge";
 
 // ── Types ──
@@ -78,6 +78,10 @@ const QUEUE_STORAGE_KEY = "ai_phone_music_queue_v1";
 export const LISTEN_TOGETHER_SESSION_KEY = "ai_phone_music_listen_together_session_v1";
 export const LISTEN_TOGETHER_STATS_PREFIX = "ai_phone_music_listen_together_secs_";
 registerKvMigration(QUEUE_STORAGE_KEY);
+// 一起听的会话（跟着谁听）和每人累计时长也要落盘：切走再回来要还在，
+// 时长还得接着往上累。注册给 kv 之后才会跟着水合 + localStorage 兜底。
+registerKvMigration(LISTEN_TOGETHER_SESSION_KEY);
+registerDynamicPrefix(LISTEN_TOGETHER_STATS_PREFIX);
 const QUEUE_MAX_SIZE = 200;
 
 function loadPersistedQueue(): MusicTrack[] {

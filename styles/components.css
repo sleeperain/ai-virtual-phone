@@ -5849,6 +5849,150 @@
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
+/* ══════════════════════════════════════════
+   阅读 — 摘抄预览放大 / 句子拖动把手 / 菜单里的阅读账号
+   ══════════════════════════════════════════ */
+
+/* 摘抄预览：原来那块预览图样式不动，上面盖一层透明按钮接「点一下放大」 */
+.reading-share-zoom-wrap {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+.reading-share-zoom-hit {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  cursor: zoom-in;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.reading-share-zoom-hint {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.42);
+  color: #fff;
+  font-size: calc(10px * var(--app-text-scale, 1));
+  line-height: 1.4;
+  pointer-events: none;
+}
+
+/* 选中句子后两端的拖动把手。坐标由 JS 按字形位置算好后塞到 left/top，
+   所以这里只用 translate 把自己挪到指尖中心 */
+.reading-sentence-handle {
+  position: absolute;
+  /* 只压过正文，压不过句子菜单和各类弹窗：把手就贴在字的两端，
+     层数太高会挡住菜单按钮 */
+  z-index: 40;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(214, 96, 62, 0.95);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9), 0 2px 8px rgba(0, 0, 0, 0.18);
+  transform: translate(-50%, -50%);
+  touch-action: none;
+  cursor: ew-resize;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.reading-sentence-handle::after {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+/* 菜单第一行：阅读账号。左边圆形头像，右边昵称 + ID 两行 */
+.reading-account-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.reading-account-item:active {
+  background: rgba(128, 128, 128, 0.12);
+}
+
+.reading-account-avatar {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: 50%;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(128, 128, 128, 0.14);
+  color: #8a7f74;
+}
+
+.reading-account-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.reading-account-copy {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* 昵称固定 #252525：这是明确指定的色值，不跟着菜单的次要文字变浅 */
+.reading-account-name {
+  font-size: calc(13px * var(--app-text-scale, 1));
+  font-weight: 600;
+  color: #252525;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reading-account-id {
+  font-size: calc(10.5px * var(--app-text-scale, 1));
+  color: #a49a90;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reading-shelf-more-divider {
+  display: block;
+  height: 1px;
+  margin: 4px 8px;
+  background: rgba(128, 128, 128, 0.18);
+}
+
+.reading-profile-hint {
+  font-size: calc(10px * var(--app-text-scale, 1));
+  color: #a49a90;
+  padding-left: 2px;
+}
+
 /* 提示词查看器：组成标签默认收起，点小按钮展开 */
 .pv-msg-badge-toggle {
   display: inline-flex;

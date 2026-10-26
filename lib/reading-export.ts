@@ -52,8 +52,13 @@ export function buildAnnotationMarkdown(input: AnnotationExportInput): string {
 
         for (const annotation of chapterAnnotations) {
             if (annotation.quote) lines.push(`> ${annotation.quote.replace(/\n+/g, " ")}`, "");
+            // 段评是段落下面的一串评论，批注是写在某句话旁边的，导出来要分得清，
+            // 否则回头看不出哪条是对哪句说的
+            const isComment = annotation.annotationKind === "comment";
+            if (annotation.quote && !isComment) lines.push(`> ${annotation.quote.replace(/\n+/g, " ")}`, "");
             const who = isUserAnnotation(annotation) ? userName : (annotation.characterName || "TA");
-            lines.push(`**${who}**：${annotation.content.replace(/\n+/g, " ")}`, "");
+            const kindTag = isComment ? "（段评）" : "";
+            lines.push(`**${who}**${kindTag}：${annotation.content.replace(/\n+/g, " ")}`, "");
         }
 
         if (chapterMarks.length > 0) {

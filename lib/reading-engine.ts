@@ -167,9 +167,21 @@ function formatChapterContent(paragraphs: string[]): string {
     return paragraphs.map((p, i) => `[${i + 1}] ${p}`).join("\n\n");
 }
 
+/** 这条是「批注」（写在某句话 / 某段旁边的）还是「段评」（段落下面的一串评论） */
+function isCommentAnnotation(annotation: ReadingAnnotation): boolean {
+    return annotation.annotationKind === "comment";
+}
+
+/** 只留批注，剔掉段评。段评是评论区的东西，喂进批注提示词会让模型以为
+ *  「这一段已经有人评论过」，然后顺着评论区聊天，写出来的就不是批注了。 */
+function onlyNoteAnnotations(annotations: ReadingAnnotation[]): ReadingAnnotation[] {
+    return annotations.filter(annotation => !isCommentAnnotation(annotation));
+}
+
 function formatAnnotationHistory(annotations: ReadingAnnotation[]): string {
-    if (annotations.length === 0) return "（暂无批注）";
-    return annotations.map(a => `[批注:${a.paragraphIndex + 1}] ${a.content}`).join("\n");
+    const notes = onlyNoteAnnotations(annotations);
+    if (notes.length === 0) return "（暂无批注）";
+    return notes.map(a => `[批注:${a.paragraphIndex + 1}] ${a.content}`).join("\n");
 }
 
 function formatBatchChapterContent(targets: AnnotationTarget[]): string {
@@ -264,7 +276,9 @@ function formatBatchAnnotationHistory(annotations: ReadingAnnotation[], targets:
         targetIndexMap.set(`${target.chapterIndex}:${target.paragraphIndex}`, index + 1);
     });
 
-    const lines = annotations.flatMap((annotation) => {
+    // 段评不进批注历史：混进来会被当成「已有批注」，模型要么照抄一遍，
+    // 要么顺着评论区聊天，两种都不是要的批注
+    const lines = onlyNoteAnnotations(annotations).flatMap((annotation) => {
         const relativeIndex = targetIndexMap.get(`${annotation.chapterIndex}:${annotation.paragraphIndex}`);
         if (!relativeIndex) return [];
         return [`[批注:${relativeIndex}][角色:${annotation.characterName}] ${annotation.content}`];
@@ -275,8 +289,13 @@ function formatBatchAnnotationHistory(annotations: ReadingAnnotation[], targets:
 
 function formatAnnotationActionContext(annotations: ReadingAnnotation[]): string {
     if (annotations.length === 0) return "（当前范围暂无批注）";
+    // 每条标出类型：模型据此知道哪条是自己的批注（可改可删），
+    // 哪条是读者在段落下面的评论（段评），不会把两者当成一回事
     return annotations
-        .map((annotation) => `- ID=${annotation.id} | 段落=${annotation.paragraphIndex + 1} | 角色=${annotation.characterName} | 内容=${annotation.content}`)
+        .map((annotation) => {
+            const kind = isCommentAnnotation(annotation) ? "段评" : "批注";
+            return `- ID=${annotation.id} | 类型=${kind} | 段落=${annotation.paragraphIndex + 1} | 角色=${annotation.characterName} | 内容=${annotation.content}`;
+        })
         .join("\n");
 }
 
@@ -739,7 +758,10 @@ export async function generateParagraphCommentReply(params: {
         bookTitle: book.title,
         chapterTitle,
         chapterContent,
-        annotationHistory: commentLines,
+        // 这段历史位在预设里叫「批注历史」，可这里装的其实是段评。
+        // 标注清楚，否则模型会把段落下面的评论当成自己写过的批注，
+        // 接着写出来的东西既不像批注也不像段评。
+        annotationHistory: `【段评历史：以下都是这一段下面的评论与回复，不是批注】\n${commentLines}`,
     });
     if (!resolved || !resolved.apiConfig) {
         throw new Error("未找到 API 配置，请在设置中绑定 API");

@@ -16,6 +16,14 @@ import { ReadingInteractionDialog } from "./reading-interaction-dialog";
 import { ReadingProfileDialog } from "./reading-profile-dialog";
 import { kvGet, kvSet, kvRemove } from "@/lib/kv-db";
 import { READING_COVER_MAX_SIZE, compressReadingImage } from "@/lib/reading-image";
+import {
+    DEFAULT_READING_PROFILE,
+    READING_PROFILE_CHANGED_EVENT,
+    loadReadingProfile,
+    loadReadingProfileAvatar,
+    readingProfileIdLabel,
+    type ReadingProfile,
+} from "@/lib/reading-profile";
 
 type Props = {
     onOpenBook: (book: Book) => void;
@@ -119,6 +127,10 @@ export function ReadingShelf({ onOpenBook, onClose, appearance, backgroundUrl, l
     const [showAppearanceDialog, setShowAppearanceDialog] = useState(false);
     const [showInteractionDialog, setShowInteractionDialog] = useState(false);
     const [showProfileDialog, setShowProfileDialog] = useState(false);
+    /** 阅读账号：菜单第一行要显示圆形头像 + 昵称 + ID */
+    const [profile, setProfile] = useState<ReadingProfile>(DEFAULT_READING_PROFILE);
+    const [profileAvatarUrl, setProfileAvatarUrl] = useState<string | null>(null);
+    const profileAvatarUrlRef = useRef<string | null>(null);
     const searchInputRef = useRef<HTMLInputElement>(null);
     const moreMenuWrapRef = useRef<HTMLDivElement>(null);
     /** 长按书卡弹出的操作菜单 */
@@ -182,6 +194,36 @@ export function ReadingShelf({ onOpenBook, onClose, appearance, backgroundUrl, l
             setCommentCounts(counts.commentCounts);
         })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // 阅读账号：进书架读一次，之后靠 READING_PROFILE_CHANGED_EVENT 更新。
+    // 在账号弹窗里换了头像，这里菜单上的圆形头像要立刻跟着换，不能等重进。
+    useEffect(() => {
+        let alive = true;
+        const refresh = async () => {
+            const stored = loadReadingProfile();
+            if (!alive) return;
+            setProfile(stored);
+            const blob = await loadReadingProfileAvatar().catch(() => null);
+            if (!alive) return;
+            const nextUrl = blob && blob.size > 0 ? URL.createObjectURL(blob) : null;
+            if (profileAvatarUrlRef.current && profileAvatarUrlRef.current !== nextUrl) {
+                URL.revokeObjectURL(profileAvatarUrlRef.current);
+            }
+            profileAvatarUrlRef.current = nextUrl;
+            setProfileAvatarUrl(nextUrl);
+        };
+        void refresh();
+        const onChange = () => { void refresh(); };
+        window.addEventListener(READING_PROFILE_CHANGED_EVENT, onChange);
+        return () => {
+            alive = false;
+            window.removeEventListener(READING_PROFILE_CHANGED_EVENT, onChange);
+            if (profileAvatarUrlRef.current) {
+                URL.revokeObjectURL(profileAvatarUrlRef.current);
+                profileAvatarUrlRef.current = null;
+            }
+        };
     }, []);
 
     useEffect(() => {
@@ -648,6 +690,31 @@ export function ReadingShelf({ onOpenBook, onClose, appearance, backgroundUrl, l
                             </button>
                             {showMoreMenu && (
                                 <div className="reading-shelf-more-menu" role="menu">
+                                    {/* 第一行：阅读账号。左边圆形头像，右边两行——
+                                        昵称（#252525）+ 小一号的浅色 ID */}
+                                    <button
+                                        type="button"
+                                        className="reading-account-item"
+                                        onClick={() => {
+                                            setShowMoreMenu(false);
+                                            setShowProfileDialog(true);
+                                        }}
+                                        aria-label="阅读账号"
+                                    >
+                                        <span className="reading-account-avatar">
+                                            {profileAvatarUrl ? (
+                                                // eslint-disable-next-line @next/next/no-img-element
+                                                <img src={profileAvatarUrl} alt="" />
+                                            ) : (
+                                                <UserRound size={16} strokeWidth={1.8} />
+                                            )}
+                                        </span>
+                                        <span className="reading-account-copy">
+                                            <span className="reading-account-name">{profile.name.trim() || "未设置昵称"}</span>
+                                            <span className="reading-account-id">{readingProfileIdLabel(profile)}</span>
+                                        </span>
+                                    </button>
+                                    <span className="reading-shelf-more-divider" aria-hidden="true" />
                                     <button
                                         type="button"
                                         className="reading-shelf-more-item"
@@ -661,17 +728,6 @@ export function ReadingShelf({ onOpenBook, onClose, appearance, backgroundUrl, l
                                             <path d="M12 5v14M5 12h14" />
                                         </svg>
                                         <span>导入图书</span>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        className="reading-shelf-more-item"
-                                        onClick={() => {
-                                            setShowMoreMenu(false);
-                                            setShowProfileDialog(true);
-                                        }}
-                                    >
-                                        <UserRound size={16} strokeWidth={1.8} />
-                                        <span>阅读账号</span>
                                     </button>
                                     <button
                                         type="button"
@@ -964,7 +1020,10 @@ export function ReadingShelf({ onOpenBook, onClose, appearance, backgroundUrl, l
             )}
 
             {showProfileDialog && (
-                <ReadingProfileDialog onClose={() => setShowProfileDialog(false)} />
+                <ReadingProfileDialog
+                    onClose={() => setShowProfileDialog(false)}
+                    onSaved={(saved) => setProfile(saved)}
+                />
             )}
         </div>
     );

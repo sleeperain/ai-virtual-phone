@@ -6,8 +6,11 @@ import { ContentDialog } from "@/components/ui/modal";
 import { Input } from "@/components/ui/form";
 import { READING_AVATAR_MAX_SIZE, compressReadingImage } from "@/lib/reading-image";
 import {
+    DEFAULT_READING_PROFILE_ID,
     loadReadingProfile,
     loadReadingProfileAvatar,
+    notifyReadingProfileChanged,
+    readingProfileIdLabel,
     saveReadingProfile,
     saveReadingProfileAvatar,
     type ReadingProfile,
@@ -22,6 +25,7 @@ type Props = {
  *  和手机主人的身份无关，是这个阅读软件自己的一套。 */
 export function ReadingProfileDialog({ onClose, onSaved }: Props) {
     const [name, setName] = useState("");
+    const [accountId, setAccountId] = useState("");
     const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
     const [avatarFile, setAvatarFile] = useState<File | null>(null);
     const [clearAvatar, setClearAvatar] = useState(false);
@@ -31,7 +35,9 @@ export function ReadingProfileDialog({ onClose, onSaved }: Props) {
     const previewUrlRef = useRef<string | null>(null);
 
     useEffect(() => {
-        setName(loadReadingProfile().name);
+        const stored = loadReadingProfile();
+        setName(stored.name);
+        setAccountId(stored.id);
         let cancelled = false;
         void loadReadingProfileAvatar().then((blob) => {
             if (cancelled || !blob) return;
@@ -51,12 +57,15 @@ export function ReadingProfileDialog({ onClose, onSaved }: Props) {
     const handleSave = async () => {
         try {
             setSaving(true);
-            const saved = saveReadingProfile({ name });
+            const saved = saveReadingProfile({ name, id: accountId });
             if (clearAvatar) await saveReadingProfileAvatar(null);
             else if (avatarFile) {
                 await saveReadingProfileAvatar(await compressReadingImage(avatarFile, READING_AVATAR_MAX_SIZE));
             }
             onSaved?.(saved);
+            // 换了头像/昵称/ID，界面上所有「我」的头像都得跟着换（书架菜单那一行、
+            // 段评里自己发的那几条）。它们各自缓存了 objectURL，靠这个事件统一刷新。
+            notifyReadingProfileChanged();
             onClose();
         } catch (err) {
             alert(err instanceof Error ? err.message : "阅读账号保存失败");
@@ -88,7 +97,7 @@ export function ReadingProfileDialog({ onClose, onSaved }: Props) {
                             : <ImagePlus size={20} />}
                     </button>
                     <div className="reading-profile-fields">
-                        <span className="reading-settings-label-inline">ID</span>
+                        <span className="reading-settings-label-inline">昵称</span>
                         <Input
                             value={name}
                             maxLength={40}
@@ -96,6 +105,17 @@ export function ReadingProfileDialog({ onClose, onSaved }: Props) {
                             onChange={(e) => setName(e.target.value)}
                             disabled={saving}
                         />
+                        <span className="reading-settings-label-inline">ID</span>
+                        <Input
+                            value={accountId}
+                            maxLength={32}
+                            placeholder={DEFAULT_READING_PROFILE_ID}
+                            onChange={(e) => setAccountId(e.target.value.replace(/^@+/, ""))}
+                            disabled={saving}
+                        />
+                        <span className="reading-profile-hint">
+                            留空显示为 {readingProfileIdLabel({ id: "" })}
+                        </span>
                     </div>
                 </div>
                 {showAvatar && (
