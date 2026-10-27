@@ -810,17 +810,18 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         const endRect = paragraphOffsetRect(cIdx, pIdx, Math.max(start + 1, end) - 1);
         if (!startRect || !endRect) { setSentenceHandles(null); return; }
         // 换算成相对阅读区的位置：把手是阅读区里的绝对定位元素，
-        // 这样手机壳整体缩放时也不会和文字错位
+        // 这样手机壳整体缩放时也不会和文字错位。
+        // 左手柄贴首字最左沿（startRect.left），右手柄贴末字最右沿（endRect.right）。
         const surfaceRect = surfaceRef.current?.getBoundingClientRect();
         const originX = surfaceRect?.left ?? 0;
         const originY = surfaceRect?.top ?? 0;
         const next = {
             start: {
-                x: startRect.left + startRect.width / 2 - originX,
+                x: startRect.left - originX,
                 y: startRect.top + startRect.height / 2 - originY,
             },
             end: {
-                x: endRect.right - endRect.width / 2 - originX,
+                x: endRect.right - originX,
                 y: endRect.top + endRect.height / 2 - originY,
             },
         };
@@ -1514,17 +1515,60 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         return nodes;
     };
 
+    /** 把一段范围 [sliceFrom, sliceTo) 按当前激活的字符选区（sentenceMenu）与荧光笔/划线渲染为片段，
+     *  让选区底色精确按字生效（拖动手柄缩小或扩大范围时只高亮选中的字，不再整句高亮）。 */
+    const renderRangeWithActiveSelection = (
+        lineText: string,
+        lineStart: number,
+        sliceFrom: number,
+        sliceTo: number,
+        paragraphMarks: ReadingMark[],
+        activeRange: { start: number; end: number } | null,
+        keyPrefix: string,
+    ): React.ReactNode => {
+        if (!activeRange || activeRange.start >= sliceTo || activeRange.end <= sliceFrom) {
+            return renderRangeWithMarks(lineText, lineStart, sliceFrom, sliceTo, paragraphMarks, keyPrefix);
+        }
+        const selFrom = Math.max(sliceFrom, activeRange.start);
+        const selTo = Math.min(sliceTo, activeRange.end);
+        const parts: React.ReactNode[] = [];
+        if (selFrom > sliceFrom) {
+            parts.push(
+                renderRangeWithMarks(lineText, lineStart, sliceFrom, selFrom, paragraphMarks, `${keyPrefix}-pre`),
+            );
+        }
+        if (selTo > selFrom) {
+            parts.push(
+                <span key={`${keyPrefix}-sel`} className="reading-sentence is-selected">
+                    {renderRangeWithMarks(lineText, lineStart, selFrom, selTo, paragraphMarks, `${keyPrefix}-in`)}
+                </span>,
+            );
+        }
+        if (selTo < sliceTo) {
+            parts.push(
+                renderRangeWithMarks(lineText, lineStart, selTo, sliceTo, paragraphMarks, `${keyPrefix}-post`),
+            );
+        }
+        return parts;
+    };
+
     /** 按「。」「？」「！」拆分出的句子包裹每行正文，并把落在本行区间内的荧光笔/划线渲染为片段 */
     const renderLineContent = (item: Extract<TxtPageItem, { kind: "line" }>) => {
         const lineStart = item.charStart ?? 0;
         const lineEnd = lineStart + item.text.length;
         const pKey = `${item.chapterIndex}:${item.paragraphIndex}`;
         const paragraphMarks = marksByParagraph.get(pKey) || [];
+        const activeRange =
+            sentenceMenu !== null &&
+            sentenceMenu.chapterIndex === item.chapterIndex &&
+            sentenceMenu.paragraphIndex === item.paragraphIndex
+                ? { start: sentenceMenu.start, end: sentenceMenu.end }
+                : null;
         const sentenceSpans = (sentencesByParagraph.get(pKey) || []).filter(
             (span) => span.start < lineEnd && span.end > lineStart,
         );
         if (sentenceSpans.length === 0) {
-            return renderRangeWithMarks(item.text, lineStart, lineStart, lineEnd, paragraphMarks, `L${lineStart}`);
+            return renderRangeWithActiveSelection(item.text, lineStart, lineStart, lineEnd, paragraphMarks, activeRange, `L${lineStart}`);
         }
 
         const nodes: React.ReactNode[] = [];
@@ -1534,41 +1578,35 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
             const to = Math.min(lineEnd, span.end);
             if (from > cursor) {
                 nodes.push(
-                    renderRangeWithMarks(
+                    renderRangeWithActiveSelection(
                         item.text,
                         lineStart,
                         cursor,
                         from,
                         paragraphMarks,
+                        activeRange,
                         `L${lineStart}-gap-${idx}`,
                     ),
                 );
             }
             if (to > from) {
-                // 用「有交集」而不是「完全相等」：拖把手把范围拉长以后，
-                // 起点 / 终点不再正好落在句子边界上，但这一句确实在选中的范围里。
-                const isSelectedSentence =
-                    sentenceMenu !== null &&
-                    sentenceMenu.chapterIndex === item.chapterIndex &&
-                    sentenceMenu.paragraphIndex === item.paragraphIndex &&
-                    sentenceMenu.start < span.end &&
-                    sentenceMenu.end > span.start;
                 nodes.push(
                     <span
                         key={`sent-${span.start}-${idx}`}
-                        className={`reading-sentence${isSelectedSentence ? " is-selected" : ""}`}
+                        className="reading-sentence"
                         data-sentence-chapter={item.chapterIndex}
                         data-sentence-paragraph={item.paragraphIndex}
                         data-sentence-start={span.start}
                         data-sentence-end={span.end}
                         data-no-nav="true"
                     >
-                        {renderRangeWithMarks(
+                        {renderRangeWithActiveSelection(
                             item.text,
                             lineStart,
                             from,
                             to,
                             paragraphMarks,
+                            activeRange,
                             `L${lineStart}-s-${idx}`,
                         )}
                     </span>,
@@ -1578,12 +1616,13 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         });
         if (cursor < lineEnd) {
             nodes.push(
-                renderRangeWithMarks(
+                renderRangeWithActiveSelection(
                     item.text,
                     lineStart,
                     cursor,
                     lineEnd,
                     paragraphMarks,
+                    activeRange,
                     `L${lineStart}-end`,
                 ),
             );
@@ -2346,11 +2385,28 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     }, [showChat, chatExpanded, readingConfig.chatAutoScrollOnOpen]);
 
     const handleDeleteReadingAnnotation = useCallback(async (annotationId: string) => {
-        await deleteAnnotation(annotationId);
-        deleteReadingAnnotationMemo(annotationId);
-        setAnnotations((prev) => prev.filter((annotation) => annotation.id !== annotationId));
+        // 级联收集：删除一条段评时，其下挂着的所有子回复（含多级回复）必须一并删除，
+        // 避免残留成孤儿回复隐藏起来或串到新段评下方
+        const toDeleteIds = new Set<string>([annotationId]);
+        let added = true;
+        while (added) {
+            added = false;
+            for (const item of annotations) {
+                if (item.parentId && toDeleteIds.has(item.parentId) && !toDeleteIds.has(item.id)) {
+                    toDeleteIds.add(item.id);
+                    added = true;
+                }
+            }
+        }
+        await Promise.all([...toDeleteIds].map((id) => deleteAnnotation(id)));
+        toDeleteIds.forEach((id) => deleteReadingAnnotationMemo(id));
+        setAnnotations((prev) => prev.filter((annotation) => !toDeleteIds.has(annotation.id)));
+        setPanelAnnotations((prev) => prev.filter((annotation) => !toDeleteIds.has(annotation.id)));
+        setParagraphCommentReplyTarget((prev) => (
+            prev && (toDeleteIds.has(prev.id) || toDeleteIds.has(prev.parentId)) ? null : prev
+        ));
         setActiveAnnotationId(null);
-    }, []);
+    }, [annotations]);
 
     const handlePdfJumpComplete = useCallback(() => {
         setPdfJumpPage(undefined);
@@ -3555,10 +3611,22 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     };
 
     const removeAnnotationEverywhere = async (annotationId: string) => {
-        await deleteAnnotation(annotationId);
-        deleteReadingAnnotationMemo(annotationId);
-        setAnnotations(prev => prev.filter(item => item.id !== annotationId));
-        setPanelAnnotations(prev => prev.filter(item => item.id !== annotationId));
+        const pool = [...annotations, ...panelAnnotations];
+        const toDeleteIds = new Set<string>([annotationId]);
+        let added = true;
+        while (added) {
+            added = false;
+            for (const item of pool) {
+                if (item.parentId && toDeleteIds.has(item.parentId) && !toDeleteIds.has(item.id)) {
+                    toDeleteIds.add(item.id);
+                    added = true;
+                }
+            }
+        }
+        await Promise.all([...toDeleteIds].map((id) => deleteAnnotation(id)));
+        toDeleteIds.forEach((id) => deleteReadingAnnotationMemo(id));
+        setAnnotations(prev => prev.filter(item => !toDeleteIds.has(item.id)));
+        setPanelAnnotations(prev => prev.filter(item => !toDeleteIds.has(item.id)));
     };
 
     const saveRangeSummary = () => {
@@ -4409,10 +4477,14 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                 const topIds = new Set(topLevelComments.map((c) => c.id));
                 for (const c of allComments) {
                     if (!c.parentId) continue;
-                    // 若 parentId 指向二级回复，则归并到所属主评论下展示
-                    const rootId = topIds.has(c.parentId)
-                        ? c.parentId
-                        : (allComments.find((item) => item.id === c.parentId)?.parentId || topLevelComments[0]?.id || c.parentId);
+                    // 若 parentId 指向二级回复，则向上追溯到所属主评论；若主评论已不存在则不再强行挂到别的顶层评论下
+                    let rootId: string | undefined = c.parentId;
+                    const visited = new Set<string>();
+                    while (rootId && !topIds.has(rootId) && !visited.has(rootId)) {
+                        visited.add(rootId);
+                        rootId = allComments.find((item) => item.id === rootId)?.parentId;
+                    }
+                    if (!rootId || !topIds.has(rootId)) continue;
                     const list = repliesByParent.get(rootId) || [];
                     list.push(c);
                     repliesByParent.set(rootId, list);

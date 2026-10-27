@@ -5884,33 +5884,66 @@
   pointer-events: none;
 }
 
-/* 选中句子后两端的拖动把手。坐标由 JS 按字形位置算好后塞到 left/top，
-   所以这里只用 translate 把自己挪到指尖中心 */
-.reading-sentence-handle {
+/* iOS 风格选区手柄：圆球 + 与文字等高的细杆，左在上、右在下 */
+.reading-app-surface .reading-sentence-handle {
+  --handle-color: #7c7c5e;
+  --handle-ball: 12px;                                  /* 球直径 */
+  --handle-bar-w: 2px;                                  /* 杆粗细 */
+  /* 杆高 = 正文字号，读的是阅读器自己的变量，换字号/字体自动跟着变 */
+  --handle-bar-h: var(--reading-font-size, 16px);
+  --handle-gap: 2px;                                    /* 球贴向文字的偏移量 */
+
+  /* 按钮本身只当触摸区：不画东西，居中对齐到字上 */
   position: absolute;
-  /* 只压过正文，压不过句子菜单和各类弹窗：把手就贴在字的两端，
-     层数太高会挡住菜单按钮 */
   z-index: 40;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   margin: 0;
   padding: 0;
   border: none;
-  border-radius: 50%;
-  background: rgba(214, 96, 62, 0.95);
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9), 0 2px 8px rgba(0, 0, 0, 0.18);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   transform: translate(-50%, -50%);
   touch-action: none;
   cursor: ew-resize;
   -webkit-tap-highlight-color: transparent;
 }
 
-.reading-sentence-handle::after {
+/* 杆：竖直居中，正好覆盖这一行文字的高度 */
+.reading-app-surface .reading-sentence-handle::before {
   content: "";
   position: absolute;
-  inset: 6px;
+  left: 50%;
+  top: calc(50% - var(--handle-bar-h) / 2);
+  width: var(--handle-bar-w);
+  height: var(--handle-bar-h);
+  margin-left: calc(var(--handle-bar-w) / -2);
+  border-radius: calc(var(--handle-bar-w) / 2);
+  background: var(--handle-color);
+}
+
+/* 球：盖掉原来那个白色内圈 */
+.reading-app-surface .reading-sentence-handle::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  inset: auto;
+  width: var(--handle-ball);
+  height: var(--handle-ball);
+  margin-left: calc(var(--handle-ball) / -2);
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--handle-color);
+}
+
+/* 左手柄：球在杆上方，往文字方向压进 2px */
+.reading-app-surface .reading-sentence-handle[data-side="start"]::after {
+  bottom: calc(50% + var(--handle-bar-h) / 2 - var(--handle-gap));
+}
+
+/* 右手柄：球在杆下方，同样往文字方向压进 2px */
+.reading-app-surface .reading-sentence-handle[data-side="end"]::after {
+  top: calc(50% + var(--handle-bar-h) / 2 - var(--handle-gap));
 }
 
 /* 菜单第一行：阅读账号。左边圆形头像，右边昵称 + ID 两行 */
