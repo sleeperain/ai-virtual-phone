@@ -306,17 +306,22 @@ function buildCluster(entries: ParsedEntry[]): TimelineCluster {
         // system messages: no tag, not included in excerpts
     }
 
-    // Pick 2-3 random excerpts, truncated, strip inner monologue
+    // Pick up to 3 representative excerpts deterministically (first, middle, last), truncated, strip inner monologue
     const cleaned = pool
         .map(s => s.replace(/\n?\(内心[:：].+?\)$/, "").replace(/\[表情包:[^\]]*\]/g, "").trim())
         .filter(s => s && !/^\[(?:图片|语音|视频|红包|转账|位置)\]$/.test(s) && !/^\[音乐[:：]/.test(s) && !/^\[音乐分享[:：]/.test(s));
-    const shuffled = [...cleaned].sort(() => Math.random() - 0.5);
-    const excerpts = shuffled.slice(0, Math.min(3, shuffled.length)).map(s =>
+    const picked: string[] = [];
+    if (cleaned.length <= 3) {
+        picked.push(...cleaned);
+    } else {
+        picked.push(cleaned[0], cleaned[Math.floor(cleaned.length / 2)], cleaned[cleaned.length - 1]);
+    }
+    const excerpts = picked.map(s =>
         s.length > 35 ? s.slice(0, 35) + "..." : s
     );
 
     return {
-        id: entries[0].id,
+        id: `${entries[0].type}-${entries[0].id}-${entries[0].timestamp}`,
         startTime: entries[0].timestamp,
         endTime: entries[entries.length - 1].timestamp,
         entries,
@@ -461,8 +466,8 @@ function ClusterDetail({ cluster }: { cluster: TimelineCluster }) {
                                     const e = entry as ParsedChat | ParsedGroupChat;
                                     // Hide [音乐:xxx] messages
                                     if (/^\[音乐[:：]/.test(e.message)) return null;
-                                    // Music share -> card
-                                    const musicMatch = e.message.match(/^\[音乐分享[:：]([^\]]+)\]$/);
+                                    // Music share -> card ([音乐分享:歌名:歌手] or [音乐分享:歌名])
+                                    const musicMatch = e.message.match(/^\[音乐分享[:：]([^:：\]]+?)(?:[:：]([^\]]+))?\]$/);
                                     if (musicMatch) {
                                         return (
                                             <div key={e.id} className={`mem-tl-bubble ${e.isUser ? "mem-tl-bubble-r" : "mem-tl-bubble-l"}`}>

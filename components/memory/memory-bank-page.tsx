@@ -27,7 +27,7 @@ import {
     getLastCoreSummarizedTimestamp,
 } from "@/lib/memory-storage";
 import { hydrateChatStorage } from "@/lib/chat-storage";
-import { loadNativeTimeline, type NativeTimelineEntry } from "@/lib/short-term-assembler";
+import { loadNativeTimeline, filterTimelineByAllowedSources, type NativeTimelineEntry } from "@/lib/short-term-assembler";
 import {
     runSummarizationPipeline,
     extractMemoryStructuredMeta,
@@ -452,9 +452,12 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             const afterTimestamp = range === "all"
                 ? undefined
                 : sinceTimestamp ?? getLastSummarizedTimestamp(selectedCharId) ?? undefined;
-            const timelineCount = loadNativeTimeline(
-                selectedCharId,
-                afterTimestamp ? { afterTimestamp } : undefined,
+            const timelineCount = filterTimelineByAllowedSources(
+                loadNativeTimeline(
+                    selectedCharId,
+                    afterTimestamp ? { afterTimestamp } : undefined,
+                ),
+                config.shortTermAllowedSources,
             ).length;
             if (timelineCount < 4) {
                 showNotice("所选范围内事件不足 4 条");
@@ -843,6 +846,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                         editedByUser: true,
                         accessCount: existingAccessCount,
                         keywords: finalKeywords,
+                        ...(embedding ? { embeddingDim: embedding.length } : {}),
                     },
                 }
                 : {
@@ -861,6 +865,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                         eventDate: todayKey,
                         accessCount: 0,
                         keywords: finalKeywords,
+                        ...(embedding ? { embeddingDim: embedding.length } : {}),
                     },
                 };
 
@@ -964,7 +969,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                     if (searchScoreMap) setSearchScoreMap(null);
                                 }}
                                 onKeyDown={e => {
-                                    if (e.key === "Enter" && searchQuery.trim()) {
+                                    if (type === "long_term" && e.key === "Enter" && searchQuery.trim()) {
                                         e.preventDefault();
                                         void handleRunVectorSearchTest();
                                     }

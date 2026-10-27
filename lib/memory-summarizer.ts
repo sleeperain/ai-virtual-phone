@@ -6,7 +6,6 @@ import type { MemoryEntry } from "./memory-types";
 import { DEFAULT_SUMMARIZATION_PROMPT, DEFAULT_MEMORY_RESPLIT_PROMPT } from "./memory-types";
 import {
     loadMemoryConfig,
-    loadMemoryEntries,
     loadMemoryEntriesByType,
     saveMemoryEntry,
     deleteMemoryEntry,
@@ -176,7 +175,7 @@ function toLocalDayKey(isoStr: string): string {
  * 3. Character's bound `apiConfigId` (chat / default)
  * 4. First valid configured API
  */
-function resolveSummarizationApiConfig(characterId: string) {
+export function resolveSummarizationApiConfig(characterId: string) {
     const aux = resolveAuxiliaryApiConfig("memorySummaryApiConfigId");
     if (aux && aux.apiKey) return aux;
     const bindingCfg = loadBindingConfig();
@@ -484,15 +483,32 @@ export async function runSummarizationPipeline(
     }
 
     // Update last summarized timestamp + reset counter
+    // When summarizing a manual recent window (sinceTimestamp), only advance the watermark
+    // if there wasn't an older unsummarized gap before sinceTimestamp, and never move the watermark backwards.
     if (latestSummarizedTs) {
-        setLastSummarizedTimestamp(characterId, latestSummarizedTs);
+        const prevWatermark = getLastSummarizedTimestamp(characterId);
+        const skipsUnsummarizedGap = Boolean(
+            options?.sinceTimestamp && (!prevWatermark || options.sinceTimestamp > prevWatermark)
+        );
+        if (!skipsUnsummarizedGap && (!prevWatermark || latestSummarizedTs > prevWatermark)) {
+            setLastSummarizedTimestamp(characterId, latestSummarizedTs);
+        }
     }
     resetEventCounter(characterId);
 
-    // Enforce long-term limit
-    const allLongTerm = await loadMemoryEntries(characterId);
+    // Enforce long-term limit (only on long_term entries — never evict core memories!)
+    const allLongTerm = await loadMemoryEntriesByType(characterId, "long_term");
     if (allLongTerm.length > config.maxLongTermEntries) {
-        const excess = allLongTerm.slice(0, allLongTerm.length - config.maxLongTermEntries);
+        const evictionSorted = [...allLongTerm].sort((a, b) => {
+            const impA = Number.isFinite(a.importance) ? a.importance : 0.8;
+            const impB = Number.isFinite(b.importance) ? b.importance : 0.8;
+            // Protect milestone memories (>= 0.9) from eviction unless everything is a milestone
+            const milestoneA = impA >= 0.9 ? 1 : 0;
+            const milestoneB = impB >= 0.9 ? 1 : 0;
+            if (milestoneA !== milestoneB) return milestoneA - milestoneB;
+            return a.createdAt.localeCompare(b.createdAt);
+        });
+        const excess = evictionSorted.slice(0, allLongTerm.length - config.maxLongTermEntries);
         await deleteMemoryEntries(excess.map(e => e.id));
     }
 

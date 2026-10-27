@@ -9,7 +9,7 @@ import {
     getLastCoreSummarizedTimestamp,
     setLastCoreSummarizedTimestamp,
 } from "./memory-storage";
-import { resolveAuxiliaryApiConfig } from "./settings-storage";
+import { resolveSummarizationApiConfig } from "./memory-summarizer";
 import { simpleLLMCall } from "./api-helpers";
 
 const coreBuildingSet = new Set<string>();
@@ -46,7 +46,7 @@ export async function runCoreMemoryPipeline(
         return { success: false, error: "没有可用于总结核心记忆的长期记忆" };
     }
 
-    const apiConfig = resolveAuxiliaryApiConfig("memorySummaryApiConfigId");
+    const apiConfig = resolveSummarizationApiConfig(characterId);
     if (!apiConfig) {
         return { success: false, error: "未配置记忆总结 API（请在绑定配置 → 辅助API绑定中设置）" };
     }
@@ -132,7 +132,10 @@ export async function runCoreMemoryPipeline(
     };
     await saveMemoryEntry(coreEntry);
 
-    setLastCoreSummarizedTimestamp(characterId, latest);
+    const prevCoreTs = getLastCoreSummarizedTimestamp(characterId);
+    if (!prevCoreTs || latest > prevCoreTs) {
+        setLastCoreSummarizedTimestamp(characterId, latest);
+    }
     if (!options?.force) {
         resetCoreMemoryCounter(characterId);
     }

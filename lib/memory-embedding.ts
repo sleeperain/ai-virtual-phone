@@ -282,11 +282,18 @@ export function computeHybridMemoryScore(
             ? (entry.metadata.keywords as unknown[]).map(String)
             : []);
 
-    if (kws.length > 0) {
+    if (kws.length > 0 && lowerCtx.length > 0) {
         let hits = 0;
         for (const kw of kws) {
             const norm = kw.trim().toLowerCase();
-            if (norm && (lowerCtx.includes(norm) || norm.includes(lowerCtx))) hits++;
+            if (!norm) continue;
+            if (
+                (norm.length >= 2 && lowerCtx.includes(norm)) ||
+                (lowerCtx.length >= 2 && norm.includes(lowerCtx)) ||
+                lowerCtx === norm
+            ) {
+                hits++;
+            }
         }
         if (hits > 0) {
             baseScore += Math.min(0.25, hits * 0.07);
@@ -373,7 +380,7 @@ export function keywordSearch(
         if (entryTokens.length === 0) return { entry, score: 0 };
         let matched = 0;
         for (const qt of queryTokens) {
-            if (entryTokens.some(et => et.includes(qt) || qt.includes(et))) {
+            if (entryTokens.some(et => et === qt || (et.length >= 2 && qt.length >= 2 && (et.includes(qt) || qt.includes(et))))) {
                 matched++;
             }
         }
