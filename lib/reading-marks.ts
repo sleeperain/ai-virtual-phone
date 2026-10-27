@@ -50,3 +50,11 @@ export function deleteReadingMark(bookId: string, markId: string): void {
     all[bookId] = (all[bookId] || []).filter(item => item.id !== markId);
     kvSet(MARKS_KEY, JSON.stringify(all));
 }
+
+export function deleteReadingMarksByBook(bookId: string): void {
+    if (typeof window === "undefined") return;
+    const all = loadAll();
+    if (!(bookId in all)) return;
+    delete all[bookId];
+    kvSet(MARKS_KEY, JSON.stringify(all));
+}

@@ -5,6 +5,8 @@ import type { Book, BookChapter, ReadingAnnotation, ReadingBookmark, ReadingProg
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 import { DEFAULT_READING_BILINGUAL_PROMPT } from "./bilingual-prompt-defaults";
 import { DEFAULT_READING_ANNOTATION_GUIDANCE, DEFAULT_READING_SUMMARY_PROMPT } from "./reading-prompt-defaults";
+import { deleteReadingAnnotationMemosByBook } from "./reading-memory";
+import { deleteReadingMarksByBook } from "./reading-marks";
 
 // ── Database ──
 
@@ -190,11 +192,33 @@ export async function updateBook(book: Book): Promise<void> {
 }
 
 export async function deleteBook(bookId: string): Promise<void> {
+    const existingBook = _booksCache?.find((b) => b.id === bookId) ?? await db.books.get(bookId).catch(() => undefined);
+    // 收集该书的所有批注与段评（用复合索引范围 + filter 兜底，确保无一遗漏）
+    const bookAnnotations = await db.annotations
+        .where("[bookId+chapterIndex]")
+        .between([bookId, Dexie.minKey], [bookId, Dexie.maxKey])
+        .toArray()
+        .catch(() => [] as ReadingAnnotation[]);
+    const extraAnnotations = await db.annotations
+        .filter((a) => a.bookId === bookId)
+        .toArray()
+        .catch(() => [] as ReadingAnnotation[]);
+    const annotationIds = Array.from(new Set([...bookAnnotations.map((a) => a.id), ...extraAnnotations.map((a) => a.id)]));
+
     await db.books.delete(bookId);
     await db.chapters.where("bookId").equals(bookId).delete();
     await db.progress.delete(bookId);
-    await db.annotations.where("[bookId+chapterIndex]").between([bookId, Dexie.minKey], [bookId, Dexie.maxKey]).delete();
+    if (annotationIds.length > 0) {
+        await db.annotations.bulkDelete(annotationIds);
+    }
+    await db.annotations.where("[bookId+chapterIndex]").between([bookId, Dexie.minKey], [bookId, Dexie.maxKey]).delete().catch(() => {});
+    await db.bookmarks.where("bookId").equals(bookId).delete().catch(() => {});
     await deleteRawFile(bookId).catch(() => {});
+
+    // 同步清理记忆区里的批注/段评/区间总结日志，以及荧光笔/划线标记
+    deleteReadingAnnotationMemosByBook(bookId, existingBook?.title, annotationIds);
+    deleteReadingMarksByBook(bookId);
+
     _booksCache = null;
     _booksCache = await db.books.orderBy("createdAt").reverse().toArray();
     _chaptersCache.delete(bookId);

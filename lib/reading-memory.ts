@@ -88,6 +88,26 @@ export function deleteReadingAnnotationMemo(annotationId: string): void {
     if (next.length !== existing.length) persist(next);
 }
 
+/** 删除一本书时，把这本书在记忆区里的批注、段评、区间总结一并清掉（同时兼容无 bookId 的老数据与待删批注 ID 集合）。 */
+export function deleteReadingAnnotationMemosByBook(
+    bookId: string,
+    bookTitle?: string,
+    annotationIds?: Iterable<string>,
+): void {
+    if (typeof window === "undefined") return;
+    const existing = loadReadingAnnotationMemos();
+    if (existing.length === 0) return;
+    const idSet = annotationIds ? new Set(annotationIds) : null;
+    const normalizedTitle = bookTitle?.trim();
+    const next = existing.filter((memo) => {
+        if (idSet && idSet.has(memo.id)) return false;
+        if (memo.bookId) return memo.bookId !== bookId;
+        if (normalizedTitle && memo.bookTitle.trim() === normalizedTitle) return false;
+        return true;
+    });
+    if (next.length !== existing.length) persist(next);
+}
+
 /** 记忆区里的标签，交给 formatStoredPromptEventContent 补时间戳。
  *  段评和批注是两回事：段评挂在整段下面（还能互相回复），批注写在某句话旁边。 */
 export function readingMemoLabel(memo: ReadingAnnotationMemo): string {

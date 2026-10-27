@@ -27,6 +27,7 @@ import {
 
 type Props = {
     onOpenBook: (book: Book) => void;
+    onDeleteBook?: (bookId: string) => void;
     onClose: () => void;
     appearance: ReadingAppearance;
     backgroundUrl: string | null;
@@ -98,7 +99,7 @@ function buildImportError(stage: string, err: unknown, format?: Book["format"]):
     };
 }
 
-export function ReadingShelf({ onOpenBook, onClose, appearance, backgroundUrl, loadedFonts, onSaveAppearance }: Props) {
+export function ReadingShelf({ onOpenBook, onDeleteBook, onClose, appearance, backgroundUrl, loadedFonts, onSaveAppearance }: Props) {
     const [books, setBooks] = useState<Book[]>([]);
     /** bookId → 封面 objectURL；没有封面的书不在这里，走原来那种自己画的封面 */
     const [coverUrls, setCoverUrls] = useState<Record<string, string>>({});
@@ -640,6 +641,31 @@ export function ReadingShelf({ onOpenBook, onClose, appearance, backgroundUrl, l
         await saveReadingCover(bookId, null).catch(() => {});
         await deleteReadingAssetsByPrefix(readingImageAssetPrefix(bookId)).catch(() => {});
         setBooks(loadBooks());
+        setAnnotationCounts(prev => {
+            if (!(bookId in prev)) return prev;
+            const next = { ...prev };
+            delete next[bookId];
+            return next;
+        });
+        setCommentCounts(prev => {
+            if (!(bookId in prev)) return prev;
+            const next = { ...prev };
+            delete next[bookId];
+            return next;
+        });
+        setProgressMap(prev => {
+            if (!(bookId in prev)) return prev;
+            const next = { ...prev };
+            delete next[bookId];
+            return next;
+        });
+        setCompanionNames(prev => {
+            if (!(bookId in prev)) return prev;
+            const next = { ...prev };
+            delete next[bookId];
+            return next;
+        });
+        onDeleteBook?.(bookId);
     };
 
     const formatBadge = (f: string) => f.toUpperCase();

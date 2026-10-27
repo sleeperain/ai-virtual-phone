@@ -395,6 +395,11 @@ export default function ReadingApp({ onClose }: Props) {
             {!activeBook && (
                 <ReadingShelf
                     onOpenBook={setActiveBook}
+                    onDeleteBook={(deletedBookId) => {
+                        if (lastBookRef.current?.id === deletedBookId) {
+                            lastBookRef.current = null;
+                        }
+                    }}
                     onClose={onClose}
                     appearance={appearance}
                     backgroundUrl={backgroundUrl}
