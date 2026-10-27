@@ -1,7 +1,7 @@
 "use client";
 
 import { Component, useState, useEffect, useCallback, type CSSProperties, type ReactNode } from "react";
-import { Trash2, Zap, Clock, Users, Archive, AlertCircle, Search, Brain, FileText, MoreHorizontal, Plus, Edit3, X, Check, ChevronRight, Filter, SlidersHorizontal, Scissors, type LucideIcon } from "lucide-react";
+import { Trash2, Zap, Clock, Users, Archive, AlertCircle, Search, Brain, FileText, MoreHorizontal, Plus, Edit3, X, Check, ChevronRight, Filter, SlidersHorizontal, Sparkles, type LucideIcon } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { MemoryTimeline } from "./memory-timeline";
 import { Toggle } from "@/components/ui/form";
@@ -31,10 +31,10 @@ import { loadNativeTimeline, filterTimelineByAllowedSources, type NativeTimeline
 import {
     runSummarizationPipeline,
     extractMemoryStructuredMeta,
+    extractDateFromRawText,
     stripMemoryStructuredSections,
-    isLegacyUnorganizedMemory,
-    resplitSingleMemoryEntry,
-    runLegacyMemoriesResplit,
+    cleanAndSplitManualMemoryText,
+    type CleanedManualMemoryDraft,
 } from "@/lib/memory-summarizer";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -122,13 +122,29 @@ function shortTermBudgetAppLabel(key: string): string {
     return CONTENT_APP_LABELS[key as ContentAppId] ?? SHORT_TERM_BUDGET_EXTRA_LABELS[key] ?? key;
 }
 
+type MemoryEditorDraftItem = {
+    content: string;
+    eventDate: string;
+    importance: number; // 1-10
+    keywordsText: string;
+};
+
 type MemoryEditorState = {
     type: MemoryEntry["type"];
     entry?: MemoryEntry;
     content: string;
+    eventDate: string;
+    dateTouched?: boolean;
     importance: number; // 1-10
     keywordsText: string;
+    cleanedDrafts?: MemoryEditorDraftItem[];
 };
+
+function getLocalTodayKey(): string {
+    const now = new Date();
+    const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
+    return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
 
 function formatEntryDateLabel(entry: MemoryEntry): string {
     const eventDate = typeof entry.metadata?.eventDate === "string" ? entry.metadata.eventDate.trim() : "";
@@ -293,9 +309,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const [memoryEditor, setMemoryEditor] = useState<MemoryEditorState | null>(null);
     const [savingMemory, setSavingMemory] = useState(false);
     const [embeddingAll, setEmbeddingAll] = useState(false);
-    const [resplittingAll, setResplittingAll] = useState(false);
-    const [resplitProgressText, setResplitProgressText] = useState<string>("");
-    const [resplittingEntryId, setResplittingEntryId] = useState<string | null>(null);
+    const [cleaningManualText, setCleaningManualText] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
     const [searchingVectors, setSearchingVectors] = useState(false);
     const [searchScoreMap, setSearchScoreMap] = useState<Record<string, number> | null>(null);
@@ -681,65 +695,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         }
     };
 
-    const handleResplitSingleEntry = async (entry: MemoryEntry) => {
-        if (!selectedCharId || resplittingEntryId || resplittingAll) return;
-        setEntryMenuId(null);
-        setResplittingEntryId(entry.id);
-        try {
-            const res = await resplitSingleMemoryEntry(entry, selectedChar?.name ?? "角色");
-            if (res.success && res.newEntries) {
-                await loadDetailData(selectedCharId);
-                loadCharacterList();
-                showNotice(
-                    res.newEntries.length > 1
-                        ? `已将该条旧记忆拆分为 ${res.newEntries.length} 条独立话题记忆`
-                        : "已重新提炼该条记忆的关键词与向量",
-                );
-            } else {
-                showNotice(res.error || "拆分整理失败");
-            }
-        } catch (err) {
-            showNotice("拆分整理出错: " + String(err));
-        } finally {
-            setResplittingEntryId(null);
-        }
-    };
-
-    const handleResplitAllLegacyMemories = async () => {
-        if (!selectedCharId || resplittingAll || summarizing) return;
-        const legacyTargets = longTermEntries.filter(isLegacyUnorganizedMemory);
-        if (legacyTargets.length === 0) {
-            showNotice("当前没有需要拆分整理的混杂旧记忆");
-            return;
-        }
-        setResplittingAll(true);
-        setResplitProgressText(`0/${legacyTargets.length}`);
-        try {
-            const res = await runLegacyMemoriesResplit(
-                selectedCharId,
-                selectedChar?.name ?? "角色",
-                {
-                    targetEntries: legacyTargets,
-                    onProgress: (done, total) => {
-                        setResplitProgressText(`${done}/${total}`);
-                    },
-                },
-            );
-            await loadDetailData(selectedCharId);
-            loadCharacterList();
-            if (res.success) {
-                showNotice(`整理完成：已将 ${res.processedCount} 条旧记忆拆分为 ${res.newTotalCount} 条独立记忆`);
-            } else {
-                showNotice(res.error || "旧记忆拆分整理失败");
-            }
-        } catch (err) {
-            showNotice("批量拆分出错: " + String(err));
-        } finally {
-            setResplittingAll(false);
-            setResplitProgressText("");
-        }
-    };
-
     const handleRunVectorSearchTest = async () => {
         const q = searchQuery.trim();
         if (!q) {
@@ -769,6 +724,8 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         setMemoryEditor({
             type,
             content: "",
+            eventDate: getLocalTodayKey(),
+            dateTouched: false,
             importance: type === "core" ? 10 : 8,
             keywordsText: "",
         });
@@ -782,35 +739,199 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             : parsedMeta.keywords;
         const cleanBody = stripMemoryStructuredSections(entry.content) || entry.content;
         const impScore = Math.max(1, Math.min(10, Math.round((Number.isFinite(entry.importance) ? entry.importance : 0.8) * 10)));
+        const existingDate = typeof entry.metadata?.eventDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(entry.metadata.eventDate.trim())
+            ? entry.metadata.eventDate.trim()
+            : (parsedMeta.eventDate ?? entry.createdAt.slice(0, 10));
         setMemoryEditor({
             type: entry.type,
             entry,
             content: cleanBody,
+            eventDate: existingDate || getLocalTodayKey(),
+            dateTouched: true,
             importance: impScore,
             keywordsText: existingKeywords.join("、"),
         });
     };
 
+    const handleCleanManualText = async () => {
+        if (!selectedCharId || !memoryEditor || cleaningManualText || savingMemory) return;
+        const rawText = memoryEditor.content.trim();
+        if (!rawText) {
+            showNotice("请先在输入框中粘贴或输入需要清洗的记忆文本");
+            return;
+        }
+        setCleaningManualText(true);
+        try {
+            const defaultDate = memoryEditor.eventDate || getLocalTodayKey();
+            const res = await cleanAndSplitManualMemoryText(
+                selectedCharId,
+                selectedChar?.name ?? "角色",
+                rawText,
+                defaultDate,
+            );
+            if (!res.success || !res.drafts || res.drafts.length === 0) {
+                showNotice(res.error || "清洗记忆失败");
+                return;
+            }
+            const drafts: CleanedManualMemoryDraft[] = res.drafts;
+            if (drafts.length === 1) {
+                const d = drafts[0];
+                setMemoryEditor(prev => prev ? {
+                    ...prev,
+                    content: d.cleanBody,
+                    eventDate: d.eventDate || prev.eventDate,
+                    dateTouched: true,
+                    importance: d.importance,
+                    keywordsText: d.keywords.join("、"),
+                    cleanedDrafts: undefined,
+                } : prev);
+                showNotice(`已清洗记忆并提取日期（${d.eventDate}）`);
+            } else {
+                setMemoryEditor(prev => prev ? {
+                    ...prev,
+                    cleanedDrafts: drafts.map(d => ({
+                        content: d.cleanBody,
+                        eventDate: d.eventDate || prev.eventDate,
+                        importance: d.importance,
+                        keywordsText: d.keywords.join("、"),
+                    })),
+                } : prev);
+                showNotice(`已将长文本清洗拆分为 ${drafts.length} 条独立记忆，可逐条核对或修改事件日期后保存`);
+            }
+        } catch (err) {
+            showNotice("清洗拆分出错: " + String(err));
+        } finally {
+            setCleaningManualText(false);
+        }
+    };
+
     const handleSaveManualMemory = async () => {
         if (!selectedCharId || !memoryEditor || savingMemory) return;
+        const todayKey = getLocalTodayKey();
+        const type = memoryEditor.type;
+        const source = memoryEditor.entry;
+
+        // Multi-draft batch save mode (after AI cleaning & splitting)
+        if (memoryEditor.cleanedDrafts && memoryEditor.cleanedDrafts.length > 0) {
+            const validDrafts = memoryEditor.cleanedDrafts
+                .map(d => ({
+                    ...d,
+                    content: d.content.trim(),
+                    eventDate: /^\d{4}-\d{2}-\d{2}$/.test(d.eventDate.trim())
+                        ? d.eventDate.trim()
+                        : (extractDateFromRawText(d.content) ?? todayKey),
+                }))
+                .filter(d => d.content.length > 0);
+            if (validDrafts.length === 0) {
+                showNotice("没有可保存的有效记忆条目");
+                return;
+            }
+
+            setSavingMemory(true);
+            try {
+                const nowMs = Date.now();
+                const embeddingApiConfig = type === "long_term" && config.vectorRecallEnabled
+                    ? resolveAuxiliaryApiConfig("embeddingApiConfigId")
+                    : null;
+                const canEmbed = Boolean(embeddingApiConfig && resolveEmbeddingModel(embeddingApiConfig));
+
+                const parsedDrafts = validDrafts.map(d => {
+                    const structuredMeta = extractMemoryStructuredMeta(d.content);
+                    const cleanContent = stripMemoryStructuredSections(d.content) || d.content;
+                    const kws = d.keywordsText
+                        .split(/[、，,；;|/\s]+/)
+                        .map(s => s.trim())
+                        .filter(Boolean);
+                    const finalKeywords = kws.length > 0 ? kws : structuredMeta.keywords;
+                    const normalizedImportance = Math.max(0.1, Math.min(1, Number((d.importance / 10).toFixed(2))));
+                    const embeddingInput = finalKeywords.length > 0
+                        ? `关键词：${finalKeywords.join("、")}\n${cleanContent}`
+                        : cleanContent;
+                    return {
+                        cleanContent,
+                        eventDate: d.eventDate,
+                        finalKeywords,
+                        normalizedImportance,
+                        embeddingInput,
+                    };
+                });
+
+                let batchEmbeddings: Array<number[] | null> = [];
+                if (canEmbed && embeddingApiConfig) {
+                    try {
+                        batchEmbeddings = await generateEmbeddingsBatch(
+                            parsedDrafts.map(d => d.embeddingInput),
+                            embeddingApiConfig,
+                        );
+                    } catch { /* ignore */ }
+                }
+
+                let firstSavedId = "";
+                for (let i = 0; i < parsedDrafts.length; i++) {
+                    const item = parsedDrafts[i];
+                    const emb = batchEmbeddings[i] ?? undefined;
+                    const iso = new Date(nowMs + i * 10).toISOString();
+                    const isReplacingSource = Boolean(source && i === 0);
+                    const entryId = isReplacingSource ? source!.id : createManualMemoryId(type);
+                    if (i === 0) firstSavedId = entryId;
+
+                    const existingAccessCount = isReplacingSource
+                        ? (typeof source?.accessCount === "number"
+                            ? source.accessCount
+                            : (typeof source?.metadata?.accessCount === "number" ? Number(source.metadata.accessCount) : 0))
+                        : 0;
+
+                    const newEntry: MemoryEntry = {
+                        id: entryId,
+                        characterId: selectedCharId,
+                        sourceApp: source?.sourceApp || "chat",
+                        type,
+                        content: item.cleanContent,
+                        embedding: emb,
+                        importance: item.normalizedImportance,
+                        accessCount: existingAccessCount,
+                        createdAt: isReplacingSource ? source!.createdAt : iso,
+                        updatedAt: iso,
+                        metadata: {
+                            ...(isReplacingSource ? (source?.metadata ?? {}) : {}),
+                            origin: "user_manual",
+                            eventDate: item.eventDate,
+                            accessCount: existingAccessCount,
+                            keywords: item.finalKeywords,
+                            topicSplitV2: true,
+                            ...(emb ? { embeddingDim: emb.length } : {}),
+                        },
+                    };
+                    await saveMemoryEntry(newEntry);
+                }
+
+                await loadDetailData(selectedCharId);
+                setMemoryEditor(null);
+                if (firstSavedId) setExpandedId(firstSavedId);
+                loadCharacterList();
+                showNotice(`已保存 ${parsedDrafts.length} 条${type === "core" ? "核心记忆" : "长期记忆"}`);
+            } catch (error) {
+                console.error("[MemoryBank] Batch save manual memories failed:", error);
+                showNotice("记忆保存失败: " + String(error));
+            } finally {
+                setSavingMemory(false);
+            }
+            return;
+        }
+
         const rawContent = memoryEditor.content.trim();
         if (!rawContent) {
             showNotice("记忆内容不能为空");
             return;
         }
         if (rawContent.length > MANUAL_MEMORY_CONTENT_LIMIT) {
-            showNotice(`记忆内容过长，请控制在 ${MANUAL_MEMORY_CONTENT_LIMIT} 字以内`);
+            showNotice(`记忆内容过长，请控制在 ${MANUAL_MEMORY_CONTENT_LIMIT} 字以内（或点击「AI 清洗与拆分」拆分为多条）`);
             return;
         }
 
         setSavingMemory(true);
         try {
-            const nowDate = new Date();
-            const now = nowDate.toISOString();
-            const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
-            const todayKey = `${nowDate.getFullYear()}-${pad(nowDate.getMonth() + 1)}-${pad(nowDate.getDate())}`;
-            const type = memoryEditor.type;
-            const source = memoryEditor.entry;
+            const now = new Date().toISOString();
             const structuredMeta = extractMemoryStructuredMeta(rawContent);
             const cleanContent = stripMemoryStructuredSections(rawContent) || rawContent;
             const manualKeywords = memoryEditor.keywordsText
@@ -819,6 +940,11 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                 .filter(Boolean);
             const finalKeywords = manualKeywords.length > 0 ? manualKeywords : structuredMeta.keywords;
             const normalizedImportance = Math.max(0.1, Math.min(1, Number((memoryEditor.importance / 10).toFixed(2))));
+
+            const detectedDate = structuredMeta.eventDate ?? extractDateFromRawText(rawContent);
+            const resolvedEventDate = /^\d{4}-\d{2}-\d{2}$/.test(memoryEditor.eventDate.trim())
+                ? (memoryEditor.dateTouched ? memoryEditor.eventDate.trim() : (detectedDate ?? memoryEditor.eventDate.trim()))
+                : (detectedDate ?? todayKey);
 
             const contentChanged = !source || source.content.trim() !== cleanContent || finalKeywords.join(",") !== (Array.isArray(source.metadata?.keywords) ? source.metadata.keywords.join(",") : "");
             const embeddingText = finalKeywords.length > 0
@@ -841,7 +967,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                     updatedAt: now,
                     metadata: {
                         ...(source.metadata ?? {}),
-                        eventDate: typeof source.metadata?.eventDate === "string" ? source.metadata.eventDate : source.createdAt.slice(0, 10),
+                        eventDate: resolvedEventDate,
                         origin: isManualMemoryEntry(source) ? "user_manual" : "user_edited",
                         editedByUser: true,
                         accessCount: existingAccessCount,
@@ -862,7 +988,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                     updatedAt: now,
                     metadata: {
                         origin: "user_manual",
-                        eventDate: todayKey,
+                        eventDate: resolvedEventDate,
                         accessCount: 0,
                         keywords: finalKeywords,
                         ...(embedding ? { embeddingDim: embedding.length } : {}),
@@ -887,9 +1013,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         const label = type === "core" ? "核心记忆" : "长期记忆";
         const missingVectorCount = type === "long_term"
             ? entries.filter(e => !isEntryVectorValid(e)).length
-            : 0;
-        const legacyUnorganizedCount = type === "long_term"
-            ? entries.filter(isLegacyUnorganizedMemory).length
             : 0;
 
         // Filter or rank entries when search query is active
@@ -921,21 +1044,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                 <Plus size={15} strokeWidth={1.8} />
                                 <span>新增{label}</span>
                             </button>
-                            {type === "long_term" && legacyUnorganizedCount > 0 && (
-                                <button
-                                    className="mem-entry-add-btn"
-                                    onClick={() => void handleResplitAllLegacyMemories()}
-                                    disabled={resplittingAll || summarizing}
-                                    title="将以前一整天或多天混杂在一起的旧记忆重新按独立话题拆分、提取关键词并生成向量"
-                                >
-                                    <Scissors size={14} strokeWidth={1.8} />
-                                    <span>
-                                        {resplittingAll
-                                            ? `拆分中(${resplitProgressText})...`
-                                            : `拆分旧记忆(${legacyUnorganizedCount})`}
-                                    </span>
-                                </button>
-                            )}
                             {type === "long_term" && missingVectorCount > 0 && (
                                 <button
                                     className="mem-entry-add-btn"
@@ -1036,8 +1144,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                         const rawHasVector = Array.isArray(entry.embedding) && entry.embedding.length > 0;
                         const vectorValid = isEntryVectorValid(entry);
                         const dimMismatch = rawHasVector && !vectorValid;
-                        const isLegacyNeedsSplit = type === "long_term" && isLegacyUnorganizedMemory(entry);
-                        const isResplittingThis = resplittingEntryId === entry.id;
                         const matchScore = searchScoreMap ? searchScoreMap[entry.id] : undefined;
                         const isExpanded = expandedId === entry.id;
                         const cleanBody = stripMemoryStructuredSections(entry.content) || entry.content;
@@ -1087,15 +1193,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                         <Edit3 size={13} />
                                                         <span>编辑</span>
                                                     </button>
-                                                    {type === "long_term" && (
-                                                        <button
-                                                            onClick={() => void handleResplitSingleEntry(entry)}
-                                                            disabled={Boolean(resplittingEntryId) || resplittingAll}
-                                                        >
-                                                            <Scissors size={13} />
-                                                            <span>{isResplittingThis ? "拆分中..." : "拆分整理"}</span>
-                                                        </button>
-                                                    )}
                                                     <button
                                                         className="is-danger"
                                                         onClick={() => {
@@ -1133,22 +1230,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                         : "○ 未向量化"}
                                             </span>
                                         )}
-                                        {isLegacyNeedsSplit && (
-                                            <button
-                                                type="button"
-                                                className="mem-stat-pill"
-                                                style={{ cursor: "pointer", border: "1px dashed currentColor" }}
-                                                disabled={Boolean(resplittingEntryId) || resplittingAll}
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    void handleResplitSingleEntry(entry);
-                                                }}
-                                                title="点击将这条全天/多段混杂的旧记忆拆分为独立话题记忆"
-                                            >
-                                                <Scissors size={10} />
-                                                <span>{isResplittingThis ? "正在拆分..." : "待拆分旧记忆"}</span>
-                                            </button>
-                                        )}
                                     </div>
                                     <div className="mem-keywords-row">
                                         <span className="mem-keywords-label">检索关键词：</span>
@@ -1157,7 +1238,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                 <span key={idx} className="mem-keyword-chip">{kw}</span>
                                             ))
                                         ) : (
-                                            <span className="mem-keywords-empty">未设置（点右上角编辑或拆分整理自动补充）</span>
+                                            <span className="mem-keywords-empty">未设置（点右上角编辑可补充）</span>
                                         )}
                                     </div>
                                 </div>
@@ -1237,20 +1318,25 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                 {memoryEditor && (() => {
                     const isCore = memoryEditor.type === "core";
                     const isEdit = Boolean(memoryEditor.entry);
+                    const hasDrafts = Boolean(memoryEditor.cleanedDrafts && memoryEditor.cleanedDrafts.length > 0);
                     const title = `${isEdit ? "编辑" : "新增"}${isCore ? "核心记忆" : "长期记忆"}`;
                     const placeholder = isCore
                         ? "记录稳定、长期影响角色判断的事实，例如关系身份、重大约定、长期设定。"
-                        : "记录一次重要事件、承诺、偏好、关系变化，后续对话会参考。";
+                        : "可直接输入单条记忆，或粘贴多段长文本/跨天记录，点击下方「AI 清洗与拆分」自动拆成独立记忆并提取日期。";
                     const contentLength = memoryEditor.content.trim().length;
-                    const overLimit = contentLength > MANUAL_MEMORY_CONTENT_LIMIT;
+                    const overLimit = !hasDrafts && contentLength > MANUAL_MEMORY_CONTENT_LIMIT;
+                    const canSave = hasDrafts
+                        ? memoryEditor.cleanedDrafts!.some(d => d.content.trim().length > 0)
+                        : (contentLength > 0 && !overLimit);
+
                     return (
-                        <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={() => savingMemory ? undefined : setMemoryEditor(null)}>
+                        <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={() => (savingMemory || cleaningManualText) ? undefined : setMemoryEditor(null)}>
                             <div className="modal-sheet mem-edit-sheet" data-ui="modal-sheet" onClick={event => event.stopPropagation()}>
                                 <div className="modal-header" data-ui="modal-header">
                                     <button
                                         className="modal-header-btn modal-header-btn-muted"
                                         onClick={() => setMemoryEditor(null)}
-                                        disabled={savingMemory}
+                                        disabled={savingMemory || cleaningManualText}
                                     >
                                         <X size={18} />
                                     </button>
@@ -1258,55 +1344,213 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                     <button
                                         className="modal-header-btn modal-header-btn-action"
                                         onClick={handleSaveManualMemory}
-                                        disabled={savingMemory || !contentLength || overLimit}
+                                        disabled={savingMemory || cleaningManualText || !canSave}
                                     >
                                         <Check size={18} />
                                     </button>
                                 </div>
                                 <div className="modal-body mem-edit-body" data-ui="modal-body">
-                                    <textarea
-                                        className="ui-textarea mem-edit-textarea"
-                                        value={memoryEditor.content}
-                                        placeholder={`${placeholder}（无需包含日期与具体时间，系统会自动记录入库时间）`}
-                                        disabled={savingMemory}
-                                        onChange={event => setMemoryEditor(prev => prev ? { ...prev, content: event.target.value } : prev)}
-                                    />
-                                    <div className="mem-edit-meta-fields">
-                                        <div className="mem-edit-field-row">
-                                            <label className="mem-edit-field-label">重要性：{memoryEditor.importance}/10（权重越高，注入时越靠前）</label>
-                                            <input
-                                                type="range"
-                                                min={1}
-                                                max={10}
-                                                step={1}
-                                                value={memoryEditor.importance}
-                                                disabled={savingMemory}
-                                                onChange={e => setMemoryEditor(prev => prev ? { ...prev, importance: Number(e.target.value) } : prev)}
-                                                className="ui-slider"
-                                            />
+                                    {hasDrafts ? (
+                                        <div className="flex flex-col gap-3">
+                                            <div className="flex justify-between items-center">
+                                                <span className="ts-12 text-secondary">
+                                                    已拆分为 <strong>{memoryEditor.cleanedDrafts!.length}</strong> 条独立记忆（可逐条核对或修改事件日期）
+                                                </span>
+                                                <button
+                                                    type="button"
+                                                    className="ui-bare-btn ts-12 underline text-secondary"
+                                                    disabled={savingMemory}
+                                                    onClick={() => setMemoryEditor(prev => prev ? { ...prev, cleanedDrafts: undefined } : prev)}
+                                                >
+                                                    返回原文本
+                                                </button>
+                                            </div>
+                                            <div className="flex flex-col gap-3" style={{ maxHeight: "48vh", overflowY: "auto", paddingRight: 2 }}>
+                                                {memoryEditor.cleanedDrafts!.map((draft, idx) => (
+                                                    <div key={idx} className="g-card" style={{ padding: 12, gap: 8 }}>
+                                                        <div className="flex justify-between items-center">
+                                                            <span className="ts-12 font-bold">第 {idx + 1} 条</span>
+                                                            {memoryEditor.cleanedDrafts!.length > 1 && (
+                                                                <button
+                                                                    type="button"
+                                                                    className="ui-bare-btn ts-11 text-secondary"
+                                                                    disabled={savingMemory}
+                                                                    onClick={() => setMemoryEditor(prev => {
+                                                                        if (!prev?.cleanedDrafts) return prev;
+                                                                        const next = prev.cleanedDrafts.filter((_, i) => i !== idx);
+                                                                        return { ...prev, cleanedDrafts: next.length > 0 ? next : undefined };
+                                                                    })}
+                                                                >
+                                                                    移除此条
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                        <textarea
+                                                            className="ui-textarea ts-12"
+                                                            style={{ minHeight: 72 }}
+                                                            value={draft.content}
+                                                            disabled={savingMemory}
+                                                            onChange={e => {
+                                                                const val = e.target.value;
+                                                                setMemoryEditor(prev => {
+                                                                    if (!prev?.cleanedDrafts) return prev;
+                                                                    const next = [...prev.cleanedDrafts];
+                                                                    next[idx] = { ...next[idx], content: val };
+                                                                    return { ...prev, cleanedDrafts: next };
+                                                                });
+                                                            }}
+                                                        />
+                                                        <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+                                                            <label className="ts-11 text-secondary">事件日期：</label>
+                                                            <input
+                                                                type="date"
+                                                                className="ui-input ts-12"
+                                                                style={{ width: "auto", padding: "4px 8px" }}
+                                                                value={draft.eventDate}
+                                                                disabled={savingMemory}
+                                                                onChange={e => {
+                                                                    const val = e.target.value;
+                                                                    setMemoryEditor(prev => {
+                                                                        if (!prev?.cleanedDrafts) return prev;
+                                                                        const next = [...prev.cleanedDrafts];
+                                                                        next[idx] = { ...next[idx], eventDate: val };
+                                                                        return { ...prev, cleanedDrafts: next };
+                                                                    });
+                                                                }}
+                                                            />
+                                                            <label className="ts-11 text-secondary" style={{ marginLeft: "auto" }}>
+                                                                重要性：{draft.importance}/10
+                                                            </label>
+                                                            <input
+                                                                type="range"
+                                                                min={1}
+                                                                max={10}
+                                                                step={1}
+                                                                value={draft.importance}
+                                                                disabled={savingMemory}
+                                                                style={{ width: 80 }}
+                                                                onChange={e => {
+                                                                    const val = Number(e.target.value);
+                                                                    setMemoryEditor(prev => {
+                                                                        if (!prev?.cleanedDrafts) return prev;
+                                                                        const next = [...prev.cleanedDrafts];
+                                                                        next[idx] = { ...next[idx], importance: val };
+                                                                        return { ...prev, cleanedDrafts: next };
+                                                                    });
+                                                                }}
+                                                                className="ui-slider"
+                                                            />
+                                                        </div>
+                                                        <input
+                                                            type="text"
+                                                            className="ui-input ts-12"
+                                                            value={draft.keywordsText}
+                                                            placeholder="检索关键词（用顿号分隔）"
+                                                            disabled={savingMemory}
+                                                            onChange={e => {
+                                                                const val = e.target.value;
+                                                                setMemoryEditor(prev => {
+                                                                    if (!prev?.cleanedDrafts) return prev;
+                                                                    const next = [...prev.cleanedDrafts];
+                                                                    next[idx] = { ...next[idx], keywordsText: val };
+                                                                    return { ...prev, cleanedDrafts: next };
+                                                                });
+                                                            }}
+                                                        />
+                                                    </div>
+                                                ))}
+                                            </div>
                                         </div>
-                                        <div className="mem-edit-field-row">
-                                            <label className="mem-edit-field-label">检索关键词（用顿号或逗号分隔）</label>
-                                            <input
-                                                type="text"
-                                                className="ui-input ts-12"
-                                                value={memoryEditor.keywordsText}
-                                                placeholder="例如：窄门、法语、银翼杀手、约定"
-                                                disabled={savingMemory}
-                                                onChange={e => setMemoryEditor(prev => prev ? { ...prev, keywordsText: e.target.value } : prev)}
+                                    ) : (
+                                        <>
+                                            <textarea
+                                                className="ui-textarea mem-edit-textarea"
+                                                value={memoryEditor.content}
+                                                placeholder={placeholder}
+                                                disabled={savingMemory || cleaningManualText}
+                                                onChange={event => {
+                                                    const newText = event.target.value;
+                                                    setMemoryEditor(prev => {
+                                                        if (!prev) return prev;
+                                                        const autoDate = !prev.dateTouched ? extractDateFromRawText(newText) : undefined;
+                                                        return {
+                                                            ...prev,
+                                                            content: newText,
+                                                            ...(autoDate ? { eventDate: autoDate } : {}),
+                                                        };
+                                                    });
+                                                }}
                                             />
-                                        </div>
-                                    </div>
-                                    <div className={`mem-edit-footer ${overLimit ? "is-over-limit" : ""}`}>
-                                        <span>{isCore ? "CORE" : "LONG TERM"}</span>
-                                        <span>{contentLength}/{MANUAL_MEMORY_CONTENT_LIMIT}</span>
-                                    </div>
+                                            <div className="flex justify-between items-center" style={{ gap: 8, flexWrap: "wrap" }}>
+                                                <button
+                                                    type="button"
+                                                    className="ui-btn ui-btn-outline py-1.5 px-3 ts-12"
+                                                    onClick={() => void handleCleanManualText()}
+                                                    disabled={savingMemory || cleaningManualText || !contentLength}
+                                                    title="调用 API 将长文本自动清洗、按独立话题拆分为多条记忆，并提取事件日期与关键词"
+                                                >
+                                                    <Sparkles size={13} className="mr-1" />
+                                                    {cleaningManualText ? "AI 清洗拆分中..." : "AI 清洗与拆分（自动提日期/关键词）"}
+                                                </button>
+                                                <div className={`mem-edit-footer ${overLimit ? "is-over-limit" : ""}`} style={{ margin: 0 }}>
+                                                    <span>{contentLength}/{MANUAL_MEMORY_CONTENT_LIMIT}</span>
+                                                </div>
+                                            </div>
+                                            <div className="mem-edit-meta-fields">
+                                                <div className="mem-edit-field-row" style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                                                    <label className="mem-edit-field-label" style={{ margin: 0 }}>
+                                                        事件日期（文本含日期会自动识别，也可手动修改）
+                                                    </label>
+                                                    <input
+                                                        type="date"
+                                                        className="ui-input ts-12"
+                                                        style={{ width: "auto", padding: "4px 10px" }}
+                                                        value={memoryEditor.eventDate}
+                                                        disabled={savingMemory || cleaningManualText}
+                                                        onChange={e => setMemoryEditor(prev => prev ? {
+                                                            ...prev,
+                                                            eventDate: e.target.value,
+                                                            dateTouched: true,
+                                                        } : prev)}
+                                                    />
+                                                </div>
+                                                <div className="mem-edit-field-row">
+                                                    <label className="mem-edit-field-label">重要性：{memoryEditor.importance}/10（权重越高，注入时越靠前）</label>
+                                                    <input
+                                                        type="range"
+                                                        min={1}
+                                                        max={10}
+                                                        step={1}
+                                                        value={memoryEditor.importance}
+                                                        disabled={savingMemory || cleaningManualText}
+                                                        onChange={e => setMemoryEditor(prev => prev ? { ...prev, importance: Number(e.target.value) } : prev)}
+                                                        className="ui-slider"
+                                                    />
+                                                </div>
+                                                <div className="mem-edit-field-row">
+                                                    <label className="mem-edit-field-label">检索关键词（用顿号或逗号分隔）</label>
+                                                    <input
+                                                        type="text"
+                                                        className="ui-input ts-12"
+                                                        value={memoryEditor.keywordsText}
+                                                        placeholder="例如：窄门、法语、银翼杀手、约定"
+                                                        disabled={savingMemory || cleaningManualText}
+                                                        onChange={e => setMemoryEditor(prev => prev ? { ...prev, keywordsText: e.target.value } : prev)}
+                                                    />
+                                                </div>
+                                            </div>
+                                        </>
+                                    )}
                                     <button
                                         className="ui-btn ui-btn-primary mem-edit-save-btn"
                                         onClick={handleSaveManualMemory}
-                                        disabled={savingMemory || !contentLength || overLimit}
+                                        disabled={savingMemory || cleaningManualText || !canSave}
                                     >
-                                        {savingMemory ? "保存中..." : "保存记忆"}
+                                        {savingMemory
+                                            ? "保存中..."
+                                            : hasDrafts
+                                                ? `确认保存 ${memoryEditor.cleanedDrafts!.length} 条记忆`
+                                                : "保存记忆"}
                                     </button>
                                 </div>
                             </div>
@@ -1396,23 +1640,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                     >
                                         <Archive size={12} className="mr-1" />
                                         {rebuildingCore ? "处理中..." : "重建"}
-                                    </button>
-                                </div>
-                            </div>
-                            <div className="menu-item">
-                                <MemorySettingsIcon icon={Scissors} color={BINDING_ACCENTS.preset} />
-                                <div className="menu-label-group">
-                                    <span className="menu-label">旧记忆重新拆分整理</span>
-                                    <span className="menu-desc">把以前一整天或多天堆在一起的混杂记忆按独立话题拆开并补齐向量</span>
-                                </div>
-                                <div className="menu-right">
-                                    <button
-                                        className="ui-btn ui-btn-outline py-1 px-3 ts-12"
-                                        onClick={() => void handleResplitAllLegacyMemories()}
-                                        disabled={resplittingAll || summarizing}
-                                    >
-                                        <Scissors size={12} className="mr-1" />
-                                        {resplittingAll ? `拆分中(${resplitProgressText})` : "拆分整理"}
                                     </button>
                                 </div>
                             </div>
