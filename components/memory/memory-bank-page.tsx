@@ -1,7 +1,7 @@
 "use client";
 
 import { Component, useState, useEffect, useCallback, type CSSProperties, type ReactNode } from "react";
-import { Trash2, Zap, Clock, Users, Archive, AlertCircle, Search, Brain, FileText, MoreHorizontal, Plus, Edit3, X, Check, ChevronRight, Filter, SlidersHorizontal, type LucideIcon } from "lucide-react";
+import { Trash2, Zap, Clock, Users, Archive, AlertCircle, Search, Brain, FileText, MoreHorizontal, Plus, Edit3, X, Check, ChevronRight, Filter, SlidersHorizontal, Scissors, type LucideIcon } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { MemoryTimeline } from "./memory-timeline";
 import { Toggle } from "@/components/ui/form";
@@ -28,13 +28,26 @@ import {
 } from "@/lib/memory-storage";
 import { hydrateChatStorage } from "@/lib/chat-storage";
 import { loadNativeTimeline, type NativeTimelineEntry } from "@/lib/short-term-assembler";
-import { runSummarizationPipeline, extractMemoryStructuredMeta, stripMemoryStructuredSections } from "@/lib/memory-summarizer";
+import {
+    runSummarizationPipeline,
+    extractMemoryStructuredMeta,
+    stripMemoryStructuredSections,
+    isLegacyUnorganizedMemory,
+    resplitSingleMemoryEntry,
+    runLegacyMemoriesResplit,
+} from "@/lib/memory-summarizer";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { runCoreMemoryPipeline } from "@/lib/core-memory-builder";
 import { resolveAuxiliaryApiConfig, resolveUserIdentity } from "@/lib/settings-storage";
-import { generateEmbedding, resolveEmbeddingModel } from "@/lib/memory-embedding";
+import {
+    generateEmbedding,
+    generateEmbeddingsBatch,
+    resolveEmbeddingModel,
+    searchMemories,
+    getLastObservedEmbeddingDim,
+} from "@/lib/memory-embedding";
 import { BINDING_ACCENTS } from "@/lib/ui-accent-colors";
 
 type MemoryView = "list" | "detail" | "settings";
@@ -280,6 +293,12 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const [memoryEditor, setMemoryEditor] = useState<MemoryEditorState | null>(null);
     const [savingMemory, setSavingMemory] = useState(false);
     const [embeddingAll, setEmbeddingAll] = useState(false);
+    const [resplittingAll, setResplittingAll] = useState(false);
+    const [resplitProgressText, setResplitProgressText] = useState<string>("");
+    const [resplittingEntryId, setResplittingEntryId] = useState<string | null>(null);
+    const [searchQuery, setSearchQuery] = useState("");
+    const [searchingVectors, setSearchingVectors] = useState(false);
+    const [searchScoreMap, setSearchScoreMap] = useState<Record<string, number> | null>(null);
     const [summarizeRangeOpen, setSummarizeRangeOpen] = useState(false);
     const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
     const [appBudgetOpen, setAppBudgetOpen] = useState(false);
@@ -384,6 +403,8 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         if (view === "detail" && selectedCharId) {
             setActiveTab("short");
             setExpandedId(null);
+            setSearchQuery("");
+            setSearchScoreMap(null);
             loadDetailData(selectedCharId);
         }
     }, [view, selectedCharId, loadDetailData]);
@@ -583,6 +604,24 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         }
     };
 
+    // 检测该角色记忆的主流/最新向量维度（用于发现换 Embedding 模型后维度不一致的旧向量）
+    const expectedVectorDim = (() => {
+        const observed = getLastObservedEmbeddingDim();
+        if (observed > 0) return observed;
+        for (const item of longTermEntries) {
+            if (Array.isArray(item.embedding) && item.embedding.length > 0) {
+                return item.embedding.length;
+            }
+        }
+        return 0;
+    })();
+
+    const isEntryVectorValid = (entry: MemoryEntry): boolean => {
+        if (!Array.isArray(entry.embedding) || entry.embedding.length === 0) return false;
+        if (expectedVectorDim > 0 && entry.embedding.length !== expectedVectorDim) return false;
+        return true;
+    };
+
     const handleBackfillEmbeddings = async () => {
         if (!selectedCharId || embeddingAll) return;
         const embeddingApiConfig = resolveAuxiliaryApiConfig("embeddingApiConfigId");
@@ -590,14 +629,16 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             showNotice("请先在「设置 → 绑定配置 → 辅助 API 绑定」中配置向量检索 (Embedding) 模型");
             return;
         }
-        const missing = longTermEntries.filter(e => !Array.isArray(e.embedding) || e.embedding.length === 0);
+        const missing = longTermEntries.filter(e => !isEntryVectorValid(e));
         if (missing.length === 0) {
-            showNotice("当前所有长期记忆均已生成向量");
+            showNotice("当前所有长期记忆均已生成有效向量");
             return;
         }
         setEmbeddingAll(true);
         let done = 0;
         try {
+            const inputs: string[] = [];
+            const keywordsByIdx: string[][] = [];
             for (const item of missing) {
                 const parsed = extractMemoryStructuredMeta(item.content);
                 const kws = Array.isArray(item.metadata?.keywords) && (item.metadata.keywords as unknown[]).length > 0
@@ -605,7 +646,15 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                     : parsed.keywords;
                 const cleanBody = stripMemoryStructuredSections(item.content) || item.content;
                 const embInput = kws.length > 0 ? `关键词：${kws.join("、")}\n${cleanBody}` : cleanBody;
-                const emb = await generateEmbedding(embInput, embeddingApiConfig);
+                inputs.push(embInput);
+                keywordsByIdx.push(kws);
+            }
+
+            const embeddings = await generateEmbeddingsBatch(inputs, embeddingApiConfig);
+            for (let i = 0; i < missing.length; i++) {
+                const item = missing[i];
+                const emb = embeddings[i];
+                const kws = keywordsByIdx[i];
                 if (emb && emb.length > 0) {
                     const updated: MemoryEntry = {
                         ...item,
@@ -613,6 +662,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                         metadata: {
                             ...(item.metadata ?? {}),
                             ...(kws.length > 0 ? { keywords: kws } : {}),
+                            embeddingDim: emb.length,
                         },
                     };
                     await saveMemoryEntry(updated);
@@ -620,11 +670,94 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                 }
             }
             await loadDetailData(selectedCharId);
-            showNotice(done > 0 ? `已成功为 ${done}/${missing.length} 条记忆补全向量` : "向量生成失败，请检查 Embedding API 配置");
+            showNotice(done > 0 ? `已成功为 ${done}/${missing.length} 条记忆生成/更新向量` : "向量生成失败，请检查 Embedding API 配置");
         } catch (err) {
             showNotice("补全向量出错: " + String(err));
         } finally {
             setEmbeddingAll(false);
+        }
+    };
+
+    const handleResplitSingleEntry = async (entry: MemoryEntry) => {
+        if (!selectedCharId || resplittingEntryId || resplittingAll) return;
+        setEntryMenuId(null);
+        setResplittingEntryId(entry.id);
+        try {
+            const res = await resplitSingleMemoryEntry(entry, selectedChar?.name ?? "角色");
+            if (res.success && res.newEntries) {
+                await loadDetailData(selectedCharId);
+                loadCharacterList();
+                showNotice(
+                    res.newEntries.length > 1
+                        ? `已将该条旧记忆拆分为 ${res.newEntries.length} 条独立话题记忆`
+                        : "已重新提炼该条记忆的关键词与向量",
+                );
+            } else {
+                showNotice(res.error || "拆分整理失败");
+            }
+        } catch (err) {
+            showNotice("拆分整理出错: " + String(err));
+        } finally {
+            setResplittingEntryId(null);
+        }
+    };
+
+    const handleResplitAllLegacyMemories = async () => {
+        if (!selectedCharId || resplittingAll || summarizing) return;
+        const legacyTargets = longTermEntries.filter(isLegacyUnorganizedMemory);
+        if (legacyTargets.length === 0) {
+            showNotice("当前没有需要拆分整理的混杂旧记忆");
+            return;
+        }
+        setResplittingAll(true);
+        setResplitProgressText(`0/${legacyTargets.length}`);
+        try {
+            const res = await runLegacyMemoriesResplit(
+                selectedCharId,
+                selectedChar?.name ?? "角色",
+                {
+                    targetEntries: legacyTargets,
+                    onProgress: (done, total) => {
+                        setResplitProgressText(`${done}/${total}`);
+                    },
+                },
+            );
+            await loadDetailData(selectedCharId);
+            loadCharacterList();
+            if (res.success) {
+                showNotice(`整理完成：已将 ${res.processedCount} 条旧记忆拆分为 ${res.newTotalCount} 条独立记忆`);
+            } else {
+                showNotice(res.error || "旧记忆拆分整理失败");
+            }
+        } catch (err) {
+            showNotice("批量拆分出错: " + String(err));
+        } finally {
+            setResplittingAll(false);
+            setResplitProgressText("");
+        }
+    };
+
+    const handleRunVectorSearchTest = async () => {
+        const q = searchQuery.trim();
+        if (!q) {
+            setSearchScoreMap(null);
+            return;
+        }
+        const pool = activeTab === "core" ? coreEntries : longTermEntries;
+        if (pool.length === 0 || searchingVectors) return;
+        setSearchingVectors(true);
+        try {
+            const embeddingApiConfig = resolveAuxiliaryApiConfig("embeddingApiConfigId");
+            const results = await searchMemories(q, pool, embeddingApiConfig, pool.length);
+            const nextMap: Record<string, number> = {};
+            for (const r of results) {
+                nextMap[r.entry.id] = r.score;
+            }
+            setSearchScoreMap(nextMap);
+        } catch (err) {
+            showNotice("检索测试出错: " + String(err));
+        } finally {
+            setSearchingVectors(false);
         }
     };
 
@@ -732,11 +865,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                 };
 
             await saveMemoryEntry(entry);
-            if (type === "core") {
-                setCoreEntries(prev => source ? prev.map(item => item.id === entry.id ? entry : item) : [entry, ...prev]);
-            } else {
-                setLongTermEntries(prev => source ? prev.map(item => item.id === entry.id ? entry : item) : [entry, ...prev]);
-            }
+            await loadDetailData(selectedCharId);
             setMemoryEditor(null);
             setExpandedId(entry.id);
             loadCharacterList();
@@ -752,38 +881,122 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const renderMemoryEntries = (type: MemoryEntry["type"], entries: MemoryEntry[], emptyText: string) => {
         const label = type === "core" ? "核心记忆" : "长期记忆";
         const missingVectorCount = type === "long_term"
-            ? entries.filter(e => !Array.isArray(e.embedding) || e.embedding.length === 0).length
+            ? entries.filter(e => !isEntryVectorValid(e)).length
             : 0;
+        const legacyUnorganizedCount = type === "long_term"
+            ? entries.filter(isLegacyUnorganizedMemory).length
+            : 0;
+
+        // Filter or rank entries when search query is active
+        const trimmedQ = searchQuery.trim().toLowerCase();
+        let displayEntries = entries;
+        if (searchScoreMap) {
+            displayEntries = [...entries]
+                .filter(e => (searchScoreMap[e.id] ?? 0) > 0)
+                .sort((a, b) => (searchScoreMap[b.id] ?? 0) - (searchScoreMap[a.id] ?? 0));
+        } else if (trimmedQ) {
+            displayEntries = entries.filter(e => {
+                const kws = Array.isArray(e.metadata?.keywords)
+                    ? (e.metadata.keywords as unknown[]).map(String).join(" ").toLowerCase()
+                    : "";
+                const dateStr = String(e.metadata?.eventDate ?? e.createdAt.slice(0, 10)).toLowerCase();
+                return e.content.toLowerCase().includes(trimmedQ) || kws.includes(trimmedQ) || dateStr.includes(trimmedQ);
+            });
+        }
+
         return (
             <>
                 {entries.length > 0 && (
-                    <div className="mem-entry-toolbar">
-                        <button
-                            className="mem-entry-add-btn"
-                            onClick={() => openCreateMemoryEditor(type)}
-                        >
-                            <Plus size={15} strokeWidth={1.8} />
-                            <span>新增{label}</span>
-                        </button>
-                        {type === "long_term" && missingVectorCount > 0 && (
+                    <>
+                        <div className="mem-entry-toolbar" style={{ flexWrap: "wrap" }}>
                             <button
                                 className="mem-entry-add-btn"
-                                onClick={() => void handleBackfillEmbeddings()}
-                                disabled={embeddingAll}
-                                title="为尚未生成向量的旧记忆计算 Embedding 向量"
+                                onClick={() => openCreateMemoryEditor(type)}
                             >
-                                <Zap size={14} strokeWidth={1.8} />
-                                <span>{embeddingAll ? "向量化中..." : `补全向量(${missingVectorCount})`}</span>
+                                <Plus size={15} strokeWidth={1.8} />
+                                <span>新增{label}</span>
                             </button>
-                        )}
-                        <button
-                            className="mem-entry-clear-btn"
-                            onClick={() => setConfirmClearAll(true)}
-                        >
-                            <Trash2 size={15} strokeWidth={1.8} />
-                            <span>清除{label}</span>
-                        </button>
-                    </div>
+                            {type === "long_term" && legacyUnorganizedCount > 0 && (
+                                <button
+                                    className="mem-entry-add-btn"
+                                    onClick={() => void handleResplitAllLegacyMemories()}
+                                    disabled={resplittingAll || summarizing}
+                                    title="将以前一整天或多天混杂在一起的旧记忆重新按独立话题拆分、提取关键词并生成向量"
+                                >
+                                    <Scissors size={14} strokeWidth={1.8} />
+                                    <span>
+                                        {resplittingAll
+                                            ? `拆分中(${resplitProgressText})...`
+                                            : `拆分旧记忆(${legacyUnorganizedCount})`}
+                                    </span>
+                                </button>
+                            )}
+                            {type === "long_term" && missingVectorCount > 0 && (
+                                <button
+                                    className="mem-entry-add-btn"
+                                    onClick={() => void handleBackfillEmbeddings()}
+                                    disabled={embeddingAll}
+                                    title="为尚未生成向量或更换模型后维度不匹配的记忆计算 Embedding 向量"
+                                >
+                                    <Zap size={14} strokeWidth={1.8} />
+                                    <span>{embeddingAll ? "向量化中..." : `补全向量(${missingVectorCount})`}</span>
+                                </button>
+                            )}
+                            <button
+                                className="mem-entry-clear-btn"
+                                onClick={() => setConfirmClearAll(true)}
+                            >
+                                <Trash2 size={15} strokeWidth={1.8} />
+                                <span>清除{label}</span>
+                            </button>
+                        </div>
+
+                        <div className="g-card" style={{ padding: "8px 12px", flexDirection: "row", alignItems: "center", gap: 8 }}>
+                            <Search size={15} className="text-secondary" style={{ flexShrink: 0 }} />
+                            <input
+                                type="text"
+                                className="ui-input ui-input-inline ts-12"
+                                style={{ flex: 1, minWidth: 0 }}
+                                placeholder={`搜索${label}关键词、日期，或输入句子测试向量召回...`}
+                                value={searchQuery}
+                                onChange={e => {
+                                    setSearchQuery(e.target.value);
+                                    if (searchScoreMap) setSearchScoreMap(null);
+                                }}
+                                onKeyDown={e => {
+                                    if (e.key === "Enter" && searchQuery.trim()) {
+                                        e.preventDefault();
+                                        void handleRunVectorSearchTest();
+                                    }
+                                }}
+                            />
+                            {searchQuery && (
+                                <button
+                                    type="button"
+                                    className="ui-bare-btn text-secondary"
+                                    onClick={() => {
+                                        setSearchQuery("");
+                                        setSearchScoreMap(null);
+                                    }}
+                                    title="清空搜索"
+                                >
+                                    <X size={15} />
+                                </button>
+                            )}
+                            {type === "long_term" && searchQuery.trim() && (
+                                <button
+                                    type="button"
+                                    className="ui-chip"
+                                    style={{ padding: "4px 10px", fontSize: 11, flexShrink: 0 }}
+                                    data-selected={searchScoreMap ? "" : undefined}
+                                    disabled={searchingVectors}
+                                    onClick={() => void handleRunVectorSearchTest()}
+                                >
+                                    {searchingVectors ? "计算中..." : searchScoreMap ? "已按相关度排序" : "向量召回测试"}
+                                </button>
+                            )}
+                        </div>
+                    </>
                 )}
                 {entryMenuId && (
                     <button
@@ -800,8 +1013,12 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                             <span>新增{label}</span>
                         </button>
                     </div>
+                ) : displayEntries.length === 0 ? (
+                    <div className="mem-empty-card">
+                        <p>未找到匹配的{label}</p>
+                    </div>
                 ) : (
-                    entries.map(entry => {
+                    displayEntries.map(entry => {
                         const parsedMeta = extractMemoryStructuredMeta(entry.content);
                         const keywords = Array.isArray(entry.metadata?.keywords) && (entry.metadata.keywords as unknown[]).length > 0
                             ? (entry.metadata.keywords as unknown[]).map(String)
@@ -811,7 +1028,12 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                             : (typeof entry.metadata?.accessCount === "number" ? Number(entry.metadata.accessCount) : 0);
                         const importanceVal = Number.isFinite(entry.importance) ? entry.importance : (parsedMeta.importance ?? 0.8);
                         const importanceScore = Math.max(1, Math.min(10, Math.round(importanceVal * 10)));
-                        const hasVector = Array.isArray(entry.embedding) && entry.embedding.length > 0;
+                        const rawHasVector = Array.isArray(entry.embedding) && entry.embedding.length > 0;
+                        const vectorValid = isEntryVectorValid(entry);
+                        const dimMismatch = rawHasVector && !vectorValid;
+                        const isLegacyNeedsSplit = type === "long_term" && isLegacyUnorganizedMemory(entry);
+                        const isResplittingThis = resplittingEntryId === entry.id;
+                        const matchScore = searchScoreMap ? searchScoreMap[entry.id] : undefined;
                         const isExpanded = expandedId === entry.id;
                         const cleanBody = stripMemoryStructuredSections(entry.content) || entry.content;
                         const displayMarkdown = isExpanded || cleanBody.length <= 180
@@ -835,6 +1057,11 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                         [ {formatEntryDateLabel(entry)} ]
                                     </span>
                                     <div className="mem-report-actions">
+                                        {typeof matchScore === "number" && (
+                                            <span className="mem-stat-pill is-vector-ok" style={{ fontWeight: 700 }}>
+                                                匹配度 {Math.round(Math.min(1, matchScore) * 100)}%
+                                            </span>
+                                        )}
                                         <span className={`mem-origin-badge ${isManualMemoryEntry(entry) ? "is-manual" : ""}`}>
                                             {isManualMemoryEntry(entry) ? "MANUAL" : "AUTO"}
                                         </span>
@@ -855,6 +1082,15 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                         <Edit3 size={13} />
                                                         <span>编辑</span>
                                                     </button>
+                                                    {type === "long_term" && (
+                                                        <button
+                                                            onClick={() => void handleResplitSingleEntry(entry)}
+                                                            disabled={Boolean(resplittingEntryId) || resplittingAll}
+                                                        >
+                                                            <Scissors size={13} />
+                                                            <span>{isResplittingThis ? "拆分中..." : "拆分整理"}</span>
+                                                        </button>
+                                                    )}
                                                     <button
                                                         className="is-danger"
                                                         onClick={() => {
@@ -884,9 +1120,29 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                             访问次数 <strong>{accessCount}</strong>
                                         </span>
                                         {type === "long_term" && (
-                                            <span className={`mem-stat-pill ${hasVector ? "is-vector-ok" : "is-vector-missing"}`}>
-                                                {hasVector ? "● 已向量化" : "○ 未向量化"}
+                                            <span className={`mem-stat-pill ${vectorValid ? "is-vector-ok" : "is-vector-missing"}`}>
+                                                {vectorValid
+                                                    ? `● 已向量化(${entry.embedding!.length}d)`
+                                                    : dimMismatch
+                                                        ? "◐ 维度不符(可重算)"
+                                                        : "○ 未向量化"}
                                             </span>
+                                        )}
+                                        {isLegacyNeedsSplit && (
+                                            <button
+                                                type="button"
+                                                className="mem-stat-pill"
+                                                style={{ cursor: "pointer", border: "1px dashed currentColor" }}
+                                                disabled={Boolean(resplittingEntryId) || resplittingAll}
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    void handleResplitSingleEntry(entry);
+                                                }}
+                                                title="点击将这条全天/多段混杂的旧记忆拆分为独立话题记忆"
+                                            >
+                                                <Scissors size={10} />
+                                                <span>{isResplittingThis ? "正在拆分..." : "待拆分旧记忆"}</span>
+                                            </button>
                                         )}
                                     </div>
                                     <div className="mem-keywords-row">
@@ -896,7 +1152,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                 <span key={idx} className="mem-keyword-chip">{kw}</span>
                                             ))
                                         ) : (
-                                            <span className="mem-keywords-empty">未设置（点右上角编辑补充）</span>
+                                            <span className="mem-keywords-empty">未设置（点右上角编辑或拆分整理自动补充）</span>
                                         )}
                                     </div>
                                 </div>
@@ -963,6 +1219,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                             onClick={() => {
                                 setActiveTab(tab.key);
                                 setEntryMenuId(null);
+                                setSearchScoreMap(null);
                             }}
                         >
                             <tab.icon size={18} />
@@ -1137,6 +1394,23 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                     </button>
                                 </div>
                             </div>
+                            <div className="menu-item">
+                                <MemorySettingsIcon icon={Scissors} color={BINDING_ACCENTS.preset} />
+                                <div className="menu-label-group">
+                                    <span className="menu-label">旧记忆重新拆分整理</span>
+                                    <span className="menu-desc">把以前一整天或多天堆在一起的混杂记忆按独立话题拆开并补齐向量</span>
+                                </div>
+                                <div className="menu-right">
+                                    <button
+                                        className="ui-btn ui-btn-outline py-1 px-3 ts-12"
+                                        onClick={() => void handleResplitAllLegacyMemories()}
+                                        disabled={resplittingAll || summarizing}
+                                    >
+                                        <Scissors size={12} className="mr-1" />
+                                        {resplittingAll ? `拆分中(${resplitProgressText})` : "拆分整理"}
+                                    </button>
+                                </div>
+                            </div>
                         </div>
 
                         {summarizeRangeOpen ? (
@@ -1260,7 +1534,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                         <MemorySettingsIcon icon={Search} color={BINDING_ACCENTS.embedding} />
                         <div className="menu-label-group">
                             <span className="menu-label">向量召回</span>
-                            <span className="menu-desc">长期记忆超出预算时，通过 embedding 按相关性检索</span>
+                            <span className="menu-desc">通过 Embedding 向量与关键词混合打分，按相关性精筛长期记忆</span>
                         </div>
                         <div className="menu-right">
                             <Toggle checked={config.vectorRecallEnabled ?? true} onChange={(v) => {
@@ -1270,6 +1544,43 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                             }} />
                         </div>
                     </div>
+                    {(config.vectorRecallEnabled ?? true) && (
+                        <>
+                            <MemorySettingsSliderItem
+                                icon={Search}
+                                color={BINDING_ACCENTS.embedding}
+                                label="向量召回上限 (Top-K)"
+                                desc="单次最多筛选注入的相关长期记忆条数（注入时先按日期、再按重要性排序）"
+                                value={config.vectorRecallTopK ?? 15}
+                                min={5}
+                                max={50}
+                                step={1}
+                                onChange={value => {
+                                    const next = { ...config, vectorRecallTopK: Math.min(50, Math.max(5, Math.round(value))) };
+                                    setConfig(next);
+                                    saveMemoryConfig(next);
+                                }}
+                            />
+                            <MemorySettingsSliderItem
+                                icon={Filter}
+                                color={BINDING_ACCENTS.embedding}
+                                label="相关性最低阈值 (%)"
+                                desc="混合得分低于此比例的无关记忆将被过滤（重要性 ≥ 9 的重大记忆豁免保底）"
+                                value={Math.round((config.vectorMinScore ?? 0.38) * 100)}
+                                min={15}
+                                max={75}
+                                step={5}
+                                onChange={value => {
+                                    const next = {
+                                        ...config,
+                                        vectorMinScore: Number((Math.min(75, Math.max(15, Math.round(value))) / 100).toFixed(2)),
+                                    };
+                                    setConfig(next);
+                                    saveMemoryConfig(next);
+                                }}
+                            />
+                        </>
+                    )}
                 </div>
 
                 {/* Token budget sliders */}

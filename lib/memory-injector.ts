@@ -15,27 +15,49 @@ function formatLocalDay(isoOrDateStr: string): string {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+export function resolveEntryDateKey(entry: MemoryEntry): string {
+    if (typeof entry.metadata?.eventDate === "string" && entry.metadata.eventDate.trim()) {
+        return formatLocalDay(entry.metadata.eventDate);
+    }
+    return formatLocalDay(entry.createdAt);
+}
+
+/**
+ * 统一的记忆注入排序规则：
+ * 1. 先按事件日期（eventDate / createdAt 本地日期）从近到远排序（最新日期在前，时间脉络清晰）
+ * 2. 同一天内的多条记忆，按重要性（importance）从高到低排序
+ * 3. 若日期与重要性均相同，按 createdAt 降序排列
+ */
+export function sortMemoriesByDateThenImportance(
+    memories: MemoryEntry[],
+    defaultImportance = 0.8
+): MemoryEntry[] {
+    return [...memories].sort((a, b) => {
+        const dateA = resolveEntryDateKey(a);
+        const dateB = resolveEntryDateKey(b);
+        if (dateA !== dateB) {
+            return dateB.localeCompare(dateA);
+        }
+        const impA = Number.isFinite(a.importance) ? a.importance : defaultImportance;
+        const impB = Number.isFinite(b.importance) ? b.importance : defaultImportance;
+        if (Math.abs(impB - impA) > 0.001) return impB - impA;
+        return b.createdAt.localeCompare(a.createdAt);
+    });
+}
+
 /**
  * Format long-term memories for prompt injection.
- * Orders memories by importance descending (highest weight at the top where the AI
- * pays the most attention; ties broken by newest first), and only prefixes the date
- * the event happened (no storage timestamp or importance score leaked into the prompt).
+ * Orders memories by event date first (newest date at the top), then by importance descending
+ * within the same day, and only prefixes the date the event happened.
  */
 export function formatLongTermMemories(memories: MemoryEntry[]): string {
     if (memories.length === 0) return "";
 
-    const sorted = [...memories].sort((a, b) => {
-        const impA = Number.isFinite(a.importance) ? a.importance : 0.8;
-        const impB = Number.isFinite(b.importance) ? b.importance : 0.8;
-        if (Math.abs(impB - impA) > 0.001) return impB - impA;
-        return b.createdAt.localeCompare(a.createdAt);
-    });
+    const sorted = sortMemoriesByDateThenImportance(memories, 0.8);
 
     const lines: string[] = [];
     for (const entry of sorted) {
-        const eventDate = typeof entry.metadata?.eventDate === "string" && entry.metadata.eventDate.trim()
-            ? formatLocalDay(entry.metadata.eventDate)
-            : formatLocalDay(entry.createdAt);
+        const eventDate = resolveEntryDateKey(entry);
         const cleanBody = (stripMemoryStructuredSections(entry.content) || entry.content).replace(/\s*\n+\s*/g, " ").trim();
         lines.push(`- [${eventDate}] ${cleanBody}`);
     }
@@ -45,18 +67,11 @@ export function formatLongTermMemories(memories: MemoryEntry[]): string {
 export function formatCoreMemories(memories: MemoryEntry[]): string {
     if (memories.length === 0) return "";
 
-    const sorted = [...memories].sort((a, b) => {
-        const impA = Number.isFinite(a.importance) ? a.importance : 0.95;
-        const impB = Number.isFinite(b.importance) ? b.importance : 0.95;
-        if (Math.abs(impB - impA) > 0.001) return impB - impA;
-        return b.createdAt.localeCompare(a.createdAt);
-    });
+    const sorted = sortMemoriesByDateThenImportance(memories, 0.95);
 
     const lines: string[] = [];
     for (const entry of sorted) {
-        const eventDate = typeof entry.metadata?.eventDate === "string" && entry.metadata.eventDate.trim()
-            ? formatLocalDay(entry.metadata.eventDate)
-            : formatLocalDay(entry.createdAt);
+        const eventDate = resolveEntryDateKey(entry);
         const cleanBody = (stripMemoryStructuredSections(entry.content) || entry.content).replace(/\s*\n+\s*/g, " ").trim();
         lines.push(`- [${eventDate}] ${cleanBody}`);
     }

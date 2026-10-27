@@ -4,17 +4,22 @@
 import type { MemoryConfig, MemoryEntry } from "./memory-types";
 import { loadMemoryEntriesByType, incrementMemoryAccessCounts } from "./memory-storage";
 import { resolveAuxiliaryApiConfig } from "./settings-storage";
-import { generateEmbedding, resolveEmbeddingModel, cosineSimilarity } from "./memory-embedding";
+import { generateEmbedding, resolveEmbeddingModel, computeHybridMemoryScore } from "./memory-embedding";
 import { estimateTokens } from "./token-counter";
 import { extractMemoryStructuredMeta } from "./memory-summarizer";
+import { sortMemoriesByDateThenImportance } from "./memory-injector";
 
 /**
  * Retrieve relevant long-term memories for prompt injection.
  * Strategy:
- *   1. Total tokens <= longTermTokenBudget → select all
- *   2. Over budget + embedding API configured → hybrid score (vector cosine + keyword match + importance + access count), fill until budget
- *   3. Over budget + no embedding → sort by importance descending then newest first, fill until budget
- * Selected memories are ordered by importance descending (highest weight at the top) and their accessCount is incremented.
+ *   1. When vectorRecallEnabled is true and (totalTokens > budget OR entries.length > topK):
+ *      compute hybrid relevance score (vector cosine + keyword match + importance + recency + access count),
+ *      filter by vectorMinScore (milestone memories with importance >= 0.9 are exempted),
+ *      take up to topK and fill until longTermTokenBudget.
+ *   2. Fallback when vector recall is disabled or unavailable:
+ *      if over budget, prioritize by importance & date until budget.
+ *   3. Final output ordering: ordered by eventDate first (newest date at the top),
+ *      then by importance descending within the same day.
  */
 export async function retrieveMemoriesForPrompt(
     characterId: string,
@@ -25,6 +30,8 @@ export async function retrieveMemoriesForPrompt(
     if (longTermEntries.length === 0 || !currentContext.trim()) return [];
 
     const budget = config.longTermTokenBudget;
+    const topK = Math.max(3, Math.min(100, config.vectorRecallTopK ?? 15));
+    const minScore = Math.max(0.05, Math.min(0.85, config.vectorMinScore ?? 0.38));
 
     // Calculate total tokens for all entries
     let totalTokens = 0;
@@ -33,53 +40,45 @@ export async function retrieveMemoriesForPrompt(
     }
 
     let selected: MemoryEntry[] = [];
+    const shouldRunVectorFilter = config.vectorRecallEnabled && (totalTokens > budget || longTermEntries.length > topK);
 
-    if (totalTokens <= budget) {
+    if (!shouldRunVectorFilter && totalTokens <= budget) {
         selected = longTermEntries;
     } else {
         const embeddingApiConfig = config.vectorRecallEnabled ? resolveAuxiliaryApiConfig("embeddingApiConfigId") : null;
-        if (embeddingApiConfig && resolveEmbeddingModel(embeddingApiConfig)) {
-            const queryEmbedding = await generateEmbedding(currentContext, embeddingApiConfig);
-            if (queryEmbedding) {
-                const lowerCtx = currentContext.toLowerCase();
-                const scored = longTermEntries.map(entry => {
-                    const hasEmb = Array.isArray(entry.embedding) && entry.embedding.length > 0;
-                    let score = hasEmb ? cosineSimilarity(queryEmbedding, entry.embedding!) : 0.25;
-                    const kws = Array.isArray(entry.metadata?.keywords) && (entry.metadata.keywords as unknown[]).length > 0
-                        ? (entry.metadata.keywords as unknown[]).map(String)
-                        : extractMemoryStructuredMeta(entry.content).keywords;
-                    if (kws.length > 0) {
-                        let hits = 0;
-                        for (const kw of kws) {
-                            const norm = kw.trim().toLowerCase();
-                            if (norm && lowerCtx.includes(norm)) hits++;
-                        }
-                        if (hits > 0) {
-                            score += Math.min(0.25, hits * 0.06);
-                        }
-                    }
-                    const imp = Number.isFinite(entry.importance) ? entry.importance : 0.8;
-                    score += imp * 0.12;
-                    const accessCnt = typeof entry.accessCount === "number"
-                        ? entry.accessCount
-                        : (typeof entry.metadata?.accessCount === "number" ? Number(entry.metadata.accessCount) : 0);
-                    if (accessCnt > 0) {
-                        score += Math.min(0.05, Math.log10(accessCnt + 1) * 0.025);
-                    }
-                    return { entry, score };
-                });
-                scored.sort((a, b) => b.score - a.score);
-                selected = fillByBudget(scored.map(s => s.entry), budget);
-            }
+        const canUseEmbedding = Boolean(embeddingApiConfig && resolveEmbeddingModel(embeddingApiConfig));
+
+        if (config.vectorRecallEnabled) {
+            const queryEmbedding = canUseEmbedding && embeddingApiConfig
+                ? await generateEmbedding(currentContext, embeddingApiConfig, { isQuery: true })
+                : null;
+
+            const scored = longTermEntries.map(entry => {
+                const kws = Array.isArray(entry.metadata?.keywords) && (entry.metadata.keywords as unknown[]).length > 0
+                    ? (entry.metadata.keywords as unknown[]).map(String)
+                    : extractMemoryStructuredMeta(entry.content).keywords;
+                const score = computeHybridMemoryScore(entry, currentContext, queryEmbedding, kws);
+                return { entry, score };
+            });
+
+            scored.sort((a, b) => b.score - a.score);
+
+            // Filter by minimum hybrid score (milestone memories with importance >= 0.9 are always kept)
+            const qualified = scored.filter(item => {
+                const imp = Number.isFinite(item.entry.importance) ? item.entry.importance : 0.8;
+                return item.score >= minScore || imp >= 0.9;
+            });
+
+            // Ensure at least top 3 highest-scoring entries are kept even if all scored low
+            const candidates = (qualified.length >= 3 ? qualified : scored.slice(0, Math.min(5, scored.length)))
+                .slice(0, topK)
+                .map(s => s.entry);
+
+            selected = fillByBudget(candidates, budget);
         }
 
         if (selected.length === 0) {
-            const sorted = [...longTermEntries].sort((a, b) => {
-                const impA = Number.isFinite(a.importance) ? a.importance : 0.8;
-                const impB = Number.isFinite(b.importance) ? b.importance : 0.8;
-                if (Math.abs(impB - impA) > 0.001) return impB - impA;
-                return b.createdAt.localeCompare(a.createdAt);
-            });
+            const sorted = sortMemoriesByDateThenImportance(longTermEntries, 0.8);
             selected = fillByBudget(sorted, budget);
         }
     }
@@ -88,13 +87,8 @@ export async function retrieveMemoriesForPrompt(
         void incrementMemoryAccessCounts(selected.map(e => e.id));
     }
 
-    // Order injected memories by importance descending (highest weight at the top), then newest first
-    return [...selected].sort((a, b) => {
-        const impA = Number.isFinite(a.importance) ? a.importance : 0.8;
-        const impB = Number.isFinite(b.importance) ? b.importance : 0.8;
-        if (Math.abs(impB - impA) > 0.001) return impB - impA;
-        return b.createdAt.localeCompare(a.createdAt);
-    });
+    // Order injected memories by eventDate first, then importance descending within the same day
+    return sortMemoriesByDateThenImportance(selected, 0.8);
 }
 
 export async function retrieveCoreMemoriesForPrompt(
@@ -104,7 +98,8 @@ export async function retrieveCoreMemoriesForPrompt(
     const coreEntries = await loadMemoryEntriesByType(characterId, "core");
     if (coreEntries.length === 0) return [];
 
-    const sorted = [...coreEntries].sort((a, b) => {
+    // Selection stage: active & high importance first so budget never drops critical milestones
+    const prioritySorted = [...coreEntries].sort((a, b) => {
         const aActive = a.metadata?.active ? 1 : 0;
         const bActive = b.metadata?.active ? 1 : 0;
         if (aActive !== bActive) return bActive - aActive;
@@ -116,11 +111,12 @@ export async function retrieveCoreMemoriesForPrompt(
         return bDate.localeCompare(aDate);
     });
 
-    const selected = fillByBudget(sorted, config.coreMemoryTokenBudget);
+    const selected = fillByBudget(prioritySorted, config.coreMemoryTokenBudget);
     if (selected.length > 0) {
         void incrementMemoryAccessCounts(selected.map(e => e.id));
     }
-    return selected;
+    // Injection stage: order by date first, then importance descending
+    return sortMemoriesByDateThenImportance(selected, 0.95);
 }
 
 /** Pick entries in order until token budget is exhausted. */

@@ -3,11 +3,13 @@
 // Trigger: every N events (configurable). Short-term events are NOT deleted after summarization.
 
 import type { MemoryEntry } from "./memory-types";
-import { DEFAULT_SUMMARIZATION_PROMPT } from "./memory-types";
+import { DEFAULT_SUMMARIZATION_PROMPT, DEFAULT_MEMORY_RESPLIT_PROMPT } from "./memory-types";
 import {
     loadMemoryConfig,
     loadMemoryEntries,
+    loadMemoryEntriesByType,
     saveMemoryEntry,
+    deleteMemoryEntry,
     deleteMemoryEntries,
     getEventCounter,
     resetEventCounter,
@@ -17,7 +19,7 @@ import {
 } from "./memory-storage";
 import { resolveAuxiliaryApiConfig } from "./settings-storage";
 import { loadNativeTimeline, formatTimelineForSummarization, filterTimelineByAllowedSources } from "./short-term-assembler";
-import { generateEmbedding, resolveEmbeddingModel } from "./memory-embedding";
+import { generateEmbeddingsBatch, resolveEmbeddingModel, cosineSimilarity, keywordOverlapRatio } from "./memory-embedding";
 import { simpleLLMCall } from "./api-helpers";
 import { maybeRunCoreMemoryPipeline } from "./core-memory-builder";
 
@@ -32,6 +34,7 @@ const LEGACY_SUMMARIZATION_PROMPT_SIGNATURE = "不要包含格式标记";
 export type ParsedMemoryMetadata = {
     keywords: string[];
     importance?: number; // 0-1 normalized
+    eventDate?: string;  // YYYY-MM-DD extracted from resplit output
 };
 
 /**
@@ -56,7 +59,8 @@ export function stripInlineMemoryTimeMarkers(content: string): string {
 export function stripMemoryStructuredSections(content: string): string {
     const stripped = content
         .replace(/^###\s*事件总结\s*\n+/i, "")
-        .replace(/\n*###\s*未解决问题[\s\S]*?(?=\n###|\n\*\*重要性\*\*|\n重要性|\n\*\*检索关键词\*\*|\n检索关键词|$)/gi, "")
+        .replace(/\n*###\s*未解决问题[\s\S]*?(?=\n###|\n\*\*事件日期\*\*|\n事件日期|\n\*\*重要性\*\*|\n重要性|\n\*\*检索关键词\*\*|\n检索关键词|$)/gi, "")
+        .replace(/\n*(?:\*\*事件日期\*\*|事件日期|所属日期|日期)\s*[：:][^\n]*/gi, "")
         .replace(/\n*(?:\*\*重要性\*\*|重要性|重要程度)\s*[：:][^\n]*/gi, "")
         .replace(/\n*(?:\*\*检索关键词\*\*|检索关键词|关键词)\s*[：:][^\n]*/gi, "")
         .trim();
@@ -64,11 +68,18 @@ export function stripMemoryStructuredSections(content: string): string {
 }
 
 /**
- * Extract vector retrieval keywords and importance from Markdown memory content.
+ * Extract vector retrieval keywords, importance, and optional eventDate from Markdown memory content.
  */
 export function extractMemoryStructuredMeta(content: string): ParsedMemoryMetadata {
     const keywords: string[] = [];
     let importance: number | undefined;
+    let eventDate: string | undefined;
+
+    // 0. Extract eventDate if present (e.g. **事件日期**：2025-10-23)
+    const dateMatch = content.match(/(?:\*\*事件日期\*\*|事件日期|所属日期)\s*[：:]\s*(\d{4}-\d{2}-\d{2})/i);
+    if (dateMatch?.[1]) {
+        eventDate = dateMatch[1].trim();
+    }
 
     // 1. Extract importance (supports 1-10 or 0-1 or percentage)
     const impMatch = content.match(/(?:\*\*重要性\*\*|重要性|重要程度)\s*[：:]\s*([0-9]+(?:\.[0-9]+)?)\s*(?:\/\s*10|%)?/i);
@@ -103,14 +114,14 @@ export function extractMemoryStructuredMeta(content: string): ParsedMemoryMetada
         const boldMatches = content.match(/\*\*([^*]{2,12})\*\*/g) || [];
         for (const m of boldMatches) {
             const word = m.replace(/\*\*/g, "").trim();
-            if (word && !/^(重要性|检索关键词|关键词|事件总结|未解决问题)$/.test(word) && !keywords.includes(word)) {
+            if (word && !/^(事件日期|所属日期|重要性|检索关键词|关键词|事件总结|未解决问题)$/.test(word) && !keywords.includes(word)) {
                 keywords.push(word);
                 if (keywords.length >= 6) break;
             }
         }
     }
 
-    return { keywords, importance };
+    return { keywords, importance, eventDate };
 }
 
 /**
@@ -303,6 +314,9 @@ export async function runSummarizationPipeline(
     const embeddingApiConfig = config.vectorRecallEnabled ? resolveAuxiliaryApiConfig("embeddingApiConfigId") : null;
     const canEmbed = Boolean(embeddingApiConfig && resolveEmbeddingModel(embeddingApiConfig));
 
+    // Load existing long-term entries for deduplication check
+    const existingLongTerm = await loadMemoryEntriesByType(characterId, "long_term");
+
     let summarizedDayCount = 0;
     let savedEntryCount = 0;
     let lastError = "";
@@ -365,35 +379,82 @@ export async function runSummarizationPipeline(
                 .filter((sessionId): sessionId is string => Boolean(sessionId)),
         ));
 
-        for (let topicIdx = 0; topicIdx < topicBlocks.length; topicIdx++) {
-            const block = topicBlocks[topicIdx];
+        // Parse all blocks for this day first so we can batch-generate embeddings
+        const parsedTopics: Array<{
+            cleanBody: string;
+            keywords: string[];
+            importance: number;
+            embeddingInput: string;
+        }> = [];
+
+        for (const block of topicBlocks) {
             const { keywords, importance } = extractMemoryStructuredMeta(block);
             const cleanSummaryBody = stripMemoryStructuredSections(block) || stripInlineMemoryTimeMarkers(block);
             if (!cleanSummaryBody) continue;
+            const embeddingInput = keywords.length > 0
+                ? `关键词：${keywords.join("、")}\n${cleanSummaryBody}`
+                : cleanSummaryBody;
+            parsedTopics.push({
+                cleanBody: cleanSummaryBody,
+                keywords,
+                importance: importance ?? 0.8,
+                embeddingInput,
+            });
+        }
 
-            // Generate dedicated vector embedding for this single-topic memory
-            let embedding: number[] | undefined;
-            if (canEmbed && embeddingApiConfig) {
-                try {
-                    const embeddingInput = keywords.length > 0
-                        ? `关键词：${keywords.join("、")}\n${cleanSummaryBody}`
-                        : cleanSummaryBody;
-                    const emb = await generateEmbedding(embeddingInput, embeddingApiConfig);
-                    if (emb) embedding = emb;
-                } catch { /* ignore */ }
-            }
+        if (parsedTopics.length === 0) continue;
 
+        let batchEmbeddings: Array<number[] | null> = [];
+        if (canEmbed && embeddingApiConfig) {
+            try {
+                batchEmbeddings = await generateEmbeddingsBatch(
+                    parsedTopics.map(t => t.embeddingInput),
+                    embeddingApiConfig,
+                );
+            } catch { /* ignore */ }
+        }
+
+        for (let topicIdx = 0; topicIdx < parsedTopics.length; topicIdx++) {
+            const topic = parsedTopics[topicIdx];
+            const embedding = batchEmbeddings[topicIdx] ?? undefined;
             const createdAtIso = new Date(Date.now() + dayIdx * 100 + topicIdx).toISOString();
-            const resolvedImportance = importance ?? 0.8;
+
+            // Deduplication check: if an existing memory on the same/nearby day is highly similar (>= 0.88),
+            // merge into it instead of creating a duplicate entry.
+            const duplicate = findNearDuplicateMemory(existingLongTerm, dayKey, topic.cleanBody, embedding);
+            if (duplicate) {
+                const existingKws = Array.isArray(duplicate.metadata?.keywords)
+                    ? (duplicate.metadata.keywords as unknown[]).map(String)
+                    : [];
+                const mergedKeywords = Array.from(new Set([...existingKws, ...topic.keywords])).slice(0, 10);
+                const mergedEntry: MemoryEntry = {
+                    ...duplicate,
+                    content: topic.cleanBody.length >= duplicate.content.length ? topic.cleanBody : duplicate.content,
+                    embedding: embedding ?? duplicate.embedding,
+                    importance: Math.max(duplicate.importance ?? 0.8, topic.importance),
+                    updatedAt: createdAtIso,
+                    metadata: {
+                        ...(duplicate.metadata ?? {}),
+                        eventDate: dayKey,
+                        keywords: mergedKeywords,
+                        ...(embedding ? { embeddingDim: embedding.length } : {}),
+                    },
+                };
+                await saveMemoryEntry(mergedEntry);
+                const idx = existingLongTerm.findIndex(e => e.id === duplicate.id);
+                if (idx !== -1) existingLongTerm[idx] = mergedEntry;
+                savedEntryCount += 1;
+                continue;
+            }
 
             const longTermEntry: MemoryEntry = {
                 id: `mem_lt_${Date.now()}_${dayIdx}_${topicIdx}_${Math.random().toString(36).slice(2, 7)}`,
                 characterId,
                 sourceApp: dominantSource as MemoryEntry["sourceApp"],
                 type: "long_term",
-                content: cleanSummaryBody,
+                content: topic.cleanBody,
                 embedding,
-                importance: resolvedImportance,
+                importance: topic.importance,
                 accessCount: 0,
                 createdAt: createdAtIso,
                 updatedAt: createdAtIso,
@@ -403,10 +464,13 @@ export async function runSummarizationPipeline(
                     timeSpan: `${earliest} ~ ${latest}`,
                     sourceSessionIds,
                     accessCount: 0,
-                    keywords,
+                    keywords: topic.keywords,
+                    topicSplitV2: true,
+                    ...(embedding ? { embeddingDim: embedding.length } : {}),
                 },
             };
             await saveMemoryEntry(longTermEntry);
+            existingLongTerm.unshift(longTermEntry);
             savedEntryCount += 1;
         }
 
@@ -436,4 +500,244 @@ export async function runSummarizationPipeline(
 
     console.log(`[MemorySummarizer] Summarized ${allEntries.length} entries across ${summarizedDayCount} day(s) into ${savedEntryCount} memory entries`);
     return { success: true };
+}
+
+/**
+ * Find if a newly summarized topic is a near-duplicate of an existing long-term memory.
+ */
+function findNearDuplicateMemory(
+    existingEntries: MemoryEntry[],
+    dayKey: string,
+    newBody: string,
+    newEmbedding?: number[]
+): MemoryEntry | null {
+    for (const item of existingEntries) {
+        const itemDate = typeof item.metadata?.eventDate === "string"
+            ? item.metadata.eventDate.trim()
+            : item.createdAt.slice(0, 10);
+        const sameDay = itemDate === dayKey;
+        if (
+            newEmbedding &&
+            newEmbedding.length > 0 &&
+            Array.isArray(item.embedding) &&
+            item.embedding.length === newEmbedding.length
+        ) {
+            const sim = cosineSimilarity(newEmbedding, item.embedding);
+            if (sim >= (sameDay ? 0.87 : 0.91)) return item;
+        }
+        if (sameDay) {
+            const overlap = keywordOverlapRatio(newBody, item.content);
+            if (overlap >= 0.82) return item;
+        }
+    }
+    return null;
+}
+
+/**
+ * 判断一条已有长期记忆是否属于「修改前未拆条/混杂的旧记忆」：
+ * 1. 已显式标记过 `metadata.resplitDone` 或 `metadata.topicSplitV2` 且字数适中（<= 160字）且有关键词 → 已整理，不需重拆；
+ * 2. 包含多个分段换行、列表项、`---`、或者内嵌多个日期/时间点、或者正文超过 145 字、或者缺少检索关键词 → 属于待整理旧记忆。
+ */
+export function isLegacyUnorganizedMemory(entry: MemoryEntry): boolean {
+    if (entry.type !== "long_term") return false;
+    if (entry.metadata?.resplitDone === true) return false;
+
+    const cleanBody = stripMemoryStructuredSections(entry.content) || entry.content.trim();
+    const kws = Array.isArray(entry.metadata?.keywords)
+        ? (entry.metadata.keywords as unknown[]).filter(Boolean)
+        : extractMemoryStructuredMeta(entry.content).keywords;
+
+    const hasMultipleParagraphs = cleanBody.split(/\n+/).filter(line => line.trim().length > 8).length >= 2;
+    const hasInlineDateMarkers = /(?:\d{4}-\d{2}-\d{2}|\d{1,2}月\d{1,2}日|###\s*未解决问题|###\s*事件总结)/.test(entry.content);
+    const isTooLong = cleanBody.length > 145;
+    const missingKeywords = kws.length === 0;
+
+    if (entry.metadata?.topicSplitV2 === true && !isTooLong && !hasMultipleParagraphs && !missingKeywords) {
+        return false;
+    }
+
+    return isTooLong || hasMultipleParagraphs || hasInlineDateMarkers || missingKeywords;
+}
+
+/**
+ * 将单条混杂的旧长期记忆（可能是一整天或跨多天的堆叠记录）通过 LLM 重新拆分为 1~N 条独立话题记忆，
+ * 自动提取日期、重要性、检索关键词并批量生成 Embedding 向量，成功后替换原记忆。
+ */
+export async function resplitSingleMemoryEntry(
+    entry: MemoryEntry,
+    characterName: string
+): Promise<{ success: boolean; newEntries?: MemoryEntry[]; error?: string }> {
+    const config = loadMemoryConfig();
+    const apiConfig = resolveSummarizationApiConfig(entry.characterId);
+    if (!apiConfig) {
+        return { success: false, error: "未配置记忆总结 API（请在设置 → 绑定配置 → 辅助API绑定中设置）" };
+    }
+
+    const fallbackDate = typeof entry.metadata?.eventDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(entry.metadata.eventDate.trim())
+        ? entry.metadata.eventDate.trim()
+        : toLocalDayKey(entry.createdAt);
+
+    const rawBody = stripMemoryStructuredSections(entry.content) || entry.content.trim();
+    if (!rawBody) {
+        return { success: false, error: "该记忆内容为空" };
+    }
+
+    const prompt = DEFAULT_MEMORY_RESPLIT_PROMPT
+        .replace(/\{\{char\}\}/gi, characterName || "角色")
+        .replace(/\{\{eventDate\}\}/gi, fallbackDate)
+        .replace(/\{\{content\}\}/gi, entry.content.trim());
+
+    let result = await simpleLLMCall(
+        apiConfig,
+        [{ role: "user", content: prompt }],
+        { temperature: 0.25, label: `旧记忆拆分整理·${characterName}·${fallbackDate}` },
+    );
+    if (!result.content && !result.wasTruncated) {
+        await new Promise(r => setTimeout(r, 1000));
+        result = await simpleLLMCall(
+            apiConfig,
+            [{ role: "user", content: prompt }],
+            { temperature: 0.25, label: `旧记忆拆分重试·${characterName}·${fallbackDate}` },
+        );
+    }
+
+    if (!result.content) {
+        return { success: false, error: result.error || "模型未返回有效拆分结果" };
+    }
+
+    const blocks = splitMultiTopicSummaries(result.content.trim());
+    const parsedItems: Array<{
+        cleanBody: string;
+        keywords: string[];
+        importance: number;
+        eventDate: string;
+        embeddingInput: string;
+    }> = [];
+
+    for (const block of blocks) {
+        const meta = extractMemoryStructuredMeta(block);
+        const cleanBody = stripMemoryStructuredSections(block) || stripInlineMemoryTimeMarkers(block);
+        if (!cleanBody || cleanBody.length < 4) continue;
+        const resolvedDate = meta.eventDate && /^\d{4}-\d{2}-\d{2}$/.test(meta.eventDate)
+            ? meta.eventDate
+            : fallbackDate;
+        const kws = meta.keywords;
+        const embeddingInput = kws.length > 0
+            ? `关键词：${kws.join("、")}\n${cleanBody}`
+            : cleanBody;
+        parsedItems.push({
+            cleanBody,
+            keywords: kws,
+            importance: meta.importance ?? (Number.isFinite(entry.importance) ? entry.importance : 0.8),
+            eventDate: resolvedDate,
+            embeddingInput,
+        });
+    }
+
+    if (parsedItems.length === 0) {
+        return { success: false, error: "未能从模型返回内容中解析出有效记忆条目" };
+    }
+
+    const embeddingApiConfig = config.vectorRecallEnabled ? resolveAuxiliaryApiConfig("embeddingApiConfigId") : null;
+    const canEmbed = Boolean(embeddingApiConfig && resolveEmbeddingModel(embeddingApiConfig));
+    let embeddings: Array<number[] | null> = [];
+    if (canEmbed && embeddingApiConfig) {
+        try {
+            embeddings = await generateEmbeddingsBatch(
+                parsedItems.map(p => p.embeddingInput),
+                embeddingApiConfig,
+            );
+        } catch { /* ignore */ }
+    }
+
+    const nowMs = Date.now();
+    const baseAccessCount = typeof entry.accessCount === "number"
+        ? entry.accessCount
+        : (typeof entry.metadata?.accessCount === "number" ? Number(entry.metadata.accessCount) : 0);
+
+    const createdEntries: MemoryEntry[] = [];
+    for (let i = 0; i < parsedItems.length; i++) {
+        const item = parsedItems[i];
+        const emb = embeddings[i] ?? undefined;
+        // Preserve original createdAt ordering with slight offset so timeline stays stable
+        const baseCreatedTime = new Date(entry.createdAt).getTime();
+        const entryCreatedIso = !isNaN(baseCreatedTime)
+            ? new Date(baseCreatedTime + i * 10).toISOString()
+            : new Date(nowMs + i * 10).toISOString();
+
+        const newEntry: MemoryEntry = {
+            id: parsedItems.length === 1
+                ? entry.id
+                : `mem_lt_${nowMs}_rs_${i}_${Math.random().toString(36).slice(2, 7)}`,
+            characterId: entry.characterId,
+            sourceApp: entry.sourceApp || "chat",
+            type: "long_term",
+            content: item.cleanBody,
+            embedding: emb,
+            importance: item.importance,
+            accessCount: i === 0 ? baseAccessCount : 0,
+            createdAt: entryCreatedIso,
+            updatedAt: new Date(nowMs + i * 10).toISOString(),
+            metadata: {
+                ...(entry.metadata ?? {}),
+                eventDate: item.eventDate,
+                keywords: item.keywords,
+                accessCount: i === 0 ? baseAccessCount : 0,
+                resplitDone: true,
+                topicSplitV2: true,
+                resplitFromId: entry.id,
+                ...(emb ? { embeddingDim: emb.length } : {}),
+            },
+        };
+        await saveMemoryEntry(newEntry);
+        createdEntries.push(newEntry);
+    }
+
+    // Remove the original monolithic entry if it was split into multiple new IDs
+    if (parsedItems.length > 1) {
+        await deleteMemoryEntry(entry.id);
+    }
+
+    return { success: true, newEntries: createdEntries };
+}
+
+/**
+ * 批量扫描并拆分整理某个角色下所有混杂/未拆条的旧版长期记忆。
+ */
+export async function runLegacyMemoriesResplit(
+    characterId: string,
+    characterName: string,
+    options?: {
+        targetEntries?: MemoryEntry[];
+        onProgress?: (done: number, total: number, newCount: number) => void;
+    }
+): Promise<{ success: boolean; processedCount: number; newTotalCount: number; error?: string }> {
+    const allLongTerm = options?.targetEntries
+        ?? (await loadMemoryEntriesByType(characterId, "long_term")).filter(isLegacyUnorganizedMemory);
+
+    if (allLongTerm.length === 0) {
+        return { success: true, processedCount: 0, newTotalCount: 0 };
+    }
+
+    let processedCount = 0;
+    let newTotalCount = 0;
+    let lastError = "";
+
+    for (let i = 0; i < allLongTerm.length; i++) {
+        const legacyEntry = allLongTerm[i];
+        const res = await resplitSingleMemoryEntry(legacyEntry, characterName);
+        if (res.success && res.newEntries) {
+            processedCount += 1;
+            newTotalCount += res.newEntries.length;
+        } else if (res.error) {
+            lastError = res.error;
+        }
+        options?.onProgress?.(i + 1, allLongTerm.length, newTotalCount);
+    }
+
+    if (processedCount === 0) {
+        return { success: false, processedCount: 0, newTotalCount: 0, error: lastError || "旧记忆拆分整理失败" };
+    }
+
+    return { success: true, processedCount, newTotalCount };
 }

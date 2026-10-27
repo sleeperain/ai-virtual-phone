@@ -21,6 +21,8 @@ export type MemoryConfig = {
     autoSummarizeEnabled: boolean;          // whether auto-summarization runs after N events
     autoBuildCoreEnabled: boolean;          // whether core memories rebuild after long-term summarization
     vectorRecallEnabled: boolean;           // whether vector embedding recall is used for memory retrieval
+    vectorRecallTopK?: number;              // max number of relevant long-term memories recalled per query
+    vectorMinScore?: number;                // minimum hybrid score threshold (0.1 - 0.85) for vector recall
     maxLongTermEntries: number;
     summarizationEventInterval: number;     // trigger summarization every N events
     coreSummarizationInterval: number;      // trigger core-memory rebuild every N new long-term memories
@@ -113,17 +115,54 @@ export const DEFAULT_CORE_MEMORY_PROMPT = `你是一个核心记忆整理助手�
 
 核心记忆总结：`;
 
+/**
+ * Prompt template for re-splitting legacy multi-topic / multi-day memories into atomic topic entries.
+ * Placeholders: {{char}}, {{eventDate}}, {{content}}
+ */
+export const DEFAULT_MEMORY_RESPLIT_PROMPT = `你是一个专业的记忆库重构与拆分助手。以下是一条早期生成的旧版长期记忆，它可能把一整天甚至好几天的多个不同话题、事件混杂在了一起，或者缺少规范的检索关键词与重要性评分。
+
+角色：{{char}}
+原记录标定的参考日期：{{eventDate}}
+
+旧记忆原文：
+{{content}}
+
+请将这条旧记忆重新整理、拆分为 1 至多条「单一独立话题/事件」的高价值长期记忆，严格遵守以下规则：
+1. **忠于原文事实（严禁编造）**：只能基于旧记忆原文中已有的事实、互动、约定、偏好与关系进展进行拆分与精炼，绝不虚构原文没有的细节。
+2. **按独立话题彻底拆开**：如果原文包含了多件不同的事、多个不同话题或跨越了不同日期的事件，必须拆分成多条独立记忆，每条记忆之间用单独一行的 \`---\` 分隔。如果原文确实只讲了同一件事，则只整理为 1 条即可。
+3. **提取归属日期与清除正文时间字样**：
+   - 如果原文某一段明确提到了具体日期（如“10月24日”、“2025-10-24”），请将其换算为 \`YYYY-MM-DD\` 写在末尾的 \`**事件日期**\` 字段；若未提到具体日期，则统一使用参考日期 \`{{eventDate}}\`。
+   - **记忆正文中严禁保留任何日期或具体时间字样**（如“10月23日”、“上午”、“18:03”、“傍晚”、“第二天”等一律从正文剔除）。
+4. **第三人称精炼表述**：使用第三人称描述{{char}}和用户的互动，保留关键事实、承诺、情感变化与个人偏好，单条正文控制在 40-120 字左右。
+5. **每条记忆末尾必须各自附上「事件日期」、「重要性」和「检索关键词」**：
+   - **事件日期**：YYYY-MM-DD（若未知则填 {{eventDate}}）
+   - **重要性**：1-10 的整数（日常闲聊/小事 4-6，重要偏好/约定/情绪互动 7-8，关系转折/核心设定/重大事件 9-10）
+   - **检索关键词**：3-8 个核心词（涵盖人名、作品名、地点、核心事件、物品或主题词，用顿号分隔）
+
+请严格按以下格式输出（不要输出任何思考过程或多余开场白，多条记忆之间用 \`---\` 分隔）：
+（第1条记忆正文，聚焦单一话题或事件，不含任何时间字样）
+**事件日期**：{{eventDate}}
+**重要性**：8
+**检索关键词**：关键词1、关键词2、关键词3
+---
+（第2条记忆正文，聚焦另一个独立话题或事件，不含任何时间字样）
+**事件日期**：{{eventDate}}
+**重要性**：6
+**检索关键词**：关键词A、关键词B、关键词C`;
+
 export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
     autoSummarizeEnabled: true,
     autoBuildCoreEnabled: true,
     vectorRecallEnabled: true,
+    vectorRecallTopK: 15,
+    vectorMinScore: 0.38,
     maxLongTermEntries: 500,
     summarizationEventInterval: 80,
     coreSummarizationInterval: 5,
     shortTermTokenBudget: 100000,
     shortTermTokenBudgetByApp: {},
     coreMemoryTokenBudget: 100000,
-    longTermTokenBudget: 100000,
+    longTermTokenBudget: 4000,
     summarizationPrompt: DEFAULT_SUMMARIZATION_PROMPT,
     coreMemoryPrompt: DEFAULT_CORE_MEMORY_PROMPT,
     vnSummaryPrompt: "",

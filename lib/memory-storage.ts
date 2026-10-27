@@ -97,13 +97,17 @@ export async function loadMemoryEntriesByType(
 ): Promise<MemoryEntry[]> {
     const entries = await loadMemoryEntries(characterId);
     const filtered = entries.filter(entry => entry.type === type);
-    // 按时间从最近到最远排序（最新的在最上方）
+    const defaultImp = type === "core" ? 0.95 : 0.8;
+    // 先按事件日期从最近到最远排序，同一天内按重要性从高到低排序
     filtered.sort((a, b) => {
-        const dateA = String(a.metadata?.eventDate ?? "");
-        const dateB = String(b.metadata?.eventDate ?? "");
+        const dateA = String(a.metadata?.eventDate ?? a.createdAt.slice(0, 10)).trim();
+        const dateB = String(b.metadata?.eventDate ?? b.createdAt.slice(0, 10)).trim();
         if (dateA && dateB && dateA !== dateB) {
             return dateB.localeCompare(dateA);
         }
+        const impA = Number.isFinite(a.importance) ? a.importance : defaultImp;
+        const impB = Number.isFinite(b.importance) ? b.importance : defaultImp;
+        if (Math.abs(impB - impA) > 0.001) return impB - impA;
         return b.createdAt.localeCompare(a.createdAt);
     });
     return filtered;
