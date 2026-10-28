@@ -34,6 +34,9 @@ import {
     extractDateFromRawText,
     stripMemoryStructuredSections,
     cleanAndSplitManualMemoryText,
+    isLegacyUnorganizedMemory,
+    cleanLegacyMemoryEntry,
+    runBatchCleanLegacyMemories,
     type CleanedManualMemoryDraft,
 } from "@/lib/memory-summarizer";
 import ReactMarkdown from "react-markdown";
@@ -310,6 +313,9 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const [savingMemory, setSavingMemory] = useState(false);
     const [embeddingAll, setEmbeddingAll] = useState(false);
     const [cleaningManualText, setCleaningManualText] = useState(false);
+    const [cleaningAllLegacy, setCleaningAllLegacy] = useState(false);
+    const [cleanLegacyProgress, setCleanLegacyProgress] = useState("");
+    const [cleaningLegacyEntryId, setCleaningLegacyEntryId] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
     const [searchingVectors, setSearchingVectors] = useState(false);
     const [searchScoreMap, setSearchScoreMap] = useState<Record<string, number> | null>(null);
@@ -695,6 +701,65 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         }
     };
 
+    const handleCleanSingleLegacyEntry = async (entry: MemoryEntry) => {
+        if (!selectedCharId || cleaningLegacyEntryId || cleaningAllLegacy) return;
+        setEntryMenuId(null);
+        setCleaningLegacyEntryId(entry.id);
+        try {
+            const res = await cleanLegacyMemoryEntry(entry, selectedChar?.name ?? "角色");
+            if (res.success && res.newEntries) {
+                await loadDetailData(selectedCharId);
+                loadCharacterList();
+                showNotice(
+                    res.newEntries.length > 1
+                        ? `已将该条旧记忆清洗拆分为 ${res.newEntries.length} 条独立记忆`
+                        : "已清洗该条记忆并补齐日期、关键词与向量",
+                );
+            } else {
+                showNotice(res.error || "清洗旧记忆失败");
+            }
+        } catch (err) {
+            showNotice("清洗旧记忆出错: " + String(err));
+        } finally {
+            setCleaningLegacyEntryId(null);
+        }
+    };
+
+    const handleCleanAllLegacyMemories = async () => {
+        if (!selectedCharId || cleaningAllLegacy || summarizing) return;
+        const legacyTargets = longTermEntries.filter(isLegacyUnorganizedMemory);
+        if (legacyTargets.length === 0) {
+            showNotice("当前没有需要清洗的长文本旧记忆");
+            return;
+        }
+        setCleaningAllLegacy(true);
+        setCleanLegacyProgress(`0/${legacyTargets.length}`);
+        try {
+            const res = await runBatchCleanLegacyMemories(
+                selectedCharId,
+                selectedChar?.name ?? "角色",
+                {
+                    targetEntries: legacyTargets,
+                    onProgress: (done, total) => {
+                        setCleanLegacyProgress(`${done}/${total}`);
+                    },
+                },
+            );
+            await loadDetailData(selectedCharId);
+            loadCharacterList();
+            if (res.success) {
+                showNotice(`清洗完成：已将 ${res.processedCount} 条旧长文本记忆整理为 ${res.newTotalCount} 条规范记忆`);
+            } else {
+                showNotice(res.error || "一键清洗旧记忆失败");
+            }
+        } catch (err) {
+            showNotice("一键清洗出错: " + String(err));
+        } finally {
+            setCleaningAllLegacy(false);
+            setCleanLegacyProgress("");
+        }
+    };
+
     const handleRunVectorSearchTest = async () => {
         const q = searchQuery.trim();
         if (!q) {
@@ -1014,6 +1079,9 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         const missingVectorCount = type === "long_term"
             ? entries.filter(e => !isEntryVectorValid(e)).length
             : 0;
+        const legacyUnorganizedCount = type === "long_term"
+            ? entries.filter(isLegacyUnorganizedMemory).length
+            : 0;
 
         // Filter or rank entries when search query is active
         const trimmedQ = searchQuery.trim().toLowerCase();
@@ -1044,6 +1112,21 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                 <Plus size={15} strokeWidth={1.8} />
                                 <span>新增{label}</span>
                             </button>
+                            {type === "long_term" && legacyUnorganizedCount > 0 && (
+                                <button
+                                    className="mem-entry-add-btn"
+                                    onClick={() => void handleCleanAllLegacyMemories()}
+                                    disabled={cleaningAllLegacy || summarizing}
+                                    title="一键将以前混杂/长文本的旧记忆清洗拆分为独立话题记忆、提取事件日期并补齐向量"
+                                >
+                                    <Sparkles size={14} strokeWidth={1.8} />
+                                    <span>
+                                        {cleaningAllLegacy
+                                            ? `清洗中(${cleanLegacyProgress})...`
+                                            : `一键清洗旧记忆(${legacyUnorganizedCount})`}
+                                    </span>
+                                </button>
+                            )}
                             {type === "long_term" && missingVectorCount > 0 && (
                                 <button
                                     className="mem-entry-add-btn"
@@ -1193,6 +1276,15 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                         <Edit3 size={13} />
                                                         <span>编辑</span>
                                                     </button>
+                                                    {type === "long_term" && (
+                                                        <button
+                                                            onClick={() => void handleCleanSingleLegacyEntry(entry)}
+                                                            disabled={Boolean(cleaningLegacyEntryId) || cleaningAllLegacy}
+                                                        >
+                                                            <Sparkles size={13} />
+                                                            <span>{cleaningLegacyEntryId === entry.id ? "清洗中..." : "AI 清洗此条"}</span>
+                                                        </button>
+                                                    )}
                                                     <button
                                                         className="is-danger"
                                                         onClick={() => {
@@ -1640,6 +1732,23 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                     >
                                         <Archive size={12} className="mr-1" />
                                         {rebuildingCore ? "处理中..." : "重建"}
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="menu-item">
+                                <MemorySettingsIcon icon={Sparkles} color={BINDING_ACCENTS.preset} />
+                                <div className="menu-label-group">
+                                    <span className="menu-label">一键清洗旧记忆</span>
+                                    <span className="menu-desc">把以前长文本或混杂的旧记忆自动清洗拆条、提取事件日期并补齐向量</span>
+                                </div>
+                                <div className="menu-right">
+                                    <button
+                                        className="ui-btn ui-btn-outline py-1 px-3 ts-12"
+                                        onClick={() => void handleCleanAllLegacyMemories()}
+                                        disabled={cleaningAllLegacy || summarizing}
+                                    >
+                                        <Sparkles size={12} className="mr-1" />
+                                        {cleaningAllLegacy ? `清洗中(${cleanLegacyProgress})` : "一键清洗"}
                                     </button>
                                 </div>
                             </div>

@@ -580,12 +580,163 @@ function findNearDuplicateMemory(
     return null;
 }
 
+import { deleteMemoryEntry } from "./memory-storage";
+
 export type CleanedManualMemoryDraft = {
     cleanBody: string;
     eventDate: string;
     importance: number; // 1-10 integer for UI display/editing
     keywords: string[];
 };
+
+/**
+ * 判断一条已有长期记忆是否属于「修改前未清洗/未拆条的旧长文本记忆」：
+ * 包含多段落、内嵌日期/旧标题、正文超过 145 字、或缺少检索关键词。
+ */
+export function isLegacyUnorganizedMemory(entry: MemoryEntry): boolean {
+    if (entry.type !== "long_term") return false;
+    if (entry.metadata?.resplitDone === true) return false;
+
+    const cleanBody = stripMemoryStructuredSections(entry.content) || entry.content.trim();
+    const kws = Array.isArray(entry.metadata?.keywords)
+        ? (entry.metadata.keywords as unknown[]).filter(Boolean)
+        : extractMemoryStructuredMeta(entry.content).keywords;
+
+    const hasMultipleParagraphs = cleanBody.split(/\n+/).filter(line => line.trim().length > 8).length >= 2;
+    const hasInlineDateMarkers = /(?:\d{4}-\d{2}-\d{2}|\d{1,2}月\d{1,2}日|###\s*未解决问题|###\s*事件总结)/.test(entry.content);
+    const isTooLong = cleanBody.length > 145;
+    const missingKeywords = kws.length === 0;
+
+    if (entry.metadata?.topicSplitV2 === true && !isTooLong && !hasMultipleParagraphs && !missingKeywords) {
+        return false;
+    }
+
+    return isTooLong || hasMultipleParagraphs || hasInlineDateMarkers || missingKeywords;
+}
+
+/**
+ * 将单条旧版长文本/混杂长期记忆通过 LLM 清洗并拆分为 1~N 条规范记忆，自动提取日期、重要性与关键词并生成向量。
+ */
+export async function cleanLegacyMemoryEntry(
+    entry: MemoryEntry,
+    characterName: string
+): Promise<{ success: boolean; newEntries?: MemoryEntry[]; error?: string }> {
+    const config = loadMemoryConfig();
+    const fallbackDate = typeof entry.metadata?.eventDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(entry.metadata.eventDate.trim())
+        ? entry.metadata.eventDate.trim()
+        : toLocalDayKey(entry.createdAt);
+
+    const res = await cleanAndSplitManualMemoryText(
+        entry.characterId,
+        characterName,
+        entry.content,
+        fallbackDate,
+    );
+    if (!res.success || !res.drafts || res.drafts.length === 0) {
+        return { success: false, error: res.error || "旧记忆清洗失败" };
+    }
+
+    const drafts = res.drafts;
+    const embeddingApiConfig = config.vectorRecallEnabled ? resolveAuxiliaryApiConfig("embeddingApiConfigId") : null;
+    const canEmbed = Boolean(embeddingApiConfig && resolveEmbeddingModel(embeddingApiConfig));
+    let embeddings: Array<number[] | null> = [];
+    if (canEmbed && embeddingApiConfig) {
+        try {
+            embeddings = await generateEmbeddingsBatch(
+                drafts.map(d => d.keywords.length > 0 ? `关键词：${d.keywords.join("、")}\n${d.cleanBody}` : d.cleanBody),
+                embeddingApiConfig,
+            );
+        } catch { /* ignore */ }
+    }
+
+    const nowMs = Date.now();
+    const baseAccessCount = typeof entry.accessCount === "number"
+        ? entry.accessCount
+        : (typeof entry.metadata?.accessCount === "number" ? Number(entry.metadata.accessCount) : 0);
+    const baseCreatedTime = new Date(entry.createdAt).getTime();
+
+    const createdEntries: MemoryEntry[] = [];
+    for (let i = 0; i < drafts.length; i++) {
+        const d = drafts[i];
+        const emb = embeddings[i] ?? undefined;
+        const entryCreatedIso = !isNaN(baseCreatedTime)
+            ? new Date(baseCreatedTime + i * 10).toISOString()
+            : new Date(nowMs + i * 10).toISOString();
+        const normalizedImportance = Math.max(0.1, Math.min(1, Number((d.importance / 10).toFixed(2))));
+
+        const newEntry: MemoryEntry = {
+            id: drafts.length === 1
+                ? entry.id
+                : `mem_lt_${nowMs}_cl_${i}_${Math.random().toString(36).slice(2, 7)}`,
+            characterId: entry.characterId,
+            sourceApp: entry.sourceApp || "chat",
+            type: "long_term",
+            content: d.cleanBody,
+            embedding: emb,
+            importance: normalizedImportance,
+            accessCount: i === 0 ? baseAccessCount : 0,
+            createdAt: entryCreatedIso,
+            updatedAt: new Date(nowMs + i * 10).toISOString(),
+            metadata: {
+                ...(entry.metadata ?? {}),
+                eventDate: d.eventDate || fallbackDate,
+                keywords: d.keywords,
+                accessCount: i === 0 ? baseAccessCount : 0,
+                resplitDone: true,
+                topicSplitV2: true,
+                ...(emb ? { embeddingDim: emb.length } : {}),
+            },
+        };
+        await saveMemoryEntry(newEntry);
+        createdEntries.push(newEntry);
+    }
+
+    if (drafts.length > 1) {
+        await deleteMemoryEntry(entry.id);
+    }
+
+    return { success: true, newEntries: createdEntries };
+}
+
+/**
+ * 一键批量清洗某个角色下所有混杂/长文本旧记忆。
+ */
+export async function runBatchCleanLegacyMemories(
+    characterId: string,
+    characterName: string,
+    options?: {
+        targetEntries?: MemoryEntry[];
+        onProgress?: (done: number, total: number, newCount: number) => void;
+    }
+): Promise<{ success: boolean; processedCount: number; newTotalCount: number; error?: string }> {
+    const targets = options?.targetEntries
+        ?? (await loadMemoryEntriesByType(characterId, "long_term")).filter(isLegacyUnorganizedMemory);
+
+    if (targets.length === 0) {
+        return { success: true, processedCount: 0, newTotalCount: 0 };
+    }
+
+    let processedCount = 0;
+    let newTotalCount = 0;
+    let lastError = "";
+
+    for (let i = 0; i < targets.length; i++) {
+        const res = await cleanLegacyMemoryEntry(targets[i], characterName);
+        if (res.success && res.newEntries) {
+            processedCount += 1;
+            newTotalCount += res.newEntries.length;
+        } else if (res.error) {
+            lastError = res.error;
+        }
+        options?.onProgress?.(i + 1, targets.length, newTotalCount);
+    }
+
+    if (processedCount === 0) {
+        return { success: false, processedCount: 0, newTotalCount: 0, error: lastError || "一键清洗旧记忆失败" };
+    }
+
+    return { success: true, processedCount, newTotalCount };
+}
 
 /**
  * 调用 LLM 对用户手动录入的长文本进行清洗、按独立话题拆分、自动提取事件日期、重要性和检索关键词。
