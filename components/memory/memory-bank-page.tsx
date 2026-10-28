@@ -990,7 +990,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             return;
         }
         if (rawContent.length > MANUAL_MEMORY_CONTENT_LIMIT) {
-            showNotice(`记忆内容过长，请控制在 ${MANUAL_MEMORY_CONTENT_LIMIT} 字以内（或点击「AI 清洗与拆分」拆分为多条）`);
+            showNotice(`记忆内容过长，请控制在 ${MANUAL_MEMORY_CONTENT_LIMIT} 字以内，或使用「记忆清洗」拆分为多条`);
             return;
         }
 
@@ -1282,7 +1282,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                             disabled={Boolean(cleaningLegacyEntryId) || cleaningAllLegacy}
                                                         >
                                                             <Sparkles size={13} />
-                                                            <span>{cleaningLegacyEntryId === entry.id ? "清洗中..." : "AI 清洗此条"}</span>
+                                                            <span>{cleaningLegacyEntryId === entry.id ? "清洗中..." : "记忆清洗"}</span>
                                                         </button>
                                                     )}
                                                     <button
@@ -1330,7 +1330,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                 <span key={idx} className="mem-keyword-chip">{kw}</span>
                                             ))
                                         ) : (
-                                            <span className="mem-keywords-empty">未设置（点右上角编辑可补充）</span>
+                                            <span className="mem-keywords-empty">未设置</span>
                                         )}
                                     </div>
                                 </div>
@@ -1414,7 +1414,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                     const title = `${isEdit ? "编辑" : "新增"}${isCore ? "核心记忆" : "长期记忆"}`;
                     const placeholder = isCore
                         ? "记录稳定、长期影响角色判断的事实，例如关系身份、重大约定、长期设定。"
-                        : "可直接输入单条记忆，或粘贴多段长文本/跨天记录，点击下方「AI 清洗与拆分」自动拆成独立记忆并提取日期。";
+                        : "输入单条记忆，或粘贴多段长文本后使用下方「记忆清洗」自动拆分并提取日期。";
                     const contentLength = memoryEditor.content.trim().length;
                     const overLimit = !hasDrafts && contentLength > MANUAL_MEMORY_CONTENT_LIMIT;
                     const canSave = hasDrafts
@@ -1446,7 +1446,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                         <div className="flex flex-col gap-3">
                                             <div className="flex justify-between items-center">
                                                 <span className="ts-12 text-secondary">
-                                                    已拆分为 <strong>{memoryEditor.cleanedDrafts!.length}</strong> 条独立记忆（可逐条核对或修改事件日期）
+                                                    已拆分为 <strong>{memoryEditor.cleanedDrafts!.length}</strong> 条独立记忆
                                                 </span>
                                                 <button
                                                     type="button"
@@ -1537,7 +1537,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                             type="text"
                                                             className="ui-input ts-12"
                                                             value={draft.keywordsText}
-                                                            placeholder="检索关键词（用顿号分隔）"
+                                                            placeholder="检索关键词，用顿号或逗号分隔"
                                                             disabled={savingMemory}
                                                             onChange={e => {
                                                                 const val = e.target.value;
@@ -1573,25 +1573,29 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                     });
                                                 }}
                                             />
-                                            <div className="flex justify-between items-center" style={{ gap: 8, flexWrap: "wrap" }}>
-                                                <button
-                                                    type="button"
-                                                    className="ui-btn ui-btn-outline py-1.5 px-3 ts-12"
-                                                    onClick={() => void handleCleanManualText()}
-                                                    disabled={savingMemory || cleaningManualText || !contentLength}
-                                                    title="调用 API 将长文本自动清洗、按独立话题拆分为多条记忆，并提取事件日期与关键词"
-                                                >
-                                                    <Sparkles size={13} className="mr-1" />
-                                                    {cleaningManualText ? "AI 清洗拆分中..." : "AI 清洗与拆分（自动提日期/关键词）"}
-                                                </button>
-                                                <div className={`mem-edit-footer ${overLimit ? "is-over-limit" : ""}`} style={{ margin: 0 }}>
-                                                    <span>{contentLength}/{MANUAL_MEMORY_CONTENT_LIMIT}</span>
+                                            <div className="flex flex-col gap-1">
+                                                <div className="flex justify-between items-center" style={{ gap: 8, flexWrap: "wrap" }}>
+                                                    <button
+                                                        type="button"
+                                                        className="ui-btn ui-btn-outline py-1.5 px-3 ts-12"
+                                                        onClick={() => void handleCleanManualText()}
+                                                        disabled={savingMemory || cleaningManualText || !contentLength}
+                                                    >
+                                                        <Sparkles size={13} className="mr-1" />
+                                                        {cleaningManualText ? "清洗中..." : "记忆清洗"}
+                                                    </button>
+                                                    <div className={`mem-edit-footer ${overLimit ? "is-over-limit" : ""}`} style={{ margin: 0 }}>
+                                                        <span>{contentLength}/{MANUAL_MEMORY_CONTENT_LIMIT}</span>
+                                                    </div>
                                                 </div>
+                                                <span className="ts-11 text-secondary">
+                                                    将调用模型接口自动拆分长文本、提取事件日期与检索关键词，会产生一次 API 调用
+                                                </span>
                                             </div>
                                             <div className="mem-edit-meta-fields">
                                                 <div className="mem-edit-field-row" style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
                                                     <label className="mem-edit-field-label" style={{ margin: 0 }}>
-                                                        事件日期（文本含日期会自动识别，也可手动修改）
+                                                        事件日期
                                                     </label>
                                                     <input
                                                         type="date"
@@ -1607,7 +1611,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                     />
                                                 </div>
                                                 <div className="mem-edit-field-row">
-                                                    <label className="mem-edit-field-label">重要性：{memoryEditor.importance}/10（权重越高，注入时越靠前）</label>
+                                                    <label className="mem-edit-field-label">重要性：{memoryEditor.importance}/10</label>
                                                     <input
                                                         type="range"
                                                         min={1}
@@ -1620,12 +1624,12 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                     />
                                                 </div>
                                                 <div className="mem-edit-field-row">
-                                                    <label className="mem-edit-field-label">检索关键词（用顿号或逗号分隔）</label>
+                                                    <label className="mem-edit-field-label">检索关键词</label>
                                                     <input
                                                         type="text"
                                                         className="ui-input ts-12"
                                                         value={memoryEditor.keywordsText}
-                                                        placeholder="例如：窄门、法语、银翼杀手、约定"
+                                                        placeholder="用顿号或逗号分隔，如：窄门、法语、约定"
                                                         disabled={savingMemory || cleaningManualText}
                                                         onChange={e => setMemoryEditor(prev => prev ? { ...prev, keywordsText: e.target.value } : prev)}
                                                     />
