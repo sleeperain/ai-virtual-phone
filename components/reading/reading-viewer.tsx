@@ -68,6 +68,9 @@ type TxtPageItem =
 /** 菜单半宽，避免贴着某个点算出来的位置把菜单顶出屏幕 */
 const MENU_HALF_WIDTH = 152;
 
+/** 正文句子/已有标记的长按时长：和批注卡片、共读消息的长按保持一致 */
+const SENTENCE_LONG_PRESS_MS = 500;
+
 function clampMenuX(centerX: number, width: number): number {
     return Math.min(Math.max(centerX, MENU_HALF_WIDTH), Math.max(MENU_HALF_WIDTH, width - MENU_HALF_WIDTH));
 }
@@ -895,8 +898,13 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         };
     }, [chapters, offsetFromPoint]);
 
+    /** 长按弹出句子菜单后的一小段时间内忽略系统选区：指纹设备（尤其 iOS）会在我们清空选区之后
+     *  又把词选回来，不挡住的话「高亮/划线/取消」那条划选菜单会跟着冒出来，和我们自己的菜单叠在一起。 */
+    const suppressSelectionUntilRef = useRef(0);
+
     /** 松手后读取选区：定位到覆盖的每一段，换算成段落内字符区间 */
     const captureSelection = useCallback(() => {
+        if (Date.now() < suppressSelectionUntilRef.current) { setSelectionInfo(null); return; }
         const sel = typeof window !== "undefined" ? window.getSelection() : null;
         if (!sel || sel.isCollapsed || sel.rangeCount === 0) { setSelectionInfo(null); return; }
 
@@ -929,14 +937,10 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         });
     }, [chapters]);
 
-    /** 单点句子或已有标记：弹出句子菜单栏（上方SVG图标 + 正下方按钮文字） */
-    const handleSurfaceClick = (e: React.MouseEvent) => {
-        const sel = typeof window !== "undefined" ? window.getSelection() : null;
-        if (sel && !sel.isCollapsed) return; // 正在选字，交给选字菜单
-        const target = e.target as HTMLElement | null;
-        if (!target) return;
-        if (target.closest(".reading-sentence-menu, .reading-mark-menu, .reading-selection-menu")) return;
-
+    /** 算出「点到某一句 / 某个已有标记」时该弹的菜单并打开它。
+     *  触摸端由长按调用，鼠标端由单击调用；返回 true 表示这一点确实落在正文的句子或标记上。 */
+    const openSentenceMenuFromTarget = (target: HTMLElement | null): boolean => {
+        if (!target) return false;
         const sentenceHit = target.closest<HTMLElement>("[data-sentence-start]");
         if (sentenceHit) {
             const cIdx = Number(sentenceHit.dataset.sentenceChapter);
@@ -973,18 +977,15 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                         placeAbove,
                     };
                 });
-                return;
+                return true;
             }
+            return false;
         }
 
         const hit = target.closest<HTMLElement>("[data-mark-id]");
-        if (!hit) {
-            setMarkMenu(null);
-            setSentenceMenu(null);
-            return;
-        }
+        if (!hit) return false;
         const mark = marks.find(item => item.id === hit.dataset.markId);
-        if (!mark) return;
+        if (!mark) return false;
         const rect = hit.getBoundingClientRect();
         const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 375;
         const viewportHeight = typeof window !== "undefined" ? window.innerHeight : 812;
@@ -1001,6 +1002,101 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
             y: placeAbove ? Math.max(56, rect.top - 8) : rect.bottom + 8,
             placeAbove,
         });
+        return true;
+    };
+
+    // ── 句子/标记菜单的呼出方式：触摸长按 ──
+    // 以前是「点一下就弹」，但正文字句排得密，翻页、滚屏、唤出沉浸界面时顺手一碰
+    // 就会弹出划线菜单，误触很频繁。改成：触摸长按 500ms 才弹，鼠标点一下照旧
+    // （桌面没有误触问题，也不该逼人按住不动）。
+    const surfaceLongPressTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+    const surfacePressRef = useRef<{ x: number; y: number } | null>(null);
+    /** 长按已经弹过菜单：紧跟其后那次 click 是松手的余波，要放过一次 */
+    const longPressClickGuardRef = useRef(false);
+    /** 最近一次按下用的是鼠标还是手指，决定单击要不要直接弹菜单 */
+    const lastPointerTypeRef = useRef("mouse");
+
+    const cancelSurfaceLongPress = useCallback(() => {
+        surfacePressRef.current = null;
+        if (surfaceLongPressTimer.current) {
+            clearTimeout(surfaceLongPressTimer.current);
+            surfaceLongPressTimer.current = undefined;
+        }
+    }, []);
+
+    /** 长按会连带把原生的词句选中，把系统选区清掉，免得系统菜单和我们这个菜单叠在一起 */
+    const clearNativeSelection = useCallback(() => {
+        try { window.getSelection()?.removeAllRanges(); } catch { /* ignore */ }
+        setSelectionInfo(null);
+    }, []);
+
+    const handleSurfacePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+        lastPointerTypeRef.current = e.pointerType || "mouse";
+        longPressClickGuardRef.current = false;
+        cancelSurfaceLongPress();
+        if (e.button > 0) return;
+        const target = e.target as HTMLElement | null;
+        if (!target) return;
+        // 只对正文里的句子 / 已有标记起长按，按钮、菜单、批注卡片一概不参与
+        if (!target.closest("[data-sentence-start], [data-mark-id]")) return;
+        if (target.closest("button, input, select, textarea, a, .reading-sentence-menu, .reading-mark-menu, .reading-selection-menu, .reading-sentence-handle, .reading-annotation-interactive")) return;
+        const pressX = e.clientX;
+        const pressY = e.clientY;
+        surfacePressRef.current = { x: pressX, y: pressY };
+        surfaceLongPressTimer.current = setTimeout(() => {
+            surfaceLongPressTimer.current = undefined;
+            surfacePressRef.current = null;
+            longPressClickGuardRef.current = true;
+            // 长按期间系统可能已经把词选上了，先压住选区捕获，再清空
+            suppressSelectionUntilRef.current = Date.now() + 400;
+            clearNativeSelection();
+            // 按住这几百毫秒里可能翻页或重排过，按坐标重新取一次落点最稳
+            const hit = (document.elementFromPoint(pressX, pressY) as HTMLElement | null) || target;
+            openSentenceMenuFromTarget(hit);
+        }, SENTENCE_LONG_PRESS_MS);
+    };
+
+    const handleSurfacePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+        const start = surfacePressRef.current;
+        if (!start) return;
+        // 手指动了说明是在划选或滚动，不再算长按
+        if (Math.abs(e.clientX - start.x) > 10 || Math.abs(e.clientY - start.y) > 10) cancelSurfaceLongPress();
+    };
+
+    const handleSurfacePointerEnd = () => {
+        cancelSurfaceLongPress();
+        // 系统选区菜单往往在 pointerup 之后才冒出来，这里再清一次
+        if (longPressClickGuardRef.current) clearNativeSelection();
+    };
+
+    const handleSurfaceContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
+        const target = e.target as HTMLElement | null;
+        if (!target) return;
+        // 正文句子/标记上的长按归我们的句子菜单管，别让系统再压一层选词菜单
+        if (target.closest("[data-sentence-start], [data-mark-id]")) e.preventDefault();
+    };
+
+    /** 正文上的单击：点空白收起菜单；鼠标点句子照旧弹菜单，触摸端只认长按 */
+    const handleSurfaceClick = (e: React.MouseEvent) => {
+        const sel = typeof window !== "undefined" ? window.getSelection() : null;
+        if (sel && !sel.isCollapsed) return; // 正在选字，交给选字菜单
+        const target = e.target as HTMLElement | null;
+        if (!target) return;
+        if (target.closest(".reading-sentence-menu, .reading-mark-menu, .reading-selection-menu")) return;
+        // 长按刚弹过菜单，这次 click 是松手的余波
+        if (longPressClickGuardRef.current) {
+            longPressClickGuardRef.current = false;
+            return;
+        }
+        if (target.closest("[data-sentence-start], [data-mark-id]")) {
+            if (lastPointerTypeRef.current === "mouse" && openSentenceMenuFromTarget(target)) return;
+            // 触摸端短按不弹菜单，但菜单开着时点一下能收起
+            setMarkMenu(null);
+            setSentenceMenu(null);
+            return;
+        }
+        setMarkMenu(null);
+        setSentenceMenu(null);
     };
 
     const openShareDialog = (mark: ReadingMark) => {
@@ -3675,7 +3771,15 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
             paddingTop: "var(--page-header-safe-top, 48px)",
             // 插图最高不超过一页能放下的高度，和分页算出来的那个数是同一个
             ...(imageMaxHeight > 0 ? { ["--reading-image-max-height" as "--reading-image-max-height"]: `${imageMaxHeight}px` } : {}),
-        } as CSSProperties} onClick={handleSurfaceClick}>
+        } as CSSProperties}
+            onClick={handleSurfaceClick}
+            onPointerDown={handleSurfacePointerDown}
+            onPointerMove={handleSurfacePointerMove}
+            onPointerUp={handleSurfacePointerEnd}
+            onPointerCancel={handleSurfacePointerEnd}
+            onPointerLeave={handleSurfacePointerEnd}
+            onContextMenu={handleSurfaceContextMenu}
+        >
             {/* Page flip overlay */}
             {flipAnim && (
                 <>
