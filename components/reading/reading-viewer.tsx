@@ -937,6 +937,31 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         });
     }, [chapters]);
 
+    /** 从一条已有划线/高亮的元素上打开菜单：范围精确到这条标记本身。
+     *  点一下已划线的句子走这里；长按留给「准备划线」，仍走 openSentenceMenuFromTarget。 */
+    const openMenuFromMarkElement = (hit: HTMLElement): boolean => {
+        const mark = marks.find(item => item.id === hit.dataset.markId);
+        if (!mark) return false;
+        const rect = hit.getBoundingClientRect();
+        const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 375;
+        const viewportHeight = typeof window !== "undefined" ? window.innerHeight : 812;
+        const placeAbove = rect.bottom + 84 > viewportHeight - 40;
+        const paragraph = chapters[mark.chapterIndex]?.paragraphs[mark.paragraphIndex] || "";
+        const rawSlice = paragraph.slice(mark.start, mark.end) || mark.text;
+        setMarkMenu(null);
+        setSentenceMenu({
+            chapterIndex: mark.chapterIndex,
+            paragraphIndex: mark.paragraphIndex,
+            start: mark.start,
+            end: mark.end,
+            text: stripReadingInlineIconMarkers(rawSlice).trim() || mark.text,
+            x: clampMenuX(rect.left + rect.width / 2, viewportWidth),
+            y: placeAbove ? Math.max(56, rect.top - 8) : rect.bottom + 8,
+            placeAbove,
+        });
+        return true;
+    };
+
     /** 算出「点到某一句 / 某个已有标记」时该弹的菜单并打开它。
      *  触摸端由长按调用，鼠标端由单击调用；返回 true 表示这一点确实落在正文的句子或标记上。 */
     const openSentenceMenuFromTarget = (target: HTMLElement | null): boolean => {
@@ -984,25 +1009,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
 
         const hit = target.closest<HTMLElement>("[data-mark-id]");
         if (!hit) return false;
-        const mark = marks.find(item => item.id === hit.dataset.markId);
-        if (!mark) return false;
-        const rect = hit.getBoundingClientRect();
-        const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 375;
-        const viewportHeight = typeof window !== "undefined" ? window.innerHeight : 812;
-        const placeAbove = rect.bottom + 84 > viewportHeight - 40;
-        const paragraph = chapters[mark.chapterIndex]?.paragraphs[mark.paragraphIndex] || "";
-        const rawSlice = paragraph.slice(mark.start, mark.end) || mark.text;
-        setSentenceMenu({
-            chapterIndex: mark.chapterIndex,
-            paragraphIndex: mark.paragraphIndex,
-            start: mark.start,
-            end: mark.end,
-            text: stripReadingInlineIconMarkers(rawSlice).trim() || mark.text,
-            x: clampMenuX(rect.left + rect.width / 2, viewportWidth),
-            y: placeAbove ? Math.max(56, rect.top - 8) : rect.bottom + 8,
-            placeAbove,
-        });
-        return true;
+        return openMenuFromMarkElement(hit);
     };
 
     // ── 句子/标记菜单的呼出方式：触摸长按 ──
@@ -1089,8 +1096,12 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
             return;
         }
         if (target.closest("[data-sentence-start], [data-mark-id]")) {
+            // 点已有划线/高亮的句子：手指和鼠标都弹菜单（取消高亮/取消划线/批注/分享都在里面）。
+            // 长按才是「准备划线」，见 handleSurfacePointerDown。
+            const markHit = target.closest<HTMLElement>("[data-mark-id]");
+            if (markHit && openMenuFromMarkElement(markHit)) return;
             if (lastPointerTypeRef.current === "mouse" && openSentenceMenuFromTarget(target)) return;
-            // 触摸端短按不弹菜单，但菜单开着时点一下能收起
+            // 触摸端短按空白句子不弹菜单，但菜单开着时点一下能收起
             setMarkMenu(null);
             setSentenceMenu(null);
             return;
