@@ -1319,7 +1319,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                     </span>
                                     <div className="mem-report-actions">
                                         {typeof matchScore === "number" && (
-                                            <span className="mem-stat-pill is-vector-ok" style={{ fontWeight: 700, borderRadius: 8 }}>
+                                            <span className="mem-stat-pill is-vector-ok" style={{ fontWeight: 700, borderRadius: 5 }}>
                                                 匹配度 {Math.round(Math.min(1, matchScore) * 100)}%
                                             </span>
                                         )}
@@ -1327,14 +1327,14 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                             <span
                                                 className="mem-stat-pill"
                                                 title={`角色视角反思${entry.metadata?.reflectionRound ? ` · 第 ${String(entry.metadata.reflectionRound)} 轮` : ""}`}
-                                                style={{ fontWeight: 700, borderRadius: 8 }}
+                                                style={{ fontWeight: 700, borderRadius: 5 }}
                                             >
                                                 角色反思
                                             </span>
                                         )}
                                         <span
                                             className={`mem-origin-badge ${isManualMemoryEntry(entry) ? "is-manual" : ""}`}
-                                            style={{ borderRadius: 8 }}
+                                            style={{ borderRadius: 5 }}
                                         >
                                             {isManualMemoryEntry(entry) ? "MANUAL" : "AUTO"}
                                         </span>
@@ -1385,12 +1385,16 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                     </ReactMarkdown>
                                 </div>
                                 <div className="mem-structured-footer">
-                                    <div className="mem-stats-row">
-                                        <span className="mem-stat-pill" style={{ marginRight: "auto", background: "transparent", border: "none", padding: 0 }}>
-                                            访问 <strong>{accessCount}</strong> 次
-                                        </span>
+                                    <div
+                                        className="mem-stats-row"
+                                        style={{ display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 10 }}
+                                    >
+                                        {/* 重要性、访问次数都在最左侧并排，向量化状态单独靠最右 */}
                                         <span className="mem-stat-pill" style={{ background: "transparent", border: "none", padding: 0 }}>
                                             重要性 <strong>{importanceScore}/10</strong>
+                                        </span>
+                                        <span className="mem-stat-pill" style={{ background: "transparent", border: "none", padding: 0 }}>
+                                            访问 <strong>{accessCount}</strong> 次
                                         </span>
                                         {type === "long_term" && (
                                             <span
@@ -1409,7 +1413,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                         <span className="mem-keywords-label">检索关键词：</span>
                                         {keywords.length > 0 ? (
                                             keywords.map((kw, idx) => (
-                                                <span key={idx} className="mem-keyword-chip" style={{ borderRadius: 8 }}>{kw}</span>
+                                                <span key={idx} className="mem-keyword-chip" style={{ borderRadius: 5 }}>{kw}</span>
                                             ))
                                         ) : (
                                             <span className="mem-keywords-empty">未设置</span>
