@@ -1805,7 +1805,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                 <MemorySettingsIcon icon={Heart} color={BINDING_ACCENTS.voice} />
                                 <div className="menu-label-group">
                                     <span className="menu-label">核心记忆角色反思</span>
-                                    <span className="menu-desc">读角色设定，以 TA 的第一人称回看近期事件</span>
+                                    <span className="menu-desc">让 TA 用自己的视角回看近期事件</span>
                                 </div>
                                 <div className="menu-right">
                                     <button
