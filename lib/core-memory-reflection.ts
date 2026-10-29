@@ -1,5 +1,8 @@
 // lib/core-memory-reflection.ts
-// 角色视角的核心记忆反刍（character reflection）
+// 角色视角的核心记忆反思（character reflection）
+//
+// 用「反思」而不是「反刍」：心理学里的反刍（rumination）指围绕威胁反复绕圈、越想越窄的
+// 适应不良加工；这里是 adaptive reflection——会推进理解、会落到下一步行动的那种。
 //
 // 与自动/手动的「核心记忆总结」刻意区分开：
 // - API：走角色自己在「绑定配置 → 聊天」里绑定的 API；没有才回退到记忆总结辅助 API / 全局默认；
@@ -33,7 +36,7 @@ export const REFLECTION_SCOPE_DAYS: Record<Exclude<ReflectionScope, "all">, numb
     recent30: 30,
 };
 
-/** 单次反刍最多参考的长期记忆条数（超出时保留最近的）。 */
+/** 单次反思最多参考的长期记忆条数（超出时保留最近的）。 */
 const MAX_EVENT_ENTRIES = 120;
 /** 事件素材的总字数护栏，防止把上下文塞爆。角色设定不在此列——设定始终完整发送。 */
 const MAX_EVENT_CHARS = 12000;
@@ -54,7 +57,7 @@ export type CoreReflectionResult = {
     model?: string;
 };
 
-export const DEFAULT_REFLECTION_PROMPT = `你此刻不再是助手，而是「{{char}}」本人。请完全以{{char}}的第一人称，私下回看这段时间你和「{{user}}」之间发生过的事，做一次真实的自我反刍——不是写总结报告，也不是给别人看的交代。
+export const DEFAULT_REFLECTION_PROMPT = `你此刻不再是助手，而是「{{char}}」本人。请完全以{{char}}的第一人称，私下回看这段时间你和「{{user}}」之间发生过的事，做一次真实的自我反思——不是写总结报告，也不是给别人看的交代。
 
 【你是谁】
 {{persona}}
@@ -68,22 +71,25 @@ export const DEFAULT_REFLECTION_PROMPT = `你此刻不再是助手，而是「{{
 【最近还没整理成记忆的片段（可能和上面重复，只是刚刚发生的事）】
 {{transient}}
 
-【你上一次反刍时留下的想法（如果是第一次反刍则为空）】
+【你上一次反思时留下的想法（如果是第一次反思则为空）】
 {{previous}}
 
-【反刍框架：请在心里走完这五步，再动笔】
-1. 关系动向：我和{{user}}最近是在靠近、停在原地，还是在往回缩？我投入的心意、时间和期待有没有变？我从这段关系里拿到了什么，又在不安什么？
-2. 未闭合的事：哪些话说了一半就停住了，哪些约定还没落地，哪些情绪一直没找到出口？（没结束的事最占心思，先说这些。）
-3. 对{{user}}的认知更新：我原先怎么看他/她？这段时间里我哪些判断被新的事实推翻、加强或修正了？我在哪些地方高估或低估了对方？
-4. 归因：这段关系里的冷热、争执或靠近，我倾向于把它解释成什么原因——是对方的态度、我自己的问题，还是处境所迫？我认为这种原因是暂时的，还是一直如此？
-5. 下一步：接下来我想怎么对待{{user}}？具体到我打算做什么、会避开什么、还有什么我暂时没准备好说出口。
+【在心里先过这几问，不要写出来，也不要照着顺序答题】
+1. 这事碰到我哪根弦：我在乎的是什么？它被满足了，还是被挡住了？
+2. 谁的缘故：是谁造成的、是有意还是无意？我有没有办法应对——哪些我能做，哪些我根本左右不了？
+3. 我真实的那口气：我心里实际是什么情绪，有多重？我嘴上表现出来的和心里一样吗？不一样的话，我按下去的是什么？
+4. 我怎么看{{user}}了：原先我默认{{user}}会____，现在我觉得{{user}}可能____。我有多确定——是真知道，还是只是猜？还有没有别的解释说得通？
+5. 这段关系在我脑子里成了什么故事：是正在往好的方向走（哪怕过程难受），还是在一路变坏？我心里这个调子，会不会影响我下一次的反应？
+6. 下次怎么办：{{user}}做____的时候，我就____。（要具体到能照做，别停在「我要更坦诚」这种话上。）
 
 【写作要求】
 - 全程第一人称，用我自己的语气、称呼习惯和说话方式（严格贴着上面的角色设定来，不要演成通用助手口吻）；不要用第三人称，不要写「{{char}}认为」「角色觉得」这类旁白。
 - 250-400 字，分成 2 至 4 个自然段，段落之间空一行。
-- 纯叙述，不要标题、编号、列表、Markdown 符号、括号注释，也不要任何开场白（比如「好的」「以下是我的反思」）。
-- 只基于上面给出的素材，不要编造没有发生过的事；不确定的地方就照实写出我的不确定。
-- 结尾落在我接下来打算做的一件具体的事上。
+- 纯叙述，不要标题、编号、列表、Markdown 符号、括号注释，也不要任何开场白（比如「好的」「以下是」）。
+- 上面那几问是我在心里想的，不是要交的作业：让答案渗进叙述里，别一条条照着答，更不要出现「初评」「归因」「情绪强度」这类字眼。
+- 情绪别写成标签（比如「我有点难过」），落到当时具体的身体感觉、动作，或者突然冒出来的那个念头上。
+- 只基于上面给出的素材，不要编造没有发生过的事；不确定的地方就照实写出我的不确定——「我说不准」也是一种真实的回答。
+- 结尾落在一件具体的事上：下次碰到什么情况，我打算怎么应对。
 
 直接开始写：`;
 
@@ -118,8 +124,8 @@ export function isReflectionMemoryEntry(entry: MemoryEntry): boolean {
 }
 
 /**
- * 解析反刍用的 API：角色聊天槽位优先，其次记忆总结辅助 API，最后全局默认。
- * 这与 resolveSummarizationApiConfig 的顺序相反——反刍要的是「这个角色自己的脑子」。
+ * 解析反思用的 API：角色聊天槽位优先，其次记忆总结辅助 API，最后全局默认。
+ * 这与 resolveSummarizationApiConfig 的顺序相反——反思要的是「这个角色自己的脑子」。
  */
 function resolveReflectionApiConfig(characterId: string): {
     apiConfig: ReturnType<typeof loadApiConfigs>[number];
@@ -192,7 +198,7 @@ function cleanReflectionOutput(raw: string): string {
 }
 
 /**
- * 以角色视角反刍近期事件，生成一条仅属于该角色的核心记忆。
+ * 以角色视角反思近期事件，生成一条仅属于该角色的核心记忆。
  * 严格单角色：素材读取与记忆写入都只针对 characterId。
  */
 export async function runCoreMemoryReflection(
@@ -232,7 +238,7 @@ export async function runCoreMemoryReflection(
 
     const selected = scoped.length > MAX_EVENT_ENTRIES ? scoped.slice(-MAX_EVENT_ENTRIES) : scoped;
 
-    // ── 素材 2：上一次反刍留下的想法（只取同角色最近一条）──
+    // ── 素材 2：上一次反思留下的想法（只取同角色最近一条）──
     const coreEntries = await loadMemoryEntriesByType(characterId, "core");
     const previousReflection = coreEntries
         .filter(isReflectionMemoryEntry)
@@ -262,7 +268,7 @@ export async function runCoreMemoryReflection(
     }
 
     if (selected.length === 0 && !transientText) {
-        return { success: false, error: "没有可用于反刍的素材：这个角色还没有长期记忆或近期事件" };
+        return { success: false, error: "没有可用于反思的素材：这个角色还没有长期记忆或近期事件" };
     }
 
     const eventLines = selected.map(item => `- ${item.day}｜${item.body.replace(/\s+/g, " ")}`);
@@ -293,27 +299,27 @@ export async function runCoreMemoryReflection(
     let result = await simpleLLMCall(
         api.apiConfig,
         [{ role: "user", content: prompt }],
-        { temperature: 0.75, label: `核心记忆反刍·${resolvedName || characterId}` },
+        { temperature: 0.75, label: `核心记忆反思·${resolvedName || characterId}` },
     );
     if (!result.content && !result.wasTruncated) {
         await new Promise(r => setTimeout(r, 1000));
         result = await simpleLLMCall(
             api.apiConfig,
             [{ role: "user", content: prompt }],
-            { temperature: 0.75, label: `核心记忆反刍重试·${resolvedName || characterId}` },
+            { temperature: 0.75, label: `核心记忆反思重试·${resolvedName || characterId}` },
         );
     }
 
     if (!result.content) {
-        return { success: false, error: result.error || "角色反刍失败：模型没有返回内容", apiSource: api.source };
+        return { success: false, error: result.error || "角色反思失败：模型没有返回内容", apiSource: api.source };
     }
     if (result.wasTruncated) {
-        return { success: false, error: "反刍结果疑似被截断，已取消入库，请稍后重试", apiSource: api.source };
+        return { success: false, error: "反思结果疑似被截断，已取消入库，请稍后重试", apiSource: api.source };
     }
 
     const reflection = cleanReflectionOutput(result.content);
     if (reflection.length < 20) {
-        return { success: false, error: "反刍结果过短，已取消入库", apiSource: api.source };
+        return { success: false, error: "反思结果过短，已取消入库", apiSource: api.source };
     }
 
     // 主导来源：与核心记忆保持一致，便于检索统计
@@ -345,7 +351,7 @@ export async function runCoreMemoryReflection(
         updatedAt: now,
         metadata: {
             origin: "character_reflection",
-            reflectionFramework: "叙事身份理论 + 反思性加工（关系动向/未闭合/认知更新/归因/下一步）",
+            reflectionFramework: "认知评价（初评/次评）+ 内部工作模型 + 心智化梯度 + 叙事序列 + 实施意图 if-then",
             reflectionScope: scope,
             reflectionRound: round,
             timeSpan: `${earliest} ~ ${latest}`,
