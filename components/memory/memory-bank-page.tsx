@@ -163,7 +163,8 @@ function getLocalTodayKey(): string {
     return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
-function formatEntryDateLabel(entry: MemoryEntry): string {
+/** 事件日期与入库日期分开成两行显示，顺序固定：事件日期在上，入库在下。 */
+function formatEntryDateLines(entry: MemoryEntry): string[] {
     const eventDate = typeof entry.metadata?.eventDate === "string" ? entry.metadata.eventDate.trim() : "";
     const d = new Date(entry.createdAt);
     const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
@@ -171,9 +172,9 @@ function formatEntryDateLabel(entry: MemoryEntry): string {
         ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
         : entry.createdAt.slice(0, 16);
     if (eventDate) {
-        return `事件日期: ${eventDate} · 入库: ${createdDate}`;
+        return [`事件日期: ${eventDate}`, `入库: ${createdDate}`];
     }
-    return `入库: ${createdDate}`;
+    return [`入库: ${createdDate}`];
 }
 
 const memorySettingsIconStyle = (color: string): CSSProperties => ({
@@ -1300,12 +1301,25 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                 }}
                             >
                                 <div className="mem-report-head">
-                                    <span className="ts-11 text-secondary" style={{ letterSpacing: "0.5px" }}>
-                                        [ {formatEntryDateLabel(entry)} ]
+                                    <span
+                                        className="ts-11 text-secondary"
+                                        style={{
+                                            letterSpacing: "0.5px",
+                                            display: "flex",
+                                            flexDirection: "column",
+                                            alignItems: "flex-start",
+                                            gap: 1,
+                                            textAlign: "left",
+                                            lineHeight: 1.5,
+                                        }}
+                                    >
+                                        {formatEntryDateLines(entry).map((line, lineIdx) => (
+                                            <span key={lineIdx}>{line}</span>
+                                        ))}
                                     </span>
                                     <div className="mem-report-actions">
                                         {typeof matchScore === "number" && (
-                                            <span className="mem-stat-pill is-vector-ok" style={{ fontWeight: 700 }}>
+                                            <span className="mem-stat-pill is-vector-ok" style={{ fontWeight: 700, borderRadius: 8 }}>
                                                 匹配度 {Math.round(Math.min(1, matchScore) * 100)}%
                                             </span>
                                         )}
@@ -1313,12 +1327,15 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                             <span
                                                 className="mem-stat-pill"
                                                 title={`角色视角反思${entry.metadata?.reflectionRound ? ` · 第 ${String(entry.metadata.reflectionRound)} 轮` : ""}`}
-                                                style={{ fontWeight: 700 }}
+                                                style={{ fontWeight: 700, borderRadius: 8 }}
                                             >
                                                 角色反思
                                             </span>
                                         )}
-                                        <span className={`mem-origin-badge ${isManualMemoryEntry(entry) ? "is-manual" : ""}`}>
+                                        <span
+                                            className={`mem-origin-badge ${isManualMemoryEntry(entry) ? "is-manual" : ""}`}
+                                            style={{ borderRadius: 8 }}
+                                        >
                                             {isManualMemoryEntry(entry) ? "MANUAL" : "AUTO"}
                                         </span>
                                         <div className="mem-entry-menu-wrap">
@@ -1369,14 +1386,17 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                 </div>
                                 <div className="mem-structured-footer">
                                     <div className="mem-stats-row">
-                                        <span className="mem-stat-pill">
+                                        <span className="mem-stat-pill" style={{ marginRight: "auto", background: "transparent", border: "none", padding: 0 }}>
+                                            访问 <strong>{accessCount}</strong> 次
+                                        </span>
+                                        <span className="mem-stat-pill" style={{ background: "transparent", border: "none", padding: 0 }}>
                                             重要性 <strong>{importanceScore}/10</strong>
                                         </span>
-                                        <span className="mem-stat-pill">
-                                            访问次数 <strong>{accessCount}</strong>
-                                        </span>
                                         {type === "long_term" && (
-                                            <span className={`mem-stat-pill ${vectorValid ? "is-vector-ok" : "is-vector-missing"}`}>
+                                            <span
+                                                className={`mem-stat-pill ${vectorValid ? "is-vector-ok" : "is-vector-missing"}`}
+                                                style={{ marginLeft: "auto", background: "transparent", border: "none", padding: 0 }}
+                                            >
                                                 {vectorValid
                                                     ? `● 已向量化(${entry.embedding!.length}d)`
                                                     : dimMismatch
@@ -1389,7 +1409,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                         <span className="mem-keywords-label">检索关键词：</span>
                                         {keywords.length > 0 ? (
                                             keywords.map((kw, idx) => (
-                                                <span key={idx} className="mem-keyword-chip">{kw}</span>
+                                                <span key={idx} className="mem-keyword-chip" style={{ borderRadius: 8 }}>{kw}</span>
                                             ))
                                         ) : (
                                             <span className="mem-keywords-empty">未设置</span>
@@ -1636,23 +1656,28 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                 }}
                                             />
                                             <div className="flex flex-col gap-1">
+                                                {/* 记忆清洗做的是「拆条 + 提取日期关键词」，核心记忆是稳定事实的整段总结，用不上 */}
                                                 <div className="flex justify-between items-center" style={{ gap: 8, flexWrap: "wrap" }}>
-                                                    <button
-                                                        type="button"
-                                                        className="ui-btn ui-btn-outline py-1.5 px-3 ts-12"
-                                                        onClick={() => void handleCleanManualText()}
-                                                        disabled={savingMemory || cleaningManualText || !contentLength}
-                                                    >
-                                                        <Sparkles size={13} className="mr-1" />
-                                                        {cleaningManualText ? "清洗中..." : "记忆清洗"}
-                                                    </button>
-                                                    <div className={`mem-edit-footer ${overLimit ? "is-over-limit" : ""}`} style={{ margin: 0 }}>
+                                                    {!isCore && (
+                                                        <button
+                                                            type="button"
+                                                            className="ui-btn ui-btn-outline py-1.5 px-3 ts-12"
+                                                            onClick={() => void handleCleanManualText()}
+                                                            disabled={savingMemory || cleaningManualText || !contentLength}
+                                                        >
+                                                            <Sparkles size={13} className="mr-1" />
+                                                            {cleaningManualText ? "清洗中..." : "记忆清洗"}
+                                                        </button>
+                                                    )}
+                                                    <div className={`mem-edit-footer ${overLimit ? "is-over-limit" : ""}`} style={{ margin: 0, marginLeft: "auto" }}>
                                                         <span>{contentLength}/{MANUAL_MEMORY_CONTENT_LIMIT}</span>
                                                     </div>
                                                 </div>
-                                                <span className="ts-11 text-secondary">
-                                                    将调用模型接口自动拆分长文本、提取事件日期与检索关键词，会产生一次 API 调用
-                                                </span>
+                                                {!isCore && (
+                                                    <span className="ts-11 text-secondary">
+                                                        将调用模型接口自动拆分长文本、提取事件日期与检索关键词，会产生一次 API 调用
+                                                    </span>
+                                                )}
                                             </div>
                                             <div className="mem-edit-meta-fields">
                                                 <div className="mem-edit-field-row" style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
