@@ -5297,12 +5297,36 @@
 }
 
 .mp-listen-avatars {
+    /* isolation 让下面 ::before 的 z-index:-1 只落在本层：
+       光带压在头像后面，又不会掉到播放页背景（.mp-ambient / 自定义背景）之下 */
+    position: relative;
+    isolation: isolate;
     display: flex;
     align-items: center;
     justify-content: center;
 }
 
+/* 一起听：头像上方两道光弧 + 两个光点，向下渐隐（纯 SVG，白色描边） */
+.mp-listen-avatars::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 0;
+    width: 260px;
+    height: 130px;
+    margin-left: -130px;
+    z-index: -1;
+    pointer-events: none;
+    background-repeat: no-repeat;
+    background-position: center top;
+    background-size: 260px 130px;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 260 130' fill='none'><defs><linearGradient id='wl' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='%23ffffff' stop-opacity='1'/><stop offset='0.25' stop-color='%23ffffff' stop-opacity='0.6'/><stop offset='0.7' stop-color='%23ffffff' stop-opacity='0.15'/><stop offset='1' stop-color='%23ffffff' stop-opacity='0'/></linearGradient><linearGradient id='wr' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='%23ffffff' stop-opacity='1'/><stop offset='0.25' stop-color='%23ffffff' stop-opacity='0.6'/><stop offset='0.7' stop-color='%23ffffff' stop-opacity='0.15'/><stop offset='1' stop-color='%23ffffff' stop-opacity='0'/></linearGradient></defs><path d='M81 26 C 52 42, 85 118, 115 122' stroke='url(%23wl)' stroke-width='1.5' stroke-linecap='round'/><path d='M179 26 C 208 42, 175 118, 145 122' stroke='url(%23wr)' stroke-width='1.5' stroke-linecap='round'/><circle cx='81' cy='26' r='4' fill='%23ffffff'/><circle cx='179' cy='26' r='4' fill='%23ffffff'/></svg>");
+}
+
 .mp-listen-avatar {
+    /* 压在 ::before 光带之上 */
+    position: relative;
+    z-index: 1;
     width: 51px;
     height: 51px;
     border-radius: 50%;
@@ -5425,6 +5449,10 @@
 }
 
 .mp-listen-text {
+    /* 压在光带之上，并整体下移一点（与「退出」同一基线调整） */
+    position: relative;
+    z-index: 1;
+    top: 8px;
     font-size: calc(11px * var(--app-text-scale, 1));
     color: #ffffff;
     text-align: center;
@@ -5434,6 +5462,10 @@
 }
 
 .mp-listen-exit {
+    /* 与 .mp-listen-text 同步下移 */
+    position: relative;
+    z-index: 1;
+    top: 8px;
     border: none;
     background: transparent;
     color: rgba(255, 255, 255, 0.85);
