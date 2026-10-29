@@ -1,7 +1,7 @@
 "use client";
 
 import { Component, useState, useEffect, useCallback, type CSSProperties, type ReactNode } from "react";
-import { Trash2, Zap, Clock, Users, Archive, AlertCircle, Search, Brain, FileText, MoreHorizontal, Plus, Edit3, X, Check, ChevronRight, Filter, SlidersHorizontal, Sparkles, type LucideIcon } from "lucide-react";
+import { Trash2, Zap, Clock, Users, Archive, AlertCircle, Search, Brain, FileText, MoreHorizontal, Plus, Edit3, X, Check, ChevronRight, Filter, SlidersHorizontal, Sparkles, Heart, type LucideIcon } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { MemoryTimeline } from "./memory-timeline";
 import { Toggle } from "@/components/ui/form";
@@ -1788,18 +1788,9 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                 <MemorySettingsIcon icon={Brain} color={BINDING_ACCENTS.embedding} />
                                 <div className="menu-label-group">
                                     <span className="menu-label">核心记忆手动总结</span>
-                                    <span className="menu-desc">角色反思用 TA 自己的视角写；重建走第三人称归纳</span>
+                                    <span className="menu-desc">将长期记忆整理为核心记忆</span>
                                 </div>
-                                <div className="menu-right" style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-                                    <button
-                                        className="ui-btn ui-btn-outline py-1 px-3 ts-12"
-                                        onClick={() => setReflectionScopeOpen(true)}
-                                        disabled={rebuildingCore || reflectingCore}
-                                        title="完整读取角色设定，以角色第一人称反思近期事件，生成一段角色视角的核心记忆"
-                                    >
-                                        <Sparkles size={12} className="mr-1" />
-                                        {reflectingCore ? "反思中..." : "角色反思"}
-                                    </button>
+                                <div className="menu-right">
                                     <button
                                         className="ui-btn ui-btn-outline py-1 px-3 ts-12"
                                         onClick={handleManualRebuildCore}
@@ -1807,6 +1798,24 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                     >
                                         <Archive size={12} className="mr-1" />
                                         {rebuildingCore ? "处理中..." : "重建"}
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="menu-item">
+                                <MemorySettingsIcon icon={Heart} color={BINDING_ACCENTS.voice} />
+                                <div className="menu-label-group">
+                                    <span className="menu-label">核心记忆角色反思</span>
+                                    <span className="menu-desc">读角色设定，以 TA 的第一人称回看近期事件</span>
+                                </div>
+                                <div className="menu-right">
+                                    <button
+                                        className="ui-btn ui-btn-outline py-1 px-3 ts-12"
+                                        onClick={() => setReflectionScopeOpen(true)}
+                                        disabled={reflectingCore || rebuildingCore}
+                                        title="完整读取角色设定，以角色第一人称反思近期事件，生成一条角色视角的核心记忆"
+                                    >
+                                        <Heart size={12} className="mr-1" />
+                                        {reflectingCore ? "处理中..." : "反思"}
                                     </button>
                                 </div>
                             </div>
@@ -1863,7 +1872,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                 <div className="modal-sheet" data-ui="modal-sheet" onClick={event => event.stopPropagation()}>
                                     <div className="modal-header" data-ui="modal-header">
                                         <button className="modal-header-btn modal-header-btn-muted" onClick={() => setReflectionScopeOpen(false)}><X size={18} /></button>
-                                        <h3 className="modal-title">角色反思范围</h3>
+                                        <h3 className="modal-title">选择反思范围</h3>
                                         <span style={{ width: 44 }} />
                                     </div>
                                     <div className="modal-body modal-body-tight" data-ui="modal-body">
