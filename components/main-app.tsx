@@ -7,6 +7,7 @@ import { AccountGate } from "@/components/auth/account-gate";
 import { CloudBackupScheduler } from "@/components/cloud-backup-scheduler";
 import { RealityBridgeScheduler } from "@/components/reality-bridge-scheduler";
 import { MediaMaintenanceScheduler } from "@/components/media-maintenance-scheduler";
+import { SiteIconSync } from "@/components/site-icon-sync";
 import { DesktopShell } from "./desktop-shell";
 import { OfflinePushRevampAnnouncement } from "./offline-push-revamp-announcement";
 import { SplashAnimation } from "./splash-animation";
@@ -308,6 +309,9 @@ export function MainApp() {
 
   return (
     <AccountGate>
+      {/* 水合完成后主题才读得到；放在开屏外面的常驻位置，
+          这样从开屏进桌面不会重复挂载，换图标后也一直能收到同步事件 */}
+      {hydrated && <SiteIconSync />}
       {!splashDismissed ? (
         <SplashScreen ready={hydrated} onEnter={() => setSplashDismissed(true)} />
       ) : (

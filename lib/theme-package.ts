@@ -34,6 +34,7 @@ const ASSET_TYPES = new Set<ThemeAssetType>([
   "icon_skin",
   "dock_skin",
   "font",
+  "favicon",
   "bg",
   "chat_bg",
   "sticker",
@@ -331,6 +332,7 @@ function collectResetDeleteAssetIds(themeProfile: ThemeProfile): string[] {
       : "",
     themeProfile.fontAssetId ?? "",
     themeProfile.dockSkinAssetId ?? "",
+    themeProfile.faviconAssetId ?? "",
     ...iconIds,
     ...iconSchemeIds
   ].filter(Boolean)));
@@ -338,6 +340,7 @@ function collectResetDeleteAssetIds(themeProfile: ThemeProfile): string[] {
 
 function extensionForMimeType(mimeType: string): string {
   if (mimeType === "image/jpeg") return "jpg";
+  if (mimeType === "image/x-icon" || mimeType === "image/vnd.microsoft.icon") return "ico";
   if (mimeType === "image/png") return "png";
   if (mimeType === "image/webp") return "webp";
   if (mimeType === "image/svg+xml") return "svg";

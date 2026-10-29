@@ -1,6 +1,7 @@
 import { DEFAULT_THEME_PROFILE, normalizeThemeProfile, type ThemeAssetType, type ThemeProfile } from "@/lib/theme-types";
 import { kvGet, kvSet, kvRemove, registerKvMigration } from "./kv-db";
 import { openIndexedDbAtLeast } from "./idb-open";
+import { notifySiteIconChanged } from "./site-icon";
 
 export const THEME_PROFILE_STORAGE_KEY = "ai_phone_theme_profile_v1";
 registerKvMigration(THEME_PROFILE_STORAGE_KEY);
@@ -312,6 +313,79 @@ export async function saveThemeAssetFromBlob(
   return id;
 }
 
+/* ═══════════════════════════════════════════
+   Web icon (favicon)
+   ═══════════════════════════════════════════ */
+
+/** 网页图标存多大：标签页上最大也就 64px，256 足够应付高分屏和书签大图 */
+const SITE_ICON_SIZE = 256;
+
+/**
+ * 网页图标走单独的规范化：居中裁成正方形、缩到 256px 存 PNG。
+ * 壁纸那套 normalizeRasterBlob 会保留原始尺寸（最长边 2200），
+ * 一张手机原图当图标能有好几兆，每次开页面都要多读一份大 base64，
+ * 而标签页上只显示十几像素，没必要。SVG 是矢量，原样保留。
+ * 解不出来的（例如某些 .ico）就原图存，至少不会直接失败。
+ */
+async function normalizeSiteIconBlob(blob: Blob): Promise<Blob> {
+  if ((blob.type || "").toLowerCase() === "image/svg+xml") {
+    return blob;
+  }
+
+  let image: HTMLImageElement;
+  try {
+    image = await loadImageFromBlob(blob);
+  } catch {
+    return blob;
+  }
+
+  const side = Math.min(image.naturalWidth, image.naturalHeight);
+  if (!side) {
+    return blob;
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = SITE_ICON_SIZE;
+  canvas.height = SITE_ICON_SIZE;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return blob;
+  }
+
+  context.drawImage(
+    image,
+    Math.round((image.naturalWidth - side) / 2),
+    Math.round((image.naturalHeight - side) / 2),
+    side,
+    side,
+    0,
+    0,
+    SITE_ICON_SIZE,
+    SITE_ICON_SIZE
+  );
+
+  try {
+    return await canvasToBlob(canvas, "image/png");
+  } catch {
+    return blob;
+  }
+}
+
+/** 保存上传的网页图标，返回资源 id。 */
+export async function saveSiteIconFromBlob(blob: Blob): Promise<string> {
+  const normalized = await normalizeSiteIconBlob(blob);
+  const dataUrl = await blobToDataUrl(normalized);
+  const record: ThemeAssetRecord = {
+    id: createThemeAssetId("favicon"),
+    type: "favicon",
+    mimeType: normalized.type || dataUrlToMimeType(dataUrl),
+    dataUrl,
+    updatedAt: new Date().toISOString()
+  };
+  await saveAssetRecord(record);
+  return record.id;
+}
+
 export function readThemeProfile(): ThemeProfile {
   if (!hasLocalStorage()) {
     return { ...DEFAULT_THEME_PROFILE };
@@ -340,6 +414,10 @@ export function writeThemeProfile(profile: ThemeProfile): ThemeProfile {
     kvSet(THEME_PROFILE_STORAGE_KEY, JSON.stringify(normalized));
   }
 
+  // 网页图标（favicon）跟着主题走：上传 / 恢复默认 / 导入主题包 / 重置外观
+  // 最后都会落到这里，统一在这里广播一次，由全局 SiteIconSync 重新应用。
+  notifySiteIconChanged();
+
   return normalized;
 }
 
@@ -352,6 +430,7 @@ export function collectThemeAssetIds(profile: ThemeProfile): string[] {
     profile.wallpaperAssetId ?? "",
     profile.fontAssetId ?? "",
     profile.dockSkinAssetId ?? "",
+    profile.faviconAssetId ?? "",
     ...profile.wallpaperLibrary,
     ...iconIds,
     ...iconSchemeIds,

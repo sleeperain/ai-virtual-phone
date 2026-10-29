@@ -8,6 +8,8 @@ export type ThemeAssetType =
   | "icon_skin"
   | "dock_skin"
   | "font"
+  // 网页图标（浏览器标签页 favicon），跟随主题一起存
+  | "favicon"
   | "bg"
   | "chat_bg"
   | "sticker"
@@ -44,6 +46,9 @@ export type ThemeProfile = {
   activeIconSchemeId: string;
   // DOCK 栏背景皮肤
   dockSkinAssetId: string | null;
+  // 网页图标（浏览器标签页 favicon）。null / 缺省 = 用安装包自带图标
+  // 声明成可选，旧存档和别处手写的 ThemeProfile 字面量都不用跟着改
+  faviconAssetId?: string | null;
   // 排版
   fontAssetId: string | null;
   fontFamily: string;
@@ -176,6 +181,7 @@ export const DEFAULT_THEME_PROFILE: ThemeProfile = {
   iconSchemes: [createDefaultIconScheme()],
   activeIconSchemeId: "icon_scheme_default",
   dockSkinAssetId: null,
+  faviconAssetId: null,
   fontAssetId: null,
   fontFamily: DEFAULT_FONT_FAMILY,
   hideTopBar: true,
@@ -315,6 +321,11 @@ export function normalizeThemeProfile(raw: unknown): ThemeProfile {
 
   // ── Dock skin ──
   base.dockSkinAssetId = typeof source.dockSkinAssetId === "string" ? source.dockSkinAssetId : null;
+
+  // ── Favicon（旧存档没有这个字段，缺省即安装包自带图标） ──
+  base.faviconAssetId = typeof source.faviconAssetId === "string" && (source.faviconAssetId as string).trim()
+    ? (source.faviconAssetId as string).trim()
+    : null;
 
   // ── Typography ──
   base.fontAssetId = typeof source.fontAssetId === "string" ? source.fontAssetId : null;

@@ -51,10 +51,12 @@ import { WidgetRenderer } from "@/components/widgets/widget-renderer";
 import { IconGlyph } from "@/components/icon-glyph";
 import {
   saveThemeAssetFromBlob,
+  saveSiteIconFromBlob,
   deleteThemeAsset,
   getThemeAssetMap,
   describeAssetSaveError,
 } from "@/lib/theme-storage";
+import { DEFAULT_SITE_ICON_HREF } from "@/lib/site-icon";
 import { BINDING_ACCENTS } from "@/lib/ui-accent-colors";
 import { ConfirmDialog, ContentDialog } from "@/components/ui/modal";
 import type { DIYWidgetTemplate } from "@/lib/widget-types";
@@ -533,7 +535,7 @@ export function PhoneThemeApp({
         >
           <div className="flex flex-col gap-4">
             <p className="ts-13 leading-relaxed text-[var(--c-text)]">
-              主题包会包含主题色、壁纸、图标、桌面组件、自定义组件，以及桌面图标和组件位置。
+              主题包会包含主题色、壁纸、图标、网页图标、桌面组件、自定义组件，以及桌面图标和组件位置。
             </p>
             <div className="grid grid-cols-2 gap-8 py-1">
               <button
@@ -1086,8 +1088,10 @@ function IconSkinPage({
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const dockFileRef = useRef<HTMLInputElement>(null);
+  const faviconFileRef = useRef<HTMLInputElement>(null);
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
   const [dockThumbUrl, setDockThumbUrl] = useState<string | null>(null);
+  const [faviconThumbUrl, setFaviconThumbUrl] = useState<string | null>(null);
   const [uploadTarget, setUploadTarget] = useState<DesktopIconId | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<{ iconId: DesktopIconId; assetId: string } | null>(null);
   const [confirmDeleteDock, setConfirmDeleteDock] = useState(false);
@@ -1121,9 +1125,11 @@ function IconSkinPage({
   useEffect(() => {
     const idsToLoad = [...allAssetIds];
     if (draft.dockSkinAssetId) idsToLoad.push(draft.dockSkinAssetId);
+    if (draft.faviconAssetId) idsToLoad.push(draft.faviconAssetId);
     if (idsToLoad.length === 0) {
       setThumbs({});
       setDockThumbUrl(null);
+      setFaviconThumbUrl(null);
       return;
     }
     let cancelled = false;
@@ -1131,10 +1137,11 @@ function IconSkinPage({
       if (cancelled) return;
       setThumbs(map);
       setDockThumbUrl(draft.dockSkinAssetId ? map[draft.dockSkinAssetId] ?? null : null);
+      setFaviconThumbUrl(draft.faviconAssetId ? map[draft.faviconAssetId] ?? null : null);
     });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allAssetIds.join(","), draft.dockSkinAssetId]);
+  }, [allAssetIds.join(","), draft.dockSkinAssetId, draft.faviconAssetId]);
 
   const triggerUpload = useCallback((iconId: DesktopIconId) => {
     setUploadTarget(iconId);
@@ -1176,6 +1183,59 @@ function IconSkinPage({
     await onApply(next);
     onNotice("已还原默认图标");
   }, [confirmDeleteId, draft, onDraftChange, onApply, onNotice]);
+
+  const triggerFaviconUpload = useCallback(() => {
+    faviconFileRef.current?.click();
+  }, []);
+
+  const handleFaviconUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+    const previousAssetId = draft.faviconAssetId;
+    try {
+      const assetId = await saveSiteIconFromBlob(file);
+      const next = normalizeThemeProfile({ ...draft, faviconAssetId: assetId });
+      onDraftChange(next);
+      await onApply(next);
+      const map = await getThemeAssetMap([assetId]);
+      setFaviconThumbUrl(map[assetId] ?? null);
+      // 换图后旧资源没人引用了，顺手删掉，免得主题库里越攒越多
+      if (previousAssetId) {
+        try {
+          await deleteThemeAsset(previousAssetId);
+        } catch (cleanupError) {
+          console.warn("[Favicon] 旧图标清理失败:", cleanupError);
+        }
+      }
+      onNotice("网页图标已更换");
+    } catch (error) {
+      onNotice(describeAssetSaveError(error, "网页图标上传失败，请换一张试试"));
+    }
+  }, [draft, onDraftChange, onApply, onNotice]);
+
+  const handleFaviconReset = useCallback(async () => {
+    const assetId = draft.faviconAssetId;
+    const next = normalizeThemeProfile({ ...draft, faviconAssetId: null });
+    let cleanupFailed = false;
+    try {
+      if (assetId) {
+        try {
+          await deleteThemeAsset(assetId);
+        } catch (err) {
+          cleanupFailed = true;
+          console.warn("[Favicon] 资源清理失败:", err);
+        }
+      }
+      onDraftChange(next);
+      await onApply(next);
+      setFaviconThumbUrl(null);
+      onNotice(cleanupFailed ? "已恢复默认网页图标，资源稍后可再清理" : "已恢复默认网页图标");
+    } catch (err) {
+      console.error("[Favicon] 恢复默认失败:", err);
+      onNotice("恢复默认失败：" + String(err));
+    }
+  }, [draft, onDraftChange, onApply, onNotice]);
 
   const triggerDockUpload = useCallback(() => {
     dockFileRef.current?.click();
@@ -1238,6 +1298,52 @@ function IconSkinPage({
 
   return (
     <div className="theme-section-page" data-bottom-reserve style={{ gap: 14 }}>
+      {/* 网页图标：浏览器标签页 / 书签里显示的那个，和下面的桌面图标不是一回事 */}
+      <div>
+        <h3 className="appearance-menu-section-title">网页图标</h3>
+        <div className="menu-group mt-2.5">
+          <button type="button" className="menu-item" onClick={triggerFaviconUpload}>
+            <span
+              className="shrink-0 overflow-hidden"
+              style={{
+                width: 30,
+                height: 30,
+                borderRadius: 8,
+                border: "1px solid var(--c-card-border)",
+                background: "var(--c-input)",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <img
+                src={faviconThumbUrl ?? DEFAULT_SITE_ICON_HREF}
+                alt=""
+                style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+              />
+            </span>
+            <span className="menu-label appearance-menu-item-label">
+              {draft.faviconAssetId ? "更换网页图标" : "上传网页图标"}
+            </span>
+            <span className="menu-right">
+              <IconChevronRight />
+            </span>
+          </button>
+          {draft.faviconAssetId ? (
+            <button type="button" className="menu-item" onClick={handleFaviconReset}>
+              <span className="card-icon" style={menuIconStyle(BINDING_ACCENTS.regex)}>
+                <RotateCcw size={18} strokeWidth={1.75} />
+              </span>
+              <span className="menu-label appearance-menu-item-label">恢复默认网页图标</span>
+            </button>
+          ) : null}
+        </div>
+        <p className="is-empty-hint" style={{ textAlign: "left", marginTop: 8 }}>
+          浏览器标签页、收藏夹里显示的那个图标，上传后即刻生效，不分搭配（日间和夜间共用一张）。
+          「添加到主屏幕」用的仍是安装包自带图标，不受这里影响。
+        </p>
+      </div>
+
       <h3 className="appearance-menu-section-title">Icons</h3>
       <div className="is-grid">
         {iconSkinItems.map(item => {
@@ -1295,6 +1401,14 @@ function IconSkinPage({
 
       <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleUpload} />
       <input ref={dockFileRef} type="file" accept="image/*" className="hidden" onChange={handleDockUpload} />
+      {/* .ico 也放行：很多网站图标是 .ico，部分系统会把它报成 application/octet-stream */}
+      <input
+        ref={faviconFileRef}
+        type="file"
+        accept="image/*,.ico"
+        className="hidden"
+        onChange={handleFaviconUpload}
+      />
 
       {confirmDeleteId && (
         <ConfirmDialog
