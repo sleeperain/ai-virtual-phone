@@ -3,6 +3,7 @@
 
 import type { MemoryEntry } from "./memory-types";
 import { stripMemoryStructuredSections } from "./memory-summarizer";
+import { effectiveImportance, isEntrySuperseded } from "./memory-revision";
 
 function formatLocalDay(isoOrDateStr: string): string {
     if (!isoOrDateStr) return "未知日期";
@@ -38,8 +39,9 @@ export function sortMemoriesByDateThenImportance(
         if (dateA !== dateB) {
             return dateB.localeCompare(dateA);
         }
-        const impA = Number.isFinite(a.importance) ? a.importance : defaultImportance;
-        const impB = Number.isFinite(b.importance) ? b.importance : defaultImportance;
+        // 同一天内按「修订后的有效重要性」排：被改写的旧版本沉到新版本后面
+        const impA = effectiveImportance(a, defaultImportance);
+        const impB = effectiveImportance(b, defaultImportance);
         if (Math.abs(impB - impA) > 0.001) return impB - impA;
         return b.createdAt.localeCompare(a.createdAt);
     });
@@ -59,7 +61,10 @@ export function formatLongTermMemories(memories: MemoryEntry[]): string {
     for (const entry of sorted) {
         const eventDate = resolveEntryDateKey(entry);
         const cleanBody = (stripMemoryStructuredSections(entry.content) || entry.content).replace(/\s*\n+\s*/g, " ").trim();
-        lines.push(`- [${eventDate}] ${cleanBody}`);
+        // 被后续记忆改写过的旧条目：正文照给，但标一句「部分已过时」，
+        // 让模型知道其中被改写的说法不能再当事实用。
+        const staleMark = isEntrySuperseded(entry) ? "（其中部分说法已被后来的记忆更正）" : "";
+        lines.push(`- [${eventDate}]${staleMark} ${cleanBody}`);
     }
     return lines.join("\n");
 }

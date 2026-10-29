@@ -20,6 +20,13 @@ import { loadNativeTimeline, formatTimelineForSummarization, filterTimelineByAll
 import { generateEmbeddingsBatch, resolveEmbeddingModel, cosineSimilarity, keywordOverlapRatio } from "./memory-embedding";
 import { simpleLLMCall } from "./api-helpers";
 import { maybeRunCoreMemoryPipeline } from "./core-memory-builder";
+import {
+    buildSupersededMetadata,
+    computeSupersededSpans,
+    effectiveImportance,
+    REVISION_EXACT_THRESHOLD,
+    REVISION_META_KEYS,
+} from "./memory-revision";
 
 import { loadBindingConfig, loadApiConfigs, resolveBinding } from "./settings-storage";
 
@@ -449,26 +456,52 @@ export async function runSummarizationPipeline(
             const embedding = batchEmbeddings[topicIdx] ?? undefined;
             const createdAtIso = new Date(Date.now() + dayIdx * 100 + topicIdx).toISOString();
 
-            // Deduplication check: if an existing memory on the same/nearby day is highly similar (>= 0.88),
-            // merge into it instead of creating a duplicate entry.
-            const duplicate = findNearDuplicateMemory(existingLongTerm, dayKey, topic.cleanBody, embedding);
+            // 相似记忆处理，分两种情形：
+            // 1. 几乎一字不差（相似度 >= REVISION_EXACT_THRESHOLD）：合并进旧条目，沿用原行为；
+            // 2. 部分或全部被改写：旧条目保留，把被改掉的字句标成「划掉」并降权，新记忆独立入库。
+            //    这样「原来住城东」改成「搬去城西」时，旧记忆不会连着新事实一起消失。
+            const match = findNearDuplicateMemory(existingLongTerm, dayKey, topic.cleanBody, embedding);
+            // 划掉区间的基准必须是「显示用的正文」而不是原始 content：
+            // 卡片渲染时展示的是 stripMemoryStructuredSections 之后的内容，
+            // 用原始 content 算偏移会因为末尾元数据段被剥掉而错位。
+            const oldBaseText = match
+                ? (stripMemoryStructuredSections(match.entry.content) || match.entry.content)
+                : "";
+            const revision = match && match.similarity < REVISION_EXACT_THRESHOLD
+                ? computeSupersededSpans(oldBaseText, topic.cleanBody)
+                : null;
+            const duplicate = match && (!revision || revision.spans.length === 0) ? match.entry : null;
             if (duplicate) {
                 const existingKws = Array.isArray(duplicate.metadata?.keywords)
                     ? (duplicate.metadata.keywords as unknown[]).map(String)
                     : [];
                 const mergedKeywords = Array.from(new Set([...existingKws, ...topic.keywords])).slice(0, 10);
+                const mergedContent = topic.cleanBody.length >= duplicate.content.length ? topic.cleanBody : duplicate.content;
+                // 正文被换成新文本时，旧的划掉区间（按老正文下标算的）已经失效，必须一并清掉，
+                // 否则删除线会画到毫不相干的位置上。
+                const contentReplaced = mergedContent !== duplicate.content;
+                const mergedMetadata: Record<string, unknown> = {
+                    ...(duplicate.metadata ?? {}),
+                    eventDate: dayKey,
+                    keywords: mergedKeywords,
+                    ...(embedding ? { embeddingDim: embedding.length } : {}),
+                };
+                if (contentReplaced) {
+                    delete mergedMetadata[REVISION_META_KEYS.by];
+                    delete mergedMetadata[REVISION_META_KEYS.at];
+                    delete mergedMetadata[REVISION_META_KEYS.spans];
+                    delete mergedMetadata[REVISION_META_KEYS.ratio];
+                    delete mergedMetadata[REVISION_META_KEYS.similarity];
+                    // 权重也还原：这条现在就是最新版本
+                    delete mergedMetadata[REVISION_META_KEYS.weight];
+                }
                 const mergedEntry: MemoryEntry = {
                     ...duplicate,
-                    content: topic.cleanBody.length >= duplicate.content.length ? topic.cleanBody : duplicate.content,
+                    content: mergedContent,
                     embedding: embedding ?? duplicate.embedding,
                     importance: Math.max(duplicate.importance ?? 0.8, topic.importance),
                     updatedAt: createdAtIso,
-                    metadata: {
-                        ...(duplicate.metadata ?? {}),
-                        eventDate: dayKey,
-                        keywords: mergedKeywords,
-                        ...(embedding ? { embeddingDim: embedding.length } : {}),
-                    },
+                    metadata: mergedMetadata,
                 };
                 await saveMemoryEntry(mergedEntry);
                 const idx = existingLongTerm.findIndex(e => e.id === duplicate.id);
@@ -477,8 +510,9 @@ export async function runSummarizationPipeline(
                 continue;
             }
 
+            const newEntryId = `mem_lt_${Date.now()}_${dayIdx}_${topicIdx}_${Math.random().toString(36).slice(2, 7)}`;
             const longTermEntry: MemoryEntry = {
-                id: `mem_lt_${Date.now()}_${dayIdx}_${topicIdx}_${Math.random().toString(36).slice(2, 7)}`,
+                id: newEntryId,
                 characterId,
                 sourceApp: dominantSource as MemoryEntry["sourceApp"],
                 type: "long_term",
@@ -496,10 +530,25 @@ export async function runSummarizationPipeline(
                     accessCount: 0,
                     keywords: topic.keywords,
                     topicSplitV2: true,
+                    // 这条记忆改写了哪条旧记忆：点进详情时能顺着找回去
+                    ...(match && revision && revision.spans.length > 0 ? { revisesMemoryId: match.entry.id } : {}),
                     ...(embedding ? { embeddingDim: embedding.length } : {}),
                 },
             };
             await saveMemoryEntry(longTermEntry);
+
+            // 旧记忆不让位：把被改写的字句标成划掉并降权，其余内容照旧可用。
+            if (match && revision && revision.spans.length > 0) {
+                const supersededEntry: MemoryEntry = {
+                    ...match.entry,
+                    updatedAt: createdAtIso,
+                    metadata: buildSupersededMetadata(match.entry, newEntryId, revision, undefined, oldBaseText.length),
+                };
+                await saveMemoryEntry(supersededEntry);
+                const oldIdx = existingLongTerm.findIndex(e => e.id === match.entry.id);
+                if (oldIdx !== -1) existingLongTerm[oldIdx] = supersededEntry;
+            }
+
             existingLongTerm.unshift(longTermEntry);
             savedEntryCount += 1;
         }
@@ -531,8 +580,10 @@ export async function runSummarizationPipeline(
     const allLongTerm = await loadMemoryEntriesByType(characterId, "long_term");
     if (allLongTerm.length > config.maxLongTermEntries) {
         const evictionSorted = [...allLongTerm].sort((a, b) => {
-            const impA = Number.isFinite(a.importance) ? a.importance : 0.8;
-            const impB = Number.isFinite(b.importance) ? b.importance : 0.8;
+            // 用「修订后的有效重要性」排序：已被改写的旧版本会先被淘汰，
+            // 不会因为原始重要性高就赖在库里占额度。
+            const impA = effectiveImportance(a, 0.8);
+            const impB = effectiveImportance(b, 0.8);
             // Protect milestone memories (>= 0.9) from eviction unless everything is a milestone
             const milestoneA = impA >= 0.9 ? 1 : 0;
             const milestoneB = impB >= 0.9 ? 1 : 0;
@@ -552,17 +603,25 @@ export async function runSummarizationPipeline(
 /**
  * Find if a newly summarized topic is a near-duplicate of an existing long-term memory.
  */
+type NearDuplicateMatch = {
+    entry: MemoryEntry;
+    similarity: number;
+};
+
 function findNearDuplicateMemory(
     existingEntries: MemoryEntry[],
     dayKey: string,
     newBody: string,
     newEmbedding?: number[]
-): MemoryEntry | null {
+): NearDuplicateMatch | null {
+    let best: NearDuplicateMatch | null = null;
+    let bestRank = -1;
     for (const item of existingEntries) {
         const itemDate = typeof item.metadata?.eventDate === "string"
             ? item.metadata.eventDate.trim()
             : item.createdAt.slice(0, 10);
         const sameDay = itemDate === dayKey;
+        let similarity = 0;
         if (
             newEmbedding &&
             newEmbedding.length > 0 &&
@@ -570,14 +629,23 @@ function findNearDuplicateMemory(
             item.embedding.length === newEmbedding.length
         ) {
             const sim = cosineSimilarity(newEmbedding, item.embedding);
-            if (sim >= (sameDay ? 0.87 : 0.91)) return item;
+            if (sim >= (sameDay ? 0.87 : 0.91)) similarity = sim;
         }
-        if (sameDay) {
+        if (similarity === 0 && sameDay) {
             const overlap = keywordOverlapRatio(newBody, item.content);
-            if (overlap >= 0.82) return item;
+            if (overlap >= 0.82) similarity = overlap;
+        }
+        if (similarity <= 0) continue;
+        // 已经被修订过的旧版本再被改写时，优先挂在「最新那一版」上；
+        // 否则划掉区间会一层层叠在最早的文本上，越叠越乱。
+        const alreadySuperseded = typeof item.metadata?.[REVISION_META_KEYS.by] === "string";
+        const rank = similarity - (alreadySuperseded ? 0.02 : 0);
+        if (rank > bestRank) {
+            bestRank = rank;
+            best = { entry: item, similarity };
         }
     }
-    return null;
+    return best;
 }
 
 import { deleteMemoryEntry } from "./memory-storage";

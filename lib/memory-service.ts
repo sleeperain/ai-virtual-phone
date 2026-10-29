@@ -8,6 +8,7 @@ import { generateEmbedding, resolveEmbeddingModel, computeHybridMemoryScore } fr
 import { estimateTokens } from "./token-counter";
 import { extractMemoryStructuredMeta } from "./memory-summarizer";
 import { sortMemoriesByDateThenImportance } from "./memory-injector";
+import { effectiveImportance } from "./memory-revision";
 
 /**
  * Retrieve relevant long-term memories for prompt injection.
@@ -65,7 +66,9 @@ export async function retrieveMemoriesForPrompt(
 
             // Filter by minimum hybrid score (milestone memories with importance >= 0.9 are always kept)
             const qualified = scored.filter(item => {
-                const imp = Number.isFinite(item.entry.importance) ? item.entry.importance : 0.8;
+                // 里程碑豁免也按「修订后的有效重要性」算：
+                // 否则一条已被改写的旧记忆能靠原始高分绕过阈值，重新冒到新版本前面。
+                const imp = effectiveImportance(item.entry, 0.8);
                 return item.score >= minScore || imp >= 0.9;
             });
 

@@ -4,6 +4,7 @@
 import type { ApiConfig } from "./settings-types";
 import type { MemoryEntry, MemorySearchResult } from "./memory-types";
 import { determineBaseUrl, buildRequestHeaders } from "./api-helpers";
+import { getRevisionWeight } from "./memory-revision";
 
 // ── Provider → Embedding Model Mapping ──
 
@@ -264,6 +265,9 @@ export function computeHybridMemoryScore(
     explicitKeywords?: string[]
 ): number {
     const lowerCtx = query.toLowerCase();
+    // 被新记忆改写过的旧版本：最终得分按 revisionWeight 打折扣（缺省 0.35）。
+    // 不是直接丢掉——旧记忆里没被划掉的那部分内容仍然是有效的。
+    const revisionWeight = getRevisionWeight(entry);
     const hasEmb = Array.isArray(entry.embedding) && entry.embedding.length > 0;
     const dimMatches = Boolean(queryEmbedding && hasEmb && entry.embedding!.length === queryEmbedding.length);
 
@@ -301,7 +305,7 @@ export function computeHybridMemoryScore(
     }
 
     const imp = Number.isFinite(entry.importance) ? entry.importance : 0.8;
-    baseScore += imp * 0.12;
+    baseScore += imp * revisionWeight * 0.12;
 
     const accessCnt = typeof entry.accessCount === "number"
         ? entry.accessCount
@@ -323,6 +327,11 @@ export function computeHybridMemoryScore(
                 baseScore = Math.max(0, baseScore - decay);
             }
         }
+    }
+
+    // 整体再按修订权重收一次：被改写过的旧记忆排到新版本后面
+    if (revisionWeight < 1) {
+        baseScore = baseScore * revisionWeight;
     }
 
     return Number(baseScore.toFixed(4));

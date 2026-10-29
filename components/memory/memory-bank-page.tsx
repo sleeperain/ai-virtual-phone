@@ -53,6 +53,14 @@ import {
     getLastObservedEmbeddingDim,
 } from "@/lib/memory-embedding";
 import { BINDING_ACCENTS } from "@/lib/ui-accent-colors";
+import {
+    REVISION_META_KEYS,
+    clipSupersededSpans,
+    getRevisionWeight,
+    isEntrySuperseded,
+    readSupersededSpans,
+    sliceSupersededText,
+} from "@/lib/memory-revision";
 
 type MemoryView = "list" | "detail" | "settings";
 type MemoryTab = "short" | "shared" | "core" | "long";
@@ -1287,6 +1295,18 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                         const displayMarkdown = isExpanded || cleanBody.length <= 180
                             ? cleanBody
                             : cleanBody.slice(0, 180) + "...";
+                        // 被后来的记忆改写过：把被改掉的字句划掉显示，其余部分照旧
+                        const supersededSpans = readSupersededSpans(entry);
+                        const isSuperseded = isEntrySuperseded(entry);
+                        const revisionRatioRaw = entry.metadata?.[REVISION_META_KEYS.ratio];
+                        const revisionRatio = typeof revisionRatioRaw === "number" ? revisionRatioRaw : undefined;
+                        const revisionWeight = getRevisionWeight(entry);
+                        const revisionSourceId = typeof entry.metadata?.[REVISION_META_KEYS.by] === "string"
+                            ? String(entry.metadata[REVISION_META_KEYS.by])
+                            : "";
+                        const hasRevisionSource = revisionSourceId
+                            ? entries.some(item => item.id === revisionSourceId)
+                            : false;
 
                         return (
                             <div
@@ -1380,10 +1400,47 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                     </div>
                                 </div>
                                 <div className="ts-12 leading-[1.7] mem-markdown-body chat-markdown">
-                                    <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-                                        {displayMarkdown}
-                                    </ReactMarkdown>
+                                    {supersededSpans.length > 0 ? (
+                                        // 被后来的记忆改写过：划掉改动的字句，其余照常显示。
+                                        // 这段不能用 Markdown 渲染——删除线要精确到字，交给纯文本切片。
+                                        <span className="mem-superseded-body">
+                                            {sliceSupersededText(displayMarkdown, clipSupersededSpans(displayMarkdown, supersededSpans)).map((piece, pieceIdx) =>
+                                                piece.superseded ? (
+                                                    <del key={pieceIdx} className="mem-superseded-text" title="这段已被后来的记忆改写">{piece.text}</del>
+                                                ) : (
+                                                    <span key={pieceIdx}>{piece.text}</span>
+                                                ),
+                                            )}
+                                        </span>
+                                    ) : (
+                                        <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+                                            {displayMarkdown}
+                                        </ReactMarkdown>
+                                    )}
                                 </div>
+                                {isSuperseded && (
+                                    <div className="mem-superseded-note">
+                                        <span>
+                                            已被后来的记忆更正
+                                            {typeof revisionRatio === "number" && revisionRatio > 0
+                                                ? ` · 改动约 ${Math.round(revisionRatio * 100)}%`
+                                                : ""}
+                                            {revisionWeight < 1 ? ` · 检索权重 ${Math.round(revisionWeight * 100)}%` : ""}
+                                        </span>
+                                        {hasRevisionSource && (
+                                            <button
+                                                type="button"
+                                                className="mem-superseded-jump"
+                                                onClick={(event) => {
+                                                    event.stopPropagation();
+                                                    setExpandedId(revisionSourceId);
+                                                }}
+                                            >
+                                                查看新版本
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
                                 <div className="mem-structured-footer">
                                     <div
                                         className="mem-stats-row"

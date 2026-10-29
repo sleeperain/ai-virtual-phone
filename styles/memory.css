@@ -1,0 +1,45 @@
+/* ══════════════════════════════════════════
+   记忆修订（supersede）：被新记忆改写的旧内容划线显示
+   颜色全部走主题变量，夜览/自定义主题下自动跟随
+   ══════════════════════════════════════════ */
+
+.mem-superseded-body {
+  display: block;
+}
+
+/* 被改掉的字句：变灰 + 删除线。用 currentColor 调和透明度，
+   保证深色主题下也不会出现「灰到看不见」或「亮到抢眼」 */
+.mem-superseded-text {
+  color: var(--c-icon);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in srgb, var(--c-icon) 70%, transparent);
+  opacity: 0.72;
+}
+
+/* 卡片底部的修订提示行 */
+.mem-superseded-note {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--c-icon);
+}
+
+.mem-superseded-jump {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--c-text);
+  font-size: 11px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.mem-superseded-jump:active {
+  opacity: 0.6;
+}
