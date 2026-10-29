@@ -43,6 +43,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { runCoreMemoryPipeline } from "@/lib/core-memory-builder";
+import { runCoreMemoryReflection, type ReflectionScope } from "@/lib/core-memory-reflection";
 import { resolveAuxiliaryApiConfig, resolveUserIdentity } from "@/lib/settings-storage";
 import {
     generateEmbedding,
@@ -96,6 +97,19 @@ const SUMMARIZE_RANGE_OPTIONS: Array<{ value: SummarizeRange; label: string; des
     { value: 30, label: "最近 30 天" },
     { value: "all", label: "全部历史" },
 ];
+
+/** 角色视角反刍的回看范围（默认近 30 天）。 */
+const REFLECTION_SCOPE_OPTIONS: Array<{ value: ReflectionScope; label: string; desc?: string }> = [
+    { value: "recent7", label: "最近 7 天", desc: "只看最近一周的事，反刍更聚焦" },
+    { value: "recent30", label: "最近 30 天", desc: "默认范围，兼顾近期动向与旧事" },
+    { value: "all", label: "全部长期记忆", desc: "从最早的记忆一路想到现在" },
+];
+
+const REFLECTION_API_SOURCE_LABELS: Record<string, string> = {
+    character: "角色绑定 API",
+    auxiliary: "记忆总结辅助 API",
+    global: "全局默认 API",
+};
 
 type MemorySourceKey = keyof NonNullable<MemoryConfig["shortTermAllowedSources"]>;
 
@@ -303,6 +317,14 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const [loading, setLoading] = useState(false);
     const [summarizing, setSummarizing] = useState(false);
     const [rebuildingCore, setRebuildingCore] = useState(false);
+    const [reflectingCore, setReflectingCore] = useState(false);
+    const [reflectionScopeOpen, setReflectionScopeOpen] = useState(false);
+    const [lastReflection, setLastReflection] = useState<{
+        content: string;
+        round: number;
+        apiSourceLabel: string;
+        model?: string;
+    } | null>(null);
     const [editingPrompt, setEditingPrompt] = useState<string | null>(null);
     const [editingCorePrompt, setEditingCorePrompt] = useState<string | null>(null);
     const [confirmDeleteEntryId, setConfirmDeleteEntryId] = useState<string | null>(null);
@@ -531,6 +553,37 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             showNotice("核心记忆重建失败: " + String(err));
         } finally {
             setRebuildingCore(false);
+        }
+    };
+
+    /**
+     * 角色视角反刍：以角色本人第一人称重看近期事件，写一条只属于这个角色的核心记忆。
+     * 与「重建」互不影响——重建走记忆总结辅助 API 的第三人称归纳，反刍走角色绑定的 API。
+     */
+    const handleCharacterReflection = async (scope: ReflectionScope) => {
+        if (!selectedCharId || reflectingCore) return;
+        setReflectionScopeOpen(false);
+        setReflectingCore(true);
+        try {
+            const result = await runCoreMemoryReflection(selectedCharId, scope, selectedChar?.name ?? "");
+            if (result.success && result.content) {
+                setLastReflection({
+                    content: result.content,
+                    round: result.round ?? 1,
+                    apiSourceLabel: REFLECTION_API_SOURCE_LABELS[result.apiSource ?? "global"] ?? "未知 API",
+                    model: result.model,
+                });
+                showNotice(`角色反刍完成（第 ${result.round ?? 1} 轮），已写入核心记忆`);
+                void loadDetailData(selectedCharId);
+                loadCharacterList();
+            } else {
+                showNotice(result.error || "角色反刍失败");
+            }
+        } catch (err) {
+            console.error("[MemoryBank] Character reflection failed:", err);
+            showNotice("角色反刍失败: " + String(err));
+        } finally {
+            setReflectingCore(false);
         }
     };
 
@@ -1256,6 +1309,15 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                 匹配度 {Math.round(Math.min(1, matchScore) * 100)}%
                                             </span>
                                         )}
+                                        {entry.metadata?.origin === "character_reflection" && (
+                                            <span
+                                                className="mem-stat-pill"
+                                                title={`角色视角反刍${entry.metadata?.reflectionRound ? ` · 第 ${String(entry.metadata.reflectionRound)} 轮` : ""}`}
+                                                style={{ fontWeight: 700 }}
+                                            >
+                                                角色反刍
+                                            </span>
+                                        )}
                                         <span className={`mem-origin-badge ${isManualMemoryEntry(entry) ? "is-manual" : ""}`}>
                                             {isManualMemoryEntry(entry) ? "MANUAL" : "AUTO"}
                                         </span>
@@ -1726,13 +1788,22 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                 <MemorySettingsIcon icon={Brain} color={BINDING_ACCENTS.embedding} />
                                 <div className="menu-label-group">
                                     <span className="menu-label">核心记忆手动总结</span>
-                                    <span className="menu-desc">将长期记忆整理为核心记忆</span>
+                                    <span className="menu-desc">角色反刍用 TA 自己的视角写；重建走第三人称归纳</span>
                                 </div>
-                                <div className="menu-right">
+                                <div className="menu-right" style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                                    <button
+                                        className="ui-btn ui-btn-outline py-1 px-3 ts-12"
+                                        onClick={() => setReflectionScopeOpen(true)}
+                                        disabled={rebuildingCore || reflectingCore}
+                                        title="完整读取角色设定，以角色第一人称反刍近期事件，生成一段角色视角的核心记忆"
+                                    >
+                                        <Sparkles size={12} className="mr-1" />
+                                        {reflectingCore ? "反刍中..." : "角色反刍"}
+                                    </button>
                                     <button
                                         className="ui-btn ui-btn-outline py-1 px-3 ts-12"
                                         onClick={handleManualRebuildCore}
-                                        disabled={rebuildingCore}
+                                        disabled={rebuildingCore || reflectingCore}
                                     >
                                         <Archive size={12} className="mr-1" />
                                         {rebuildingCore ? "处理中..." : "重建"}
@@ -1782,6 +1853,62 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                 </button>
                                             ))}
                                         </div>
+                                    </div>
+                                </div>
+                            </div>
+                        ) : null}
+
+                        {reflectionScopeOpen ? (
+                            <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={() => setReflectionScopeOpen(false)}>
+                                <div className="modal-sheet" data-ui="modal-sheet" onClick={event => event.stopPropagation()}>
+                                    <div className="modal-header" data-ui="modal-header">
+                                        <button className="modal-header-btn modal-header-btn-muted" onClick={() => setReflectionScopeOpen(false)}><X size={18} /></button>
+                                        <h3 className="modal-title">角色反刍范围</h3>
+                                        <span style={{ width: 44 }} />
+                                    </div>
+                                    <div className="modal-body modal-body-tight" data-ui="modal-body">
+                                        <p className="ts-11 text-secondary" style={{ margin: "0 4px 8px" }}>
+                                            完整读取角色卡设定，以角色第一人称回看这段时间的事，生成一条只属于这个角色的核心记忆；会产生一次 API 调用。
+                                        </p>
+                                        <div className="menu-group">
+                                            {REFLECTION_SCOPE_OPTIONS.map(option => (
+                                                <button
+                                                    key={option.value}
+                                                    type="button"
+                                                    className="menu-item w-full text-left"
+                                                    onClick={() => void handleCharacterReflection(option.value)}
+                                                >
+                                                    <div className="menu-label-group">
+                                                        <span className="menu-label">{option.label}</span>
+                                                        {option.desc ? <span className="menu-desc">{option.desc}</span> : null}
+                                                    </div>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        ) : null}
+
+                        {lastReflection ? (
+                            <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={() => setLastReflection(null)}>
+                                <div className="modal-sheet" data-ui="modal-sheet" onClick={event => event.stopPropagation()}>
+                                    <div className="modal-header" data-ui="modal-header">
+                                        <button className="modal-header-btn modal-header-btn-muted" onClick={() => setLastReflection(null)}><X size={18} /></button>
+                                        <h3 className="modal-title">角色反刍 · 第 {lastReflection.round} 轮</h3>
+                                        <span style={{ width: 44 }} />
+                                    </div>
+                                    <div className="modal-body modal-body-tight" data-ui="modal-body">
+                                        <div className="g-card ts-12 leading-[1.75] mem-markdown-body chat-markdown" style={{ padding: 12 }}>
+                                            <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+                                                {lastReflection.content}
+                                            </ReactMarkdown>
+                                        </div>
+                                        <p className="ts-11 text-secondary" style={{ margin: "8px 4px 0" }}>
+                                            来源：{lastReflection.apiSourceLabel}
+                                            {lastReflection.model ? ` · ${lastReflection.model}` : ""}
+                                            ，已作为一条核心记忆写入当前角色，可在「核心」页查看或编辑。
+                                        </p>
                                     </div>
                                 </div>
                             </div>
