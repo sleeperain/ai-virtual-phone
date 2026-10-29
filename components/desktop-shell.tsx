@@ -2671,6 +2671,71 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
     return () => window.removeEventListener("open-app", handler);
   }, []);
 
+  // ── 应用层历史：让返回手势 / 返回键退出「当前这一页」而不是整个网页 ──
+  // 以前整台手机只有浏览器给的那一条历史，所以在聊天页边缘右滑（= 浏览器后退）
+  // 会直接把网页或 PWA 关掉；安卓壳的返回键同理（canGoBack() 永远是 false）。
+  // 现在打开 APP 时往历史里压一层，popstate 再把 activeApp 收回桌面——
+  // 手势只退一层，回到桌面后再退才是真正的退出，符合系统习惯。
+  // depth 只记「我们自己压了几层」：用来区分「界面自己关的 APP」和「用户按返回滑回来的」。
+  const appHistoryRef = useRef({ depth: 0, pendingBack: 0 });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    // 刷新后 history.state 里还留着上次的 aivpApp，但 React 状态已经回到桌面。
+    // 不清掉的话栈和界面一开始就对不上，先抹平到根条目。
+    if (activeAppRef.current === null) window.history.replaceState(null, "");
+
+    const onPopState = (event: PopStateEvent) => {
+      const tracker = appHistoryRef.current;
+      if (tracker.pendingBack > 0) {
+        // 这次回退是界面自己关 APP 引起的（点了关闭/返回按钮），状态已经改过，
+        // 别再用历史里那条旧记录把界面覆盖回去。
+        tracker.pendingBack -= 1;
+        if (tracker.pendingBack === 0) {
+          const pendingState = event.state as { aivpApp?: unknown } | null;
+          tracker.depth = pendingState && typeof pendingState.aivpApp === "string" ? 1 : 0;
+        }
+        return;
+      }
+      const record = event.state as { aivpApp?: unknown } | null;
+      const appId = record && typeof record.aivpApp === "string" ? record.aivpApp : null;
+      // 自定义 APP 可能已经卸载，别把它还原成一张空白屏
+      const nextApp = appId && (appId in ICONS || getInstalledCustomIconIds().has(appId))
+        ? appId as DesktopIconId
+        : null;
+      tracker.depth = nextApp ? 1 : 0;
+      setActiveApp(nextApp);
+      if (!nextApp) {
+        setChatInitSessionId(null);
+        setActiveChatSession(null);
+      }
+    };
+
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  useEffect(() => {
+    const tracker = appHistoryRef.current;
+    // 回退还在路上：等 popstate 结完账再按新状态对账，免得自己和自己打架
+    if (tracker.pendingBack > 0) return;
+    const desired = activeApp ? 1 : 0;
+    if (desired === tracker.depth) {
+      // 同一个 APP 内部换了子页面（如聊天换会话）：层级不变，原地更新条目
+      if (desired > 0) window.history.replaceState({ aivpApp: activeApp }, "");
+      return;
+    }
+    if (desired > tracker.depth) {
+      window.history.pushState({ aivpApp: activeApp }, "");
+      tracker.depth = desired;
+      return;
+    }
+    const steps = tracker.depth - desired;
+    tracker.depth = desired;
+    tracker.pendingBack += steps;
+    for (let step = 0; step < steps; step += 1) window.history.back();
+  }, [activeApp]);
+
   // Mini chat window state
   const [showMiniChat, setShowMiniChat] = useState(false);
   const [miniSharePayload, setMiniSharePayload] = useState<ChatSharePayload | null>(null);
