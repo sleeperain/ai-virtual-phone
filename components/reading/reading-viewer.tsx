@@ -1275,7 +1275,8 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         return (
             <span
                 className={`${className} reading-quote-jump`}
-                {...(markStyle ? { "data-style": markStyle } : {})}
+                // 只有标记行才有高亮/划线样式；批注行传 undefined，属性直接不渲染
+                data-style={markStyle}
                 style={{ cursor: "pointer" }}
                 role="button"
                 tabIndex={0}
@@ -1822,12 +1823,12 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
             jumpFlash !== null &&
             jumpFlash.chapterIndex === item.chapterIndex &&
             jumpFlash.paragraphIndex === item.paragraphIndex;
+        // 落点提示直接写在行内：这里只有一行要变色，不值得为它加一条全局样式。
+        // 2 秒后状态清掉，靠 transition 淡出，不会「啪」一下消失。
         return (
             <p
                 key={key}
                 className={`reading-line${item.indent ? " reading-line-indent" : ""}${item.segEnd ? " reading-line-seg-end" : ""}${isJumpFlash ? " is-jump-flash" : ""}`}
-                // 落点提示直接写在行内：这里只有一行要变色，不值得为它加一条全局样式。
-                // 2 秒后状态清掉，靠 transition 淡出，不会「啪」一下消失。
                 style={{
                     backgroundColor: isJumpFlash ? "rgba(255, 206, 84, 0.34)" : "transparent",
                     borderRadius: 4,
@@ -2876,7 +2877,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     };
 
     /** 跳过去以后把落点闪一下，免得翻到那一页还找不到是哪一段。
-     *  2 秒后自动收掉，和 .reading-line.is-jump-flash 的动画时长对应。 */
+     *  底色和过渡写在 renderLine 的行内样式里，2 秒后清状态由过渡自己淡出。 */
     const flashJumpTarget = (chapterIdx: number, paragraphIdx: number) => {
         if (jumpFlashTimerRef.current) clearTimeout(jumpFlashTimerRef.current);
         setJumpFlash({ chapterIndex: chapterIdx, paragraphIndex: paragraphIdx });

@@ -787,7 +787,9 @@ export function ReadingShelf({ onOpenBook, onDeleteBook, onClose, appearance, ba
                                             onClose();
                                         }}
                                     >
-                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                        {/* 尺寸也写在属性上：和上面三行图标一致，
+                                            万一 CSS 还没生效也不会先撑成 SVG 的默认大小 */}
+                                        <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                                             <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
                                             <polyline points="16 17 21 12 16 7" />
                                             <line x1="21" y1="12" x2="9" y2="12" />
