@@ -76,6 +76,10 @@ type TxtPageItem =
 /** 菜单半宽，避免贴着某个点算出来的位置把菜单顶出屏幕 */
 const MENU_HALF_WIDTH = 152;
 
+/** 段评「⋯」菜单里图标和文字取同一号：图标比字大看起来头重脚轻，两行也对不齐 */
+const READING_MENU_ICON_SIZE = 14;
+const READING_MENU_FONT_SIZE = 14;
+
 /** 正文句子/已有标记的长按时长：和批注卡片、共读消息的长按保持一致 */
 const SENTENCE_LONG_PRESS_MS = 500;
 
@@ -4845,14 +4849,13 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                     padding: 0,
                                     border: "none",
                                     borderRadius: 6,
-                                    // 展开态不再填实心灰底：原来和按下态用的是同一块底色，
-                                    // 菜单一开就一直顶着，看着像手指没松开的按动效果。
-                                    // 现在只给一圈细描边 + 图标提亮，轻到不会被当成按压残留。
+                                    // 展开态不描边、也不填底色：菜单本身已经浮出来了，
+                                    // 按钮上再画框或压灰都会显得像按动效果没复位。
+                                    // 只让图标变深一点表示「这条的菜单是开的」。
                                     background: "transparent",
-                                    boxShadow: open ? "inset 0 0 0 1px var(--c-panel-border)" : "none",
                                     color: open ? "var(--c-text-title)" : "var(--c-icon)",
                                     cursor: "pointer",
-                                    transition: "color 140ms ease, box-shadow 140ms ease",
+                                    transition: "color 140ms ease",
                                     // 移动端默认的点击高亮也会在手指抬起后留一块灰，
                                     // 和这里的展开态叠在一起更像「按动效果卡住了」
                                     WebkitTapHighlightColor: "transparent",
@@ -4917,7 +4920,8 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                                 background: "transparent",
                                                 // 白底上要用深色字，不能沿用它原来的颜色（那是按深色底配的）
                                                 color: "var(--c-text-title)",
-                                                fontSize: 14,
+                                                fontSize: READING_MENU_FONT_SIZE,
+                                                lineHeight: 1.2,
                                                 textAlign: "left",
                                                 cursor: "pointer",
                                             }}
@@ -4928,7 +4932,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                                 setEditingText(item.content);
                                             }}
                                         >
-                                            <PenLine size={15} strokeWidth={1.8} aria-hidden="true" />
+                                            <PenLine size={READING_MENU_ICON_SIZE} strokeWidth={1.8} aria-hidden="true" />
                                             <span>编辑</span>
                                         </button>
                                         <button
@@ -4945,6 +4949,10 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                                 borderRadius: 6,
                                                 background: "transparent",
                                                 color: "var(--c-danger)",
+                                                // 字号必须显式写：不写就继承菜单容器的默认字号，
+                                                // 两行「编辑 / 删除」会是两个大小
+                                                fontSize: READING_MENU_FONT_SIZE,
+                                                lineHeight: 1.2,
                                                 textAlign: "left",
                                                 cursor: "pointer",
                                             }}
@@ -4954,7 +4962,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                                 void handleDeleteReadingAnnotation(item.id);
                                             }}
                                         >
-                                            <Trash2 size={15} strokeWidth={1.8} aria-hidden="true" />
+                                            <Trash2 size={READING_MENU_ICON_SIZE} strokeWidth={1.8} aria-hidden="true" />
                                             <span>删除</span>
                                         </button>
                                     </div>
