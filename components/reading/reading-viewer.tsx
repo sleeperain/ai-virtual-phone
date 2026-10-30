@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect, type CSSProperties } from "react";
-import { ChevronDown, ChevronRight, Highlighter, Languages, Menu, Minus, MoreHorizontal, PenLine, Rocket, SendHorizontal, X, ZoomIn } from "lucide-react";
+import { ChevronDown, ChevronRight, Highlighter, Languages, Menu, Minus, MoreHorizontal, PenLine, Rocket, SendHorizontal, Trash2, X, ZoomIn } from "lucide-react";
 import {
     loadChapters,
     loadProgress,
@@ -4864,13 +4864,37 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                     <div
                                         className="ctx-menu"
                                         role="menu"
-                                        style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 41, minWidth: 96 }}
+                                        style={{
+                                            position: "absolute",
+                                            top: "calc(100% + 4px)",
+                                            right: 0,
+                                            zIndex: 41,
+                                            minWidth: 104,
+                                            // 纵向排列：左边图标、右边文字，一行一项
+                                            display: "flex",
+                                            flexDirection: "column",
+                                            padding: 4,
+                                            gap: 2,
+                                        }}
                                         onClick={(event) => event.stopPropagation()}
                                     >
                                         <button
                                             type="button"
                                             className="ctx-menu-btn"
                                             role="menuitem"
+                                            style={{
+                                                display: "flex",
+                                                alignItems: "center",
+                                                gap: 8,
+                                                width: "100%",
+                                                padding: "8px 10px",
+                                                border: "none",
+                                                borderRadius: 6,
+                                                background: "transparent",
+                                                color: "inherit",
+                                                textAlign: "left",
+                                                cursor: "pointer",
+                                            }}
                                             onClick={(event) => {
                                                 event.stopPropagation();
                                                 setCommentActionMenuId(null);
@@ -4878,19 +4902,34 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                                 setEditingText(item.content);
                                             }}
                                         >
-                                            编辑
+                                            <PenLine size={15} strokeWidth={1.8} aria-hidden="true" />
+                                            <span>编辑</span>
                                         </button>
                                         <button
                                             type="button"
                                             className="ctx-menu-btn ctx-menu-btn-danger"
                                             role="menuitem"
+                                            style={{
+                                                display: "flex",
+                                                alignItems: "center",
+                                                gap: 8,
+                                                width: "100%",
+                                                padding: "8px 10px",
+                                                border: "none",
+                                                borderRadius: 6,
+                                                background: "transparent",
+                                                color: "var(--c-danger)",
+                                                textAlign: "left",
+                                                cursor: "pointer",
+                                            }}
                                             onClick={(event) => {
                                                 event.stopPropagation();
                                                 setCommentActionMenuId(null);
                                                 void handleDeleteReadingAnnotation(item.id);
                                             }}
                                         >
-                                            删除
+                                            <Trash2 size={15} strokeWidth={1.8} aria-hidden="true" />
+                                            <span>删除</span>
                                         </button>
                                     </div>
                                 </>
