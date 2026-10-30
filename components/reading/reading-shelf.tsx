@@ -668,6 +668,18 @@ export function ReadingShelf({ onOpenBook, onDeleteBook, onClose, appearance, ba
         onDeleteBook?.(bookId);
     };
 
+    /** 退出阅读 app：左上角「返回」和菜单里的「退出登录」共用。
+     *  菜单收起先单独占一帧再真正关 app——两件事挤在同一帧里，
+     *  点「退出登录」就会先顿一下才退出。 */
+    const handleExitApp = () => {
+        setShowMoreMenu(false);
+        if (typeof window === "undefined") {
+            onClose();
+            return;
+        }
+        window.requestAnimationFrame(() => onClose());
+    };
+
     const formatBadge = (f: string) => f.toUpperCase();
 
     const coverGradients = ["linen", "mist", "graphite", "sage", "cream", "parchment"] as const;
@@ -677,7 +689,7 @@ export function ReadingShelf({ onOpenBook, onDeleteBook, onClose, appearance, ba
         <div className="reading-app-surface absolute inset-0 z-[100] flex flex-col">
             <header className="reading-shelf-header">
                 <div className="reading-shelf-appbar">
-                    <button className="reading-shelf-back" type="button" onClick={onClose} aria-label="返回">
+                    <button className="reading-shelf-back" type="button" onClick={handleExitApp} aria-label="返回">
                         <ChevronLeft size={22} strokeWidth={2.5} />
                     </button>
                     <div className="reading-shelf-actions">
@@ -782,13 +794,8 @@ export function ReadingShelf({ onOpenBook, onDeleteBook, onClose, appearance, ba
                                     <button
                                         type="button"
                                         className="reading-shelf-logout-item"
-                                        onClick={() => {
-                                            setShowMoreMenu(false);
-                                            onClose();
-                                        }}
+                                        onClick={handleExitApp}
                                     >
-                                        {/* 尺寸也写在属性上：和上面三行图标一致，
-                                            万一 CSS 还没生效也不会先撑成 SVG 的默认大小 */}
                                         <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                                             <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
                                             <polyline points="16 17 21 12 16 7" />

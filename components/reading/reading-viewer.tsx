@@ -422,6 +422,11 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     const [generatingParagraphComment, setGeneratingParagraphComment] = useState(false);
     /** 段评弹窗里当前展开「⋯」菜单的那条评论（主评论和回复共用，一次只开一个） */
     const [commentActionMenuId, setCommentActionMenuId] = useState<string | null>(null);
+    // 段评弹窗关掉以后，把「⋯」菜单的记忆一并清掉：留着的话下次再打开同一条段评，
+    // 那个按钮会直接带着展开态（描边 + 提亮的图标），看起来就是按动效果一直没复位。
+    useEffect(() => {
+        if (!activeParagraphCommentModal) setCommentActionMenuId(null);
+    }, [activeParagraphCommentModal]);
     /** 刚从批注列表跳过来时闪一下的那一段，用来让人一眼看到落点 */
     const [jumpFlash, setJumpFlash] = useState<{ chapterIndex: number; paragraphIndex: number } | null>(null);
     const jumpFlashTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -1275,8 +1280,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         return (
             <span
                 className={`${className} reading-quote-jump`}
-                // 只有标记行才有高亮/划线样式；批注行传 undefined，属性直接不渲染
-                data-style={markStyle}
+                {...(markStyle ? { "data-style": markStyle } : {})}
                 style={{ cursor: "pointer" }}
                 role="button"
                 tabIndex={0}
@@ -1823,12 +1827,12 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
             jumpFlash !== null &&
             jumpFlash.chapterIndex === item.chapterIndex &&
             jumpFlash.paragraphIndex === item.paragraphIndex;
-        // 落点提示直接写在行内：这里只有一行要变色，不值得为它加一条全局样式。
-        // 2 秒后状态清掉，靠 transition 淡出，不会「啪」一下消失。
         return (
             <p
                 key={key}
                 className={`reading-line${item.indent ? " reading-line-indent" : ""}${item.segEnd ? " reading-line-seg-end" : ""}${isJumpFlash ? " is-jump-flash" : ""}`}
+                // 落点提示直接写在行内：这里只有一行要变色，不值得为它加一条全局样式。
+                // 2 秒后状态清掉，靠 transition 淡出，不会「啪」一下消失。
                 style={{
                     backgroundColor: isJumpFlash ? "rgba(255, 206, 84, 0.34)" : "transparent",
                     borderRadius: 4,
@@ -2877,7 +2881,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     };
 
     /** 跳过去以后把落点闪一下，免得翻到那一页还找不到是哪一段。
-     *  底色和过渡写在 renderLine 的行内样式里，2 秒后清状态由过渡自己淡出。 */
+     *  2 秒后自动收掉，和 .reading-line.is-jump-flash 的动画时长对应。 */
     const flashJumpTarget = (chapterIdx: number, paragraphIdx: number) => {
         if (jumpFlashTimerRef.current) clearTimeout(jumpFlashTimerRef.current);
         setJumpFlash({ chapterIndex: chapterIdx, paragraphIndex: paragraphIdx });
@@ -4841,9 +4845,17 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                     padding: 0,
                                     border: "none",
                                     borderRadius: 6,
-                                    background: open ? "var(--c-panel-border)" : "transparent",
-                                    color: "var(--c-icon)",
+                                    // 展开态不再填实心灰底：原来和按下态用的是同一块底色，
+                                    // 菜单一开就一直顶着，看着像手指没松开的按动效果。
+                                    // 现在只给一圈细描边 + 图标提亮，轻到不会被当成按压残留。
+                                    background: "transparent",
+                                    boxShadow: open ? "inset 0 0 0 1px var(--c-panel-border)" : "none",
+                                    color: open ? "var(--c-text-title)" : "var(--c-icon)",
                                     cursor: "pointer",
+                                    transition: "color 140ms ease, box-shadow 140ms ease",
+                                    // 移动端默认的点击高亮也会在手指抬起后留一块灰，
+                                    // 和这里的展开态叠在一起更像「按动效果卡住了」
+                                    WebkitTapHighlightColor: "transparent",
                                 }}
                                 onClick={(event) => {
                                     event.stopPropagation();

@@ -80,6 +80,8 @@ function annotationCardCss(suffix: string, style: AnnotationCardStyle): string {
 export default function ReadingApp({ onClose }: Props) {
     const [ready, setReady] = useState(false);
     const [activeBook, setActiveBook] = useState<Book | null>(null);
+    /** 正在退出阅读 app：先把书架背后那棵阅读器摘掉，再真正关掉。 */
+    const [exiting, setExiting] = useState(false);
     const [appearance, setAppearance] = useState<ReadingAppearance>(DEFAULT_READING_APPEARANCE);
     const [customCss, setCustomCss] = useState("");
     const resolvedCustomCss = useNightText(nightSlotKeys.reading, customCss);
@@ -120,6 +122,16 @@ export default function ReadingApp({ onClose }: Props) {
     const annotationFontFaceRef = useRef<FontFace | null>(null);
     const userAnnotationFontFaceRef = useRef<FontFace | null>(null);
     if (activeBook) lastBookRef.current = activeBook;
+
+    /** 退出阅读。阅读器在书架背后一直挂着（分页、批注、图片 objectURL 全在里面），
+     *  它是最重的一块，卸载也最贵。这里把「摘掉阅读器」和「关掉 app」拆到两帧：
+     *  前一帧先让退出动作有反馈，后一帧再关窗，否则「退出登录」点下去会先顿一下。 */
+    const handleClose = () => {
+        if (exiting) return;
+        setExiting(true);
+        if (typeof window === "undefined") { onClose(); return; }
+        window.requestAnimationFrame(() => onClose());
+    };
 
     const updateBackgroundUrl = (nextUrl: string | null) => {
         if (backgroundUrlRef.current && backgroundUrlRef.current !== nextUrl) {
@@ -400,7 +412,7 @@ export default function ReadingApp({ onClose }: Props) {
                             lastBookRef.current = null;
                         }
                     }}
-                    onClose={onClose}
+                    onClose={handleClose}
                     appearance={appearance}
                     backgroundUrl={backgroundUrl}
                     loadedFonts={{
@@ -411,7 +423,7 @@ export default function ReadingApp({ onClose }: Props) {
                     onSaveAppearance={handleSaveAppearance}
                 />
             )}
-            {lastBookRef.current && (
+            {lastBookRef.current && !exiting && (
                 <div style={activeBook ? undefined : hiddenViewerStyle} aria-hidden={!activeBook}>
                     <ReadingViewer book={lastBookRef.current} appearanceKey={appearanceKey} onBack={() => setActiveBook(null)} />
                 </div>
