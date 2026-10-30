@@ -5020,7 +5020,7 @@
         inset 0 1px 0.5px rgba(255, 255, 255, 0.55),
         0 8px 26px rgba(0, 0, 0, 0.1);
     /* 顶上留出角按钮那一行，歌词整体往下，不会和音符 / × 叠在一起 */
-    padding: 30px 14px 12px;
+    padding: 40px 14px 12px;
 }
 
 .music-float-lyrics[data-locked] {
@@ -5030,8 +5030,8 @@
 
 .music-float-corner-btn {
     position: absolute;
-    /* 左上音符 / 右上 ×：贴到窗口最上沿，给歌词腾出一整行，不再压住字 */
-    top: 1px;
+    /* 左上音符 / 右上 ×：和圆角保持同样的内缩，别挤进圆角那圈收角里 */
+    top: 8px;
     width: 28px;
     height: 28px;
     border: none;
@@ -5053,11 +5053,11 @@
 }
 
 .music-float-open-player {
-    left: 7px;
+    left: 13px;
 }
 
 .music-float-close {
-    right: 7px;
+    right: 13px;
 }
 
 .music-float-lines {
