@@ -3332,7 +3332,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
             }
             const paragraphAnnotations = annotationMap.get(index) || [];
             // 句子批注（显示在被高亮/划线句子末字所在行下方）与段评（显示在段末💬气泡弹窗内）拆分
-            const sentenceNotes = paragraphAnnotations.filter(isSentenceNoteAnnotation);
+            const sentenceNotes = paragraphAnnotations.filter(isNoteAnnotation);
             const paragraphComments = paragraphAnnotations.filter((a) => !isNoteAnnotation(a));
             const insertedNoteIds = new Set<string>();
             const segments = paragraph.split("\n");
@@ -3976,7 +3976,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                     const paragraphAnnotations = annotations.filter(
                                         (annotation) => annotation.chapterIndex === chapter.index && annotation.paragraphIndex === pIndex
                                     );
-                                    const sentenceNotes = paragraphAnnotations.filter(isSentenceNoteAnnotation);
+                                    const sentenceNotes = paragraphAnnotations.filter(isNoteAnnotation);
                                     const paragraphComments = paragraphAnnotations.filter((a) => !isNoteAnnotation(a));
                                     return (
                                         <div key={pIndex} className="reading-scroll-block">
