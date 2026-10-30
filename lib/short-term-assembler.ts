@@ -30,7 +30,7 @@ import { loadChatOfflineProjectionEntries } from "./chat-offline-storage";
 import { loadCheckPhoneProjectionEntries } from "./checkphone-storage";
 import { formatShoppingPaymentRequestHistory } from "./shopping-payment-request";
 import { loadCustomAppTimelineEntries } from "./custom-app-storage";
-import { formatReadingAnnotationMemo, loadReadingAnnotationMemos, readingMemoLabel } from "./reading-memory";
+import { formatReadingAnnotationMemo, loadReadingAnnotationMemos, readingMemoLabel, resolveReadingMemoKind } from "./reading-memory";
 import {
     canCharacterSeeMomentPost,
     getVisibleMomentCommentsForCharacter,
@@ -53,7 +53,7 @@ function formatPhotoDirectiveForPrompt(msg: ChatMessage): string {
 export type NativeTimelineEntry = {
     id: string;
     sourceApp: "chat" | "moments" | "story" | "vn" | "map" | "game" | "diary" | "xiaohongshu" | "interview_magazine" | "cocreate" | "checkphone" | "custom_app" | "reading";
-    sourceDetail?: "direct" | "group" | "system" | "story" | "chat_offline" | "game" | "diary_entry" | "notewall" | "xiaohongshu" | "black_market_theater" | "interview_issue" | "interview_shared_issue" | "cocreate_project" | "checkphone" | "custom_app_event" | "reading_annotation" | "reading_summary"; // chat sub-type: 1:1 vs group chat vs system note
+    sourceDetail?: "direct" | "group" | "system" | "story" | "chat_offline" | "game" | "diary_entry" | "notewall" | "xiaohongshu" | "black_market_theater" | "interview_issue" | "interview_shared_issue" | "cocreate_project" | "checkphone" | "custom_app_event" | "reading_annotation" | "reading_comment" | "reading_summary"; // chat sub-type: 1:1 vs group chat vs system note；reading 的 annotation=批注 / comment=段评 / summary=区间总结
     authorType?: "user" | "character" | "npc"; // who authored this entry
     postAuthorType?: "user" | "character"; // for moments: who owns the parent post
     sessionId?: string;
@@ -805,10 +805,15 @@ export function loadNativeTimeline(
     for (const memo of loadReadingAnnotationMemos()) {
         if (memo.characterId !== characterId) continue;
         if (options?.afterTimestamp && memo.createdAt <= options.afterTimestamp) continue;
+        // 批注 / 段评 / 区间总结在时间线里要能分得开：记忆区那个小标签读的就是 sourceDetail，
+        // 全标成 reading_annotation 的话段评会被显示成「批注」。
+        const memoKind = resolveReadingMemoKind(memo);
         entries.push({
             id: `reading_anno_${memo.id}`,
             sourceApp: "reading",
-            sourceDetail: memo.kind === "summary" ? "reading_summary" : "reading_annotation",
+            sourceDetail: memo.kind === "summary"
+                ? "reading_summary"
+                : memoKind === "comment" ? "reading_comment" : "reading_annotation",
             authorType: memo.authorType,
             timestamp: memo.createdAt,
             content: formatStoredPromptEventContent(

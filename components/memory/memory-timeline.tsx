@@ -173,8 +173,13 @@ function parseEntry(evt: NativeTimelineEntry, userName: string): ParsedEntry | n
 
     if (evt.sourceApp === "story" || evt.sourceApp === "vn" || evt.sourceApp === "map" || evt.sourceApp === "game" || evt.sourceApp === "xiaohongshu" || evt.sourceApp === "checkphone" || evt.sourceApp === "interview_magazine" || evt.sourceApp === "cocreate" || evt.sourceApp === "reading" || (evt.sourceApp === "diary" && (evt.sourceDetail === "diary_entry" || evt.sourceDetail === "notewall"))) {
         const source = evt.sourceApp as "story" | "vn" | "map" | "game" | "diary" | "xiaohongshu" | "interview_magazine" | "cocreate" | "checkphone" | "reading";
-        const label = source === "story" ? "剧情" : source === "vn" ? "漫卷" : source === "map" ? "冒险" : source === "game" ? "小游戏" : source === "xiaohongshu" ? "小红书" : source === "checkphone" ? "查手机" : source === "interview_magazine" ? "访谈" : source === "cocreate" ? "共创" : source === "reading" ? (evt.sourceDetail === "reading_summary" ? "共读摘要" : "批注") : evt.sourceDetail === "diary_entry" ? "日记" : "便签墙";
-        const stripped = content.replace(/^\[(?:事件|剧情|漫卷|梦境|跑团游戏|小游戏|日记|便签墙|小红书|查手机|访谈|共创|批注|共读摘要)(?: [^\]]+)?\]\s*/, "");
+        // 共读这条线有三种：批注、段评、区间总结。小标签要分开显示，
+        // 不然段落下面的评论会被标成「批注」，看着像在同一句话旁边写的。
+        const readingLabel = evt.sourceDetail === "reading_summary"
+            ? "共读摘要"
+            : evt.sourceDetail === "reading_comment" ? "段评" : "批注";
+        const label = source === "story" ? "剧情" : source === "vn" ? "漫卷" : source === "map" ? "冒险" : source === "game" ? "小游戏" : source === "xiaohongshu" ? "小红书" : source === "checkphone" ? "查手机" : source === "interview_magazine" ? "访谈" : source === "cocreate" ? "共创" : source === "reading" ? readingLabel : evt.sourceDetail === "diary_entry" ? "日记" : "便签墙";
+        const stripped = content.replace(/^\[(?:事件|剧情|漫卷|梦境|跑团游戏|小游戏|日记|便签墙|小红书|查手机|访谈|共创|批注|段评|共读摘要)(?: [^\]]+)?\]\s*/, "");
         return {
             type: "projection",
             id: evt.id,
