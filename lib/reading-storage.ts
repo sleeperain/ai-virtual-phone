@@ -2,11 +2,11 @@
 
 import Dexie from "dexie";
 import type { Book, BookChapter, ReadingAnnotation, ReadingBookmark, ReadingProgress } from "./reading-types";
-import { isNoteAnnotation, normalizeReadingAnnotation } from "./reading-types";
+import { isNoteAnnotation, normalizeReadingAnnotation, resolveReadingAnnotationKind } from "./reading-types";
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 import { DEFAULT_READING_BILINGUAL_PROMPT } from "./bilingual-prompt-defaults";
 import { DEFAULT_READING_ANNOTATION_GUIDANCE, DEFAULT_READING_SUMMARY_PROMPT } from "./reading-prompt-defaults";
-import { deleteReadingAnnotationMemosByBook } from "./reading-memory";
+import { deleteReadingAnnotationMemosByBook, migrateReadingMemoKinds } from "./reading-memory";
 import { deleteReadingMarksByBook } from "./reading-marks";
 
 // ── Database ──
@@ -169,7 +169,41 @@ export const DEFAULT_READING_INTERACTION_CONFIG: ReadingInteractionConfig = {
     pdfPreloadEnabled: true,
 };
 
+/** 老批注的「批注 / 段评」类型固化，整个 App 只跑一次。
+ *  加 annotationKind 之前写下的记录没有这个字段，以前是靠「有没有 quoteEnd」在显示时现猜的。
+ *  现在把当年那个判断的结果写回库里：往后规则再怎么改、导出/外部读取拿到的都是确定的类型。
+ *  迁移只补 kind，内容一个字不动；跑过之后记一个键，不会再跑第二遍。 */
+const ANNOTATION_KIND_MIGRATED_KEY = "ai_phone_reading_annotation_kind_migrated_v1";
+registerKvMigration(ANNOTATION_KIND_MIGRATED_KEY);
+
+export async function migrateReadingAnnotationKinds(): Promise<number> {
+    if (typeof window === "undefined") return 0;
+    if (kvGet(ANNOTATION_KIND_MIGRATED_KEY) === "1") return 0;
+    let changed = 0;
+    try {
+        // 先探一下连接（App 在后台放久了 IndexedDB 会坏），坏了就重连，别在坏连接上跑迁移
+        await ensureReadingDbAlive();
+        await db.annotations.toCollection().modify((annotation: ReadingAnnotation) => {
+            const kind = resolveReadingAnnotationKind(annotation);
+            if (annotation.annotationKind === kind) return;
+            annotation.annotationKind = kind;
+            changed += 1;
+        });
+        // 缓存里可能还是迁移前读出来的老对象，清掉让下次读库重新取
+        _annotationsCache.clear();
+        kvSet(ANNOTATION_KIND_MIGRATED_KEY, "1");
+    } catch (error) {
+        // 没写成功就不记键：下次启动再试，不会把半途而废的结果当成已完成
+        console.warn("[Reading] 批注类型迁移失败，下次启动再试：", error);
+        return 0;
+    }
+    return changed;
+}
+
 export async function hydrateReadingStorage(): Promise<void> {
+    // 打开书架之前先把类型固化下来，书架上的「批注 N 条」才是按新口径算的
+    await migrateReadingAnnotationKinds().catch(() => 0);
+    await migrateReadingMemoKinds().catch(() => 0);
     _booksCache = await db.books.toArray();
     _booksCache.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }

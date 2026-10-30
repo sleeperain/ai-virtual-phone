@@ -1,6 +1,6 @@
 "use client";
 
-import { kvGet, kvSet, registerKvMigration } from "./kv-db";
+import { hydrateKvDb, kvGet, kvSet, registerKvMigration } from "./kv-db";
 
 // 批注写进记忆区要在 loadNativeTimeline 里同步读到，而批注本体存在 Dexie（异步）。
 // 所以写批注时顺手往这个 kv 日志里追一条，时间线直接读日志。
@@ -115,6 +115,37 @@ export function deleteReadingAnnotationMemosByBook(
 export function resolveReadingMemoKind(memo: ReadingAnnotationMemo): "note" | "comment" {
     if (memo.annotationKind === "note" || memo.annotationKind === "comment") return memo.annotationKind;
     return typeof memo.paragraphIndex === "number" ? "comment" : "note";
+}
+
+/** 老日志的「批注 / 段评」类型固化下来，跑一次就够。
+ *  不跑也不会认错（判据是现算的），但固化了以后规则再变、或者有别的工具读这份日志，都不会走样。 */
+const MEMO_KIND_MIGRATED_KEY = "ai_phone_reading_memo_kind_migrated_v1";
+registerKvMigration(MEMO_KIND_MIGRATED_KEY);
+
+export async function migrateReadingMemoKinds(): Promise<number> {
+    if (typeof window === "undefined") return 0;
+    // 日志是从 kv 的内存缓存里读的，缓存还没 hydrate 好时会读成空数组——
+    // 那就会「迁移了 0 条」却把迁移标记写下去，真实日志反而被永久跳过。所以先等它。
+    await hydrateKvDb().catch(() => undefined);
+    if (kvGet(MEMO_KIND_MIGRATED_KEY) === "1") return 0;
+    let changed = 0;
+    try {
+        const next = loadReadingAnnotationMemos().map((memo) => {
+            // 区间总结不是批注也不是段评，不动
+            if (memo.kind === "summary") return memo;
+            const kind = resolveReadingMemoKind(memo);
+            if (memo.annotationKind === kind) return memo;
+            changed += 1;
+            return { ...memo, annotationKind: kind };
+        });
+        if (changed > 0) persist(next);
+        // 写成功才记下「已迁移」：中途失败的话下次启动还会再试
+        kvSet(MEMO_KIND_MIGRATED_KEY, "1");
+    } catch (error) {
+        console.warn("[Reading] 批注日志类型迁移失败，下次启动再试：", error);
+        return 0;
+    }
+    return changed;
 }
 
 /** 记忆区里的标签，交给 formatStoredPromptEventContent 补时间戳。
