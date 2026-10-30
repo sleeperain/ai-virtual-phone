@@ -4892,7 +4892,11 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                             // 和段评弹窗的浅色底对不上。白底要配深色字，否则看不清。
                                             background: "#fff",
                                             color: "var(--c-text-title)",
-                                            border: "1px solid var(--c-panel-border)",
+                                            // 不要边框：这层菜单就浮在白色的段评卡片上，
+                                            // 一圈描边会把方框画得很硬，靠投影分层就够了。
+                                            // 显式写 none 而不是删掉这行——.ctx-menu 里可能还留着
+                                            // 全局的边框定义，删了会被它顶回来。
+                                            border: "none",
                                             borderRadius: 8,
                                             boxShadow: "0 6px 18px rgba(0, 0, 0, 0.16)",
                                         }}
