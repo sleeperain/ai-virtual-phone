@@ -79,6 +79,9 @@ const MENU_HALF_WIDTH = 152;
 /** 段评「⋯」菜单里图标和文字取同一号：图标比字大看起来头重脚轻，两行也对不齐 */
 const READING_MENU_ICON_SIZE = 14;
 const READING_MENU_FONT_SIZE = 14;
+/** 这个菜单往下展开要占的高度：两行（各 8+8 内边距 + 一行字）+ 4 内边距 + 与按钮的 4 间距。
+ *  只在判断「下方还剩不剩地方」时用，宁可估大一点。 */
+const READING_MENU_ESTIMATED_HEIGHT = 80;
 
 /** 正文句子/已有标记的长按时长：和批注卡片、共读消息的长按保持一致 */
 const SENTENCE_LONG_PRESS_MS = 500;
@@ -426,6 +429,9 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     const [generatingParagraphComment, setGeneratingParagraphComment] = useState(false);
     /** 段评弹窗里当前展开「⋯」菜单的那条评论（主评论和回复共用，一次只开一个） */
     const [commentActionMenuId, setCommentActionMenuId] = useState<string | null>(null);
+    /** 「⋯」菜单这次往上还是往下展开。靠下的评论往下展会顶到输入框那行，
+     *  列表还会把溢出菜单裁掉，所以打开时量一次位置再决定。 */
+    const [commentActionMenuAbove, setCommentActionMenuAbove] = useState(false);
     // 段评弹窗关掉以后，把「⋯」菜单的记忆一并清掉：留着的话下次再打开同一条段评，
     // 那个按钮会直接带着展开态（描边 + 提亮的图标），看起来就是按动效果一直没复位。
     useEffect(() => {
@@ -4862,7 +4868,22 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                 }}
                                 onClick={(event) => {
                                     event.stopPropagation();
-                                    setCommentActionMenuId(open ? null : item.id);
+                                    if (open) {
+                                        setCommentActionMenuId(null);
+                                        return;
+                                    }
+                                    // 量一下按钮到「输入框那一行」之间还剩多少地方：
+                                    // 不够就往上展开。评论区是滚动容器，往下溢出的部分
+                                    // 会被裁掉，看着就像被输入框盖住了。
+                                    const btn = event.currentTarget;
+                                    const modal = btn.closest(".reading-comment-modal");
+                                    const footer = modal?.querySelector(".reading-comment-modal-footer");
+                                    const limit = footer?.getBoundingClientRect().top
+                                        ?? modal?.getBoundingClientRect().bottom
+                                        ?? window.innerHeight;
+                                    const rect = btn.getBoundingClientRect();
+                                    setCommentActionMenuAbove(rect.bottom + READING_MENU_ESTIMATED_HEIGHT > limit - 8);
+                                    setCommentActionMenuId(item.id);
                                 }}
                             >
                                 <MoreHorizontal size={18} strokeWidth={2} />
@@ -4882,9 +4903,14 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                         role="menu"
                                         style={{
                                             position: "absolute",
-                                            top: "calc(100% + 4px)",
+                                            // 上方放不开就翻到按钮上面展开；否则贴在按钮下面
+                                            ...(commentActionMenuAbove
+                                                ? { bottom: "calc(100% + 4px)" }
+                                                : { top: "calc(100% + 4px)" }),
                                             right: 0,
-                                            zIndex: 41,
+                                            // 输入框那一行带自己的层级，原来 41 会被它压住；
+                                            // 抬到 60，保证菜单永远在最上面（遮罩是 40）
+                                            zIndex: 60,
                                             minWidth: 104,
                                             // 纵向排列：左边图标、右边文字，一行一项
                                             display: "flex",
@@ -5007,7 +5033,12 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                     </svg>
                                 </button>
                             </div>
-                            <div className="reading-comment-modal-list">
+                            <div
+                                className="reading-comment-modal-list"
+                                // 滚动时收起菜单：它是贴着按钮定位的，滚走以后
+                                // 菜单会跟着飘到别处，还会和输入框重新叠在一起
+                                onScroll={() => { if (commentActionMenuId) setCommentActionMenuId(null); }}
+                            >
                                 {topLevelComments.length === 0 ? (
                                     <div className="reading-comment-modal-empty">
                                         还没有段评，发一条开启互动，或点击右上角刷新让{companion?.name || "陪读角色"}发段评吧
