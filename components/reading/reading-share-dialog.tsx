@@ -114,6 +114,12 @@ function resolveRenderedFonts(): ReadingShareFonts {
     };
 }
 
+/** 画图超过这么久还没好，才浮出「生成中」提示：日常换配色是毫秒级的，
+ *  每次都闪一下反而像卡了。 */
+const RENDER_HINT_DELAY = 400;
+/** 一次性提示停留多久 */
+const HINT_DURATION = 2200;
+
 const SEGMENT_JOINS: Array<[string, ReadingShareJoin]> = [["「……」", "ellipsis"], ["出处", "caption"], ["直接接上", "none"]];
 const ALIGNS: Array<[string, ReadingShareAlign]> = [["左对齐", "left"], ["居中", "center"], ["右对齐", "right"]];
 const TINTS: Array<[string, boolean]> = [["原色", false], ["淡化", true]];
@@ -209,6 +215,23 @@ export function ReadingShareDialog({
     const [withTheirs, setWithTheirs] = useState(hasTheirs);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    /** 预览图正在画。卡片要等字体和头像解码完才画得出来，慢的时候预览区是空的，
+     *  看起来像点了没反应，所以配一条 toast。 */
+    const [rendering, setRendering] = useState(true);
+    /** 画得久才提示：随手调个配色也要闪一下「生成中」就太吵了。
+     *  只有超过 RENDER_HINT_DELAY 还没画完才认为是「真的在等」。 */
+    const [slowRendering, setSlowRendering] = useState(false);
+    /** 一次性 toast（比如卡片还没画好就点了保存/放大） */
+    const [hint, setHint] = useState<string | null>(null);
+    const hintTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+    const flashHint = (text: string) => {
+        setHint(text);
+        if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
+        hintTimerRef.current = setTimeout(() => setHint(null), HINT_DURATION);
+    };
+    useEffect(() => () => {
+        if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
+    }, []);
     /** 预览区的挂载点：画好的 canvas 直接换进去 */
     const previewRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -221,6 +244,7 @@ export function ReadingShareDialog({
     useEffect(() => {
         let cancelled = false;
         const draw = async () => {
+            setRendering(true);
             try {
                 const given = contentRef.current;
                 // 片刻纪事：按选的署名排出「第一个 / 第二个」
@@ -300,11 +324,24 @@ export function ReadingShareDialog({
                 setError(null);
             } catch (err) {
                 if (!cancelled) setError(err instanceof Error ? err.message : "图片生成失败");
+            } finally {
+                // 画完了（或失败）都要把「生成中」撤掉，否则提示会一直挂在那儿
+                if (!cancelled) setRendering(false);
             }
         };
         void draw();
         return () => { cancelled = true; };
     }, [align, avatarShape, palette, ratio, template, withMine, withTheirs, signer, signerOrder, merged, mixed, segmentJoin, userAlign, tintUser, charFont]);
+
+    // 画得慢才提示：换配色这种毫秒级的重画不该每次都闪一下「生成中」
+    useEffect(() => {
+        if (!rendering) {
+            setSlowRendering(false);
+            return;
+        }
+        const timer = setTimeout(() => setSlowRendering(true), RENDER_HINT_DELAY);
+        return () => clearTimeout(timer);
+    }, [rendering]);
 
     /** 点预览图放大看。直接复用朋友圈/聊天那套全屏图片预览，手势和按钮都一致。 */
     const [zoomUrl, setZoomUrl] = useState<string | null>(null);
@@ -318,7 +355,11 @@ export function ReadingShareDialog({
     };
     const openZoom = async () => {
         const canvas = canvasRef.current;
-        if (!canvas) return;
+        if (!canvas) {
+            // 原来这里直接 return，卡片还没画出来时点放大毫无反应
+            flashHint(rendering ? "摘抄卡片生成中，稍等一下" : "卡片还没生成好，稍后再试");
+            return;
+        }
         try {
             const blob = await readingShareCardToBlob(canvas);
             if (zoomUrlRef.current) URL.revokeObjectURL(zoomUrlRef.current);
@@ -339,7 +380,11 @@ export function ReadingShareDialog({
 
     const handleDownload = async () => {
         const canvas = canvasRef.current;
-        if (!canvas) return;
+        if (!canvas) {
+            // 同理：卡片没画好就点保存，原来什么都不会发生，看着像按钮坏了
+            flashHint(rendering ? "摘抄卡片生成中，稍等一下" : "卡片还没生成好，稍后再试");
+            return;
+        }
         try {
             setBusy(true);
             setError(null);
@@ -356,7 +401,7 @@ export function ReadingShareDialog({
     return (
         <ContentDialog
             title={title}
-            confirmLabel={busy ? "生成中..." : "保存图片"}
+            confirmLabel={busy ? "生成中..." : rendering ? "卡片生成中..." : "保存图片"}
             cancelLabel="关闭"
             onConfirm={() => { if (!busy) void handleDownload(); }}
             onCancel={onClose}
@@ -373,6 +418,35 @@ export function ReadingShareDialog({
                         title="点一下放大看"
                     />
                     <span className="reading-share-zoom-hint" aria-hidden="true">轻点放大</span>
+                    {/* 生成中的 toast：贴在预览区正中。用绝对定位而不是 fixed——
+                        弹窗容器带 transform，fixed 会相对它定位；模态 body 还会滚动裁剪。
+                        文案优先用一次性提示（用户刚点了保存/放大），其次才是「生成中」。 */}
+                    {(hint || slowRendering) && (
+                        <div
+                            role="status"
+                            aria-live="polite"
+                            style={{
+                                position: "absolute",
+                                left: "50%",
+                                top: "50%",
+                                transform: "translate(-50%, -50%)",
+                                zIndex: 3,
+                                maxWidth: "84%",
+                                padding: "7px 14px",
+                                borderRadius: 999,
+                                background: "rgba(30, 24, 18, 0.86)",
+                                color: "#fff",
+                                // 跟着系统的字号缩放走，和小字提示一致
+                                fontSize: "calc(12px * var(--app-text-scale, 1))",
+                                lineHeight: 1.4,
+                                textAlign: "center",
+                                boxShadow: "0 6px 20px rgba(0, 0, 0, 0.2)",
+                                pointerEvents: "none",
+                            }}
+                        >
+                            {hint ?? "摘抄卡片生成中…"}
+                        </div>
+                    )}
                 </div>
 
                 <div className="reading-share-templates">
