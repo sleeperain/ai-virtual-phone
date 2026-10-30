@@ -76,15 +76,20 @@ type TxtPageItem =
 /** 菜单半宽，避免贴着某个点算出来的位置把菜单顶出屏幕 */
 const MENU_HALF_WIDTH = 152;
 
-/** 段评「⋯」菜单里图标和文字取同一号：图标比字大看起来头重脚轻，两行也对不齐 */
-const READING_MENU_ICON_SIZE = 11;
-const READING_MENU_FONT_SIZE = 11;
-/** 小字号下描边也得跟着加粗一点：strokeWidth 是按 24 的 viewBox 算的，
- *  缩到 11px 只剩不到一像素，1.8 会显得发虚 */
+/** 段评「⋯」菜单的字号。12.5 是「比正文小一点、但不至于看不清」的折中，
+ *  再往下缩（11px）手机上就确实读着吃了。 */
+const READING_MENU_FONT_SIZE = 12.5;
+/** 图标和文字同号，视觉上才齐平 */
+const READING_MENU_ICON_SIZE = 13;
+/** 图标描边：strokeWidth 按 24 的 viewBox 算，13px 渲染时线宽只剩一半多，
+ *  沿用 1.8 会发虚 */
 const READING_MENU_ICON_STROKE = 2.2;
-/** 这个菜单往下展开要占的高度：两行（各 5+5 内边距 + 一行 11px 字）+ 4 内边距 + 与按钮的 4 间距。
+/** 每行的可点高度。手指没那么准，菜单项低于 36px 很容易点到隔壁甚至点空——
+ *  这两行一个是「编辑」一个是「删除」，点错的代价可不小。 */
+const READING_MENU_ROW_HEIGHT = 36;
+/** 这个菜单往下展开要占的高度：两行 36 + 容器内边距 8 + 行间距 2 + 与按钮的 4 间距。
  *  只在判断「下方还剩不剩地方」时用，宁可估大一点。 */
-const READING_MENU_ESTIMATED_HEIGHT = 64;
+const READING_MENU_ESTIMATED_HEIGHT = 88;
 
 /** 正文句子/已有标记的长按时长：和批注卡片、共读消息的长按保持一致 */
 const SENTENCE_LONG_PRESS_MS = 500;
@@ -4853,8 +4858,10 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                     display: "inline-flex",
                                     alignItems: "center",
                                     justifyContent: "center",
-                                    width: 28,
-                                    height: 28,
+                                    // 28 太小，手指按不准还会连带点开下面那条评论的气泡；
+                                    // 32 也还是收在名字行的高度里，不会把行撑高
+                                    width: 32,
+                                    height: 32,
                                     padding: 0,
                                     border: "none",
                                     borderRadius: 6,
@@ -4914,13 +4921,13 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                             // 输入框那一行带自己的层级，原来 41 会被它压住；
                                             // 抬到 60，保证菜单永远在最上面（遮罩是 40）
                                             zIndex: 60,
-                                            // 字号降到 11px 后整块跟着收：宽度和行距都别按 14px 的量留
-                                            minWidth: 76,
+                                            // 宽度跟着 12.5px 的字和 36px 的行高给足，别让「编辑 / 删除」贴边
+                                            minWidth: 92,
                                             // 纵向排列：左边图标、右边文字，一行一项
                                             display: "flex",
                                             flexDirection: "column",
-                                            padding: 3,
-                                            gap: 1,
+                                            padding: 4,
+                                            gap: 2,
                                             // 固定白底：跟着主题走的话深色主题下这块会变成深色，
                                             // 和段评弹窗的浅色底对不上。白底要配深色字，否则看不清。
                                             background: "#fff",
@@ -4942,12 +4949,14 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                             style={{
                                                 display: "flex",
                                                 alignItems: "center",
-                                                // 11px 字配 5px 图标间距就够，8px 会显得中间空了一截
-                                                gap: 5,
+                                                gap: 7,
                                                 width: "100%",
-                                                padding: "5px 7px",
+                                                // 上下留白点到为止，可点高度靠 minHeight 撑：
+                                                // 纯靠 padding 撑会把字挤在中间、显得很胖
+                                                padding: "0 9px",
+                                                minHeight: READING_MENU_ROW_HEIGHT,
                                                 border: "none",
-                                                borderRadius: 5,
+                                                borderRadius: 6,
                                                 background: "transparent",
                                                 // 白底上要用深色字，不能沿用它原来的颜色（那是按深色底配的）
                                                 color: "var(--c-text-title)",
@@ -4973,11 +4982,12 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                             style={{
                                                 display: "flex",
                                                 alignItems: "center",
-                                                gap: 5,
+                                                gap: 7,
                                                 width: "100%",
-                                                padding: "5px 7px",
+                                                padding: "0 9px",
+                                                minHeight: READING_MENU_ROW_HEIGHT,
                                                 border: "none",
-                                                borderRadius: 5,
+                                                borderRadius: 6,
                                                 background: "transparent",
                                                 color: "var(--c-danger)",
                                                 // 字号必须显式写：不写就继承菜单容器的默认字号，
