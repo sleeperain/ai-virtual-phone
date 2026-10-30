@@ -5962,7 +5962,8 @@
 }
 
 .reading-account-item:active {
-  background: rgba(128, 128, 128, 0.12);
+  /* 按下只铺近白浅灰底，文字/图标颜色不动（取值见 .reading-shelf-more-menu 里的变量） */
+  background: var(--rs-press-bg, rgba(0, 0, 0, 0.04));
 }
 
 .reading-account-avatar {
@@ -6018,6 +6019,103 @@
   height: 1px;
   margin: 4px 8px;
   background: rgba(128, 128, 128, 0.18);
+}
+
+/* ── 书架「⋮」菜单：三个功能行 + 退出登录 ──
+   菜单行高度、空带、图标尺寸都收在上面这组变量里，改一个数整块跟着对齐。
+   菜单本身没有独立规则（宽度/内边距在别处），这里只挂变量，不跟它抢布局。 */
+.reading-shelf-more-menu {
+  /* 菜单行统一高度 */
+  --rs-menu-row-h: 32px;
+  /* 「退出登录」上方透明空带的总高，分隔线画在它正中间 */
+  --rs-divider-band: 8px;
+  /* 图标边长，改这里图标位置自动跟着对齐 */
+  --rs-icon-size: 16px;
+  /* 退出登录的字色：写死红，不跟 --c-danger（它被主题改成了棕色） */
+  --rs-logout-color: #e5484d;
+  /* 按下时的底色：近白浅灰 */
+  --rs-press-bg: rgba(0, 0, 0, 0.04);
+  /* 分隔线颜色，对齐菜单里那条 .reading-shelf-more-divider */
+  --rs-menu-divider-color: rgba(128, 128, 128, 0.18);
+}
+
+/* 导入图书 / 阅读设置 / 阅读外观 三行统一压矮 */
+.reading-shelf-more-menu .reading-shelf-more-item {
+  height: var(--rs-menu-row-h);
+  min-height: 0;
+  line-height: 1.2;
+}
+
+/* 三个功能行按下同样只铺近白浅灰底（账号行的 :active 已在它自己的规则里改过） */
+.reading-shelf-more-menu .reading-shelf-more-item:active {
+  background-color: var(--rs-press-bg);
+}
+
+/* 退出登录：和左上角「返回」做的是同一件事。
+   用真按钮，不用伪元素——伪元素点不到，也没法用键盘触发。
+   图标走 SVG 的 currentColor，颜色跟着 color 走，不用再维护 data URI 里的描边色。 */
+.reading-shelf-logout-item {
+  position: relative;
+  display: block;
+  width: 100%;
+  /* border-box：声明的高度包含顶部空带，整行 = 空带 + 行高，不会把菜单撑宽或超高 */
+  box-sizing: border-box;
+  height: calc(var(--rs-menu-row-h) + var(--rs-divider-band));
+  /* 上：空带 / 右：10 / 下：0 / 左：10+图标16+间距10=36，文字与上面几行同一条竖线 */
+  padding: var(--rs-divider-band) 10px 0 36px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--rs-logout-color);
+  font-family: inherit;
+  font-size: calc(13px * var(--app-text-scale, 1));
+  /* 行高取满行区，文字自然压在行区正中，和图标中线对齐 */
+  line-height: var(--rs-menu-row-h);
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* 分隔线：空带正中间，上下各空一半；左右各内缩 10px */
+.reading-shelf-logout-item::before {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  top: calc(var(--rs-divider-band) / 2);
+  height: 1px;
+  background: var(--rs-menu-divider-color);
+  pointer-events: none;
+}
+
+/* 按下底色：只铺行区，不铺上方空带 */
+.reading-shelf-logout-item::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--rs-menu-row-h);
+  border-radius: 10px;
+  background: var(--rs-fill, transparent);
+  pointer-events: none;
+}
+
+.reading-shelf-logout-item:active {
+  --rs-fill: var(--rs-press-bg);
+}
+
+/* 图标：贴左侧 10px，垂直压在行区中线上 */
+.reading-shelf-logout-item svg {
+  position: absolute;
+  left: 10px;
+  top: calc(var(--rs-divider-band) + var(--rs-menu-row-h) / 2);
+  width: var(--rs-icon-size);
+  height: var(--rs-icon-size);
+  transform: translateY(-50%);
+  pointer-events: none;
 }
 
 .reading-profile-hint {

@@ -777,6 +777,23 @@ export function ReadingShelf({ onOpenBook, onDeleteBook, onClose, appearance, ba
                                         <Palette size={16} strokeWidth={1.8} />
                                         <span>阅读外观</span>
                                     </button>
+                                    {/* 退出阅读：和左上角「返回」是同一件事。
+                                        用真按钮而不是伪元素——伪元素点不到，也没法用键盘触发。 */}
+                                    <button
+                                        type="button"
+                                        className="reading-shelf-logout-item"
+                                        onClick={() => {
+                                            setShowMoreMenu(false);
+                                            onClose();
+                                        }}
+                                    >
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                                            <polyline points="16 17 21 12 16 7" />
+                                            <line x1="21" y1="12" x2="9" y2="12" />
+                                        </svg>
+                                        <span>退出登录</span>
+                                    </button>
                                 </div>
                             )}
                         </div>
