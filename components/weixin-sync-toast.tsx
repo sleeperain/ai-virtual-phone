@@ -1,12 +1,14 @@
 "use client";
 
-// 微信云同步 toast：weixin-cloud-sync 广播的同步事件在这里可视化。
-// 现在只有失败会广播（进度/成功提示按用户反馈撤掉了），同 id 的后续事件
+// 全屏 toast 宿主：微信云同步的同步事件在这里可视化，通用提示（lib/app-toast）
+// 也落到这里——两套事件格式完全一致，没必要各挂一个宿主。
+// 云同步现在只有失败会广播（进度/成功提示按用户反馈撤掉了）；同 id 的后续事件
 // 原地替换、text 为 null 时无声撤下。挂在桌面壳根部，停在哪个 App 都看得见。
 // 挂在顶部（状态栏下方）：常驻条放底部会挡住聊天输入栏。
 
 import { useEffect, useRef, useState } from "react";
 import { WEIXIN_SYNC_TOAST_EVENT } from "@/lib/weixin-cloud-sync";
+import { APP_TOAST_EVENT } from "@/lib/app-toast";
 
 type ToastEntry = { id: string; text: string; sticky: boolean };
 
@@ -45,9 +47,13 @@ export function WeixinSyncToast() {
                 timersMap.set(id, setTimeout(() => remove(id), Math.max(1200, Number(detail.duration) || 2200)));
             }
         };
+        // 除了微信云同步，通用 toast（lib/app-toast）也在这里落地：
+        // 两边事件格式一样（id / text / sticky / duration），同一个宿主足够。
         window.addEventListener(WEIXIN_SYNC_TOAST_EVENT, onToast);
+        window.addEventListener(APP_TOAST_EVENT, onToast);
         return () => {
             window.removeEventListener(WEIXIN_SYNC_TOAST_EVENT, onToast);
+            window.removeEventListener(APP_TOAST_EVENT, onToast);
             for (const timer of timersMap.values()) clearTimeout(timer);
             timersMap.clear();
         };

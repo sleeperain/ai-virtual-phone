@@ -5,6 +5,7 @@ import { ContentDialog } from "@/components/ui/modal";
 import { Toggle } from "@/components/ui/form";
 import { downloadFile } from "@/lib/download-utils";
 import { loadReadingProfile, loadReadingProfileAvatar } from "@/lib/reading-profile";
+import { appToastId, dismissAppToast, showAppToast } from "@/lib/app-toast";
 import {
     READING_SHARE_PALETTES,
     READING_SHARE_TEMPLATES,
@@ -221,16 +222,19 @@ export function ReadingShareDialog({
     /** 画得久才提示：随手调个配色也要闪一下「生成中」就太吵了。
      *  只有超过 RENDER_HINT_DELAY 还没画完才认为是「真的在等」。 */
     const [slowRendering, setSlowRendering] = useState(false);
-    /** 一次性 toast（比如卡片还没画好就点了保存/放大） */
-    const [hint, setHint] = useState<string | null>(null);
-    const hintTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+    /** 这条弹窗专用的 toast id：同一个 id 的后续提示原地替换，不会越堆越多 */
+    const toastIdRef = useRef<string | null>(null);
+    if (!toastIdRef.current) toastIdRef.current = appToastId("reading-share");
+    /** 一次性提示（比如卡片还没画好就点了保存/放大）。走桌面壳那套全局 toast：
+     *  自己在这里画一块会被弹窗的 transform 和滚动容器裁掉，位置也不对。 */
     const flashHint = (text: string) => {
-        setHint(text);
-        if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
-        hintTimerRef.current = setTimeout(() => setHint(null), HINT_DURATION);
+        const id = toastIdRef.current;
+        if (id) showAppToast({ id, text, duration: HINT_DURATION });
     };
-    useEffect(() => () => {
-        if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
+    // 关弹窗时把可能还挂着的提示撤掉（「生成中」是常驻的），否则它一直停在屏幕顶上
+    useEffect(() => {
+        const id = toastIdRef.current;
+        return () => { if (id) dismissAppToast(id); };
     }, []);
     /** 预览区的挂载点：画好的 canvas 直接换进去 */
     const previewRef = useRef<HTMLDivElement>(null);
@@ -343,6 +347,14 @@ export function ReadingShareDialog({
         return () => clearTimeout(timer);
     }, [rendering]);
 
+    // 「生成中」用常驻 toast：画完（rendering 变 false → slowRendering 复位的下一轮）就撤掉
+    useEffect(() => {
+        const id = toastIdRef.current;
+        if (!slowRendering || !id) return;
+        showAppToast({ id, text: "摘抄卡片生成中…", sticky: true });
+        return () => dismissAppToast(id);
+    }, [slowRendering]);
+
     /** 点预览图放大看。直接复用朋友圈/聊天那套全屏图片预览，手势和按钮都一致。 */
     const [zoomUrl, setZoomUrl] = useState<string | null>(null);
     const zoomUrlRef = useRef<string | null>(null);
@@ -418,35 +430,6 @@ export function ReadingShareDialog({
                         title="点一下放大看"
                     />
                     <span className="reading-share-zoom-hint" aria-hidden="true">轻点放大</span>
-                    {/* 生成中的 toast：贴在预览区正中。用绝对定位而不是 fixed——
-                        弹窗容器带 transform，fixed 会相对它定位；模态 body 还会滚动裁剪。
-                        文案优先用一次性提示（用户刚点了保存/放大），其次才是「生成中」。 */}
-                    {(hint || slowRendering) && (
-                        <div
-                            role="status"
-                            aria-live="polite"
-                            style={{
-                                position: "absolute",
-                                left: "50%",
-                                top: "50%",
-                                transform: "translate(-50%, -50%)",
-                                zIndex: 3,
-                                maxWidth: "84%",
-                                padding: "7px 14px",
-                                borderRadius: 999,
-                                background: "rgba(30, 24, 18, 0.86)",
-                                color: "#fff",
-                                // 跟着系统的字号缩放走，和小字提示一致
-                                fontSize: "calc(12px * var(--app-text-scale, 1))",
-                                lineHeight: 1.4,
-                                textAlign: "center",
-                                boxShadow: "0 6px 20px rgba(0, 0, 0, 0.2)",
-                                pointerEvents: "none",
-                            }}
-                        >
-                            {hint ?? "摘抄卡片生成中…"}
-                        </div>
-                    )}
                 </div>
 
                 <div className="reading-share-templates">
