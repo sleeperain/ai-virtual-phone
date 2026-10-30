@@ -507,6 +507,9 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     const scrollFractionRef = useRef(0);
     const initialScrollFractionRef = useRef<number | null>(null); // 打开书时保存的章节内比例
     const pendingScrollFractionRef = useRef<number | null>(null); // 滑块跨章待定位比例
+    /** 从批注列表点过来的目标段落。章内比例只能算到「附近」，
+     *  这一项用来在目标章排版完之后精确落到那一段。 */
+    const pendingParagraphJumpRef = useRef<{ chapterIndex: number; paragraphIndex: number } | null>(null);
     const scrollContentRef = useRef<HTMLDivElement>(null);        // 滚动内容容器（含多章块）
     const chapterMetricsRef = useRef<Map<number, { top: number; height: number }>>(new Map()); // 各章块在滚动坐标系中的 top/height
     const pendingScrollActionRef = useRef<{ kind: "shift-forward"; oldScrollTop: number; removedHeight: number } | { kind: "shift-backward"; oldScrollTop: number } | null>(null);
@@ -1248,6 +1251,38 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         return stripReadingInlineIconMarkers(paragraph).replace(/\s+/g, " ").trim().slice(0, 40);
     };
 
+    /** 列表里那句「可以点回去」的原文。点一下跳到它在正文里的位置，读完再回列表。
+     *  用 span + role 而不是 button：这段文字本来就带着划线样式，换成 button
+     *  会被浏览器的默认样式覆盖，显示就跟正文里的划线对不上了。 */
+    const renderJumpableQuote = (
+        text: string,
+        chapterIdx: number,
+        paragraphIdx: number,
+        className: string,
+        markStyle?: ReadingMarkStyle,
+    ) => {
+        if (!text) return null;
+        const jump = () => jumpToSavedLine(chapterIdx, paragraphIdx);
+        return (
+            <span
+                className={`${className} reading-quote-jump`}
+                {...(markStyle ? { "data-style": markStyle } : {})}
+                style={{ cursor: "pointer" }}
+                role="button"
+                tabIndex={0}
+                title="跳到原文那一页"
+                onClick={(event) => { event.stopPropagation(); jump(); }}
+                onKeyDown={(event) => {
+                    if (event.key !== "Enter" && event.key !== " ") return;
+                    event.preventDefault();
+                    jump();
+                }}
+            >
+                {text}
+            </span>
+        );
+    };
+
     /** 批注列表里的一行：上面是划线句子，下面是这条批注本身，右边删除。
      *  段评不走这里——段评只出现在段末 💬 弹窗里。 */
     const renderAnnotationRow = (annotation: ReadingAnnotation, onDelete: () => void) => {
@@ -1255,7 +1290,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         return (
             <div key={annotation.id} className="reading-mark-row">
                 <span className="reading-my-annotation-row-body">
-                    {quote && <span className="reading-my-annotation-row-quote">{quote}</span>}
+                    {renderJumpableQuote(quote, annotation.chapterIndex, annotation.paragraphIndex, "reading-my-annotation-row-quote")}
                     <span>{annotation.content}</span>
                 </span>
                 <button type="button" onClick={onDelete}>删除</button>
@@ -2817,6 +2852,60 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         setBookmarks(await loadBookmarks(book.id));
     };
 
+    /** 批注列表里点了那句原文：跳回它在正文里的位置，并把批注面板收起来。
+     *  和书签不一样，这里知道「第几段」，所以优先精确落到那一段所在的页；
+     *  跨章时先切章，等目标章的排版算完再定位（见后面两个 effect）。 */
+    const jumpToSavedLine = (targetChapterIndex: number, targetParagraphIndex: number) => {
+        if (chapters.length === 0) return;
+        const target = Math.min(Math.max(0, targetChapterIndex), Math.max(0, chapters.length - 1));
+        const chapter = chapters[target];
+        const paragraphIndex = Math.max(0, Math.min(
+            Math.max(0, (chapter?.paragraphs.length || 1) - 1),
+            targetParagraphIndex,
+        ));
+
+        setShowCharAnnotationMenu(false);
+        setShowMyMarksPanel(false);
+
+        if (isPdf) {
+            // PDF 每段都记了自己在哪一页，直接翻到那一页
+            const page = chapter?.paragraphPages?.[paragraphIndex]
+                ?? chapter?.pageStart
+                ?? 1;
+            setChapterIndex(target);
+            setPdfJumpPage(Math.max(1, Math.round(page)));
+            return;
+        }
+
+        const paragraphCount = Math.max(1, chapter?.paragraphs.length || 1);
+        // 章内比例：和书签存的是同一套口径，两种阅读模式都能还原
+        const fraction = Math.max(0, Math.min(1, paragraphIndex / paragraphCount));
+
+        if (target === chapterIndex) {
+            if (isScrollMode) {
+                scrollToChapterFraction(fraction, chapterIndex);
+                // 比例只到「附近」，滚动模式下再按段落精确对一次
+                pendingParagraphJumpRef.current = { chapterIndex: target, paragraphIndex };
+            } else {
+                // 翻页模式能直接查出这一段落在第几页，不用按比例估
+                const pageIndex = txtPages.findIndex(page => page.some(item => (
+                    (item.kind === "line" || item.kind === "annotation")
+                    && item.paragraphIndex === paragraphIndex
+                )));
+                pendingTxtPageFractionRef.current = null;
+                setTxtPage(pageIndex >= 0 ? pageIndex : Math.round(fraction * Math.max(0, txtTotalPages - 1)));
+            }
+            return;
+        }
+
+        // 换章：先把比例交给现有那套 pending 机制，等目标章排版好再精确对到段落
+        pendingTxtPageFractionRef.current = fraction;
+        pendingScrollFractionRef.current = fraction;
+        pendingParagraphJumpRef.current = { chapterIndex: target, paragraphIndex };
+        setChapterIndex(target);
+        setTxtPage(0);
+    };
+
     const buildDiscussContext = useCallback((sourceChapters: BookChapter[] = chapters): ReadingDiscussContext | null => {
         const sourceParagraphRefs = buildParagraphRefsFromChapters(sourceChapters);
         if (sourceParagraphRefs.length === 0) return null;
@@ -3495,12 +3584,50 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     })();
     useEffect(() => {
         if (isPdf || isScrollMode) return;
+        if (txtPagesChapterIndex !== chapterIndex) return;
+
+        // 从批注列表点过来的：本章排版算完之后，按「这一段落在第几页」精确落位，
+        // 比按比例估算准（一章里段落长短差很多时，比例会偏出好几页）
+        const paragraphJump = pendingParagraphJumpRef.current;
+        if (paragraphJump && paragraphJump.chapterIndex === chapterIndex) {
+            const pageIndex = txtPages.findIndex(page => page.some(item => (
+                (item.kind === "line" || item.kind === "annotation")
+                && item.paragraphIndex === paragraphJump.paragraphIndex
+            )));
+            if (pageIndex >= 0) {
+                pendingParagraphJumpRef.current = null;
+                pendingTxtPageFractionRef.current = null;
+                setTxtPage(pageIndex);
+                return;
+            }
+        }
+
         const pendingFraction = pendingTxtPageFractionRef.current;
-        if (pendingFraction === null || txtPagesChapterIndex !== chapterIndex) return;
+        if (pendingFraction === null) return;
 
         setTxtPage(Math.round(pendingFraction * Math.max(0, txtTotalPages - 1)));
         pendingTxtPageFractionRef.current = null;
-    }, [chapterIndex, isPdf, isScrollMode, txtPagesChapterIndex, txtTotalPages]);
+    }, [chapterIndex, isPdf, isScrollMode, txtPagesChapterIndex, txtPages, txtTotalPages]);
+
+    // 滚动模式：从批注列表点过来，等目标段落真正渲染进 DOM 再把它滚进视野。
+    // 比例定位只能到「附近」，这里按段落元素精确对一次。
+    useEffect(() => {
+        if (isPdf || !isScrollMode || !chaptersLoaded) return;
+        const jump = pendingParagraphJumpRef.current;
+        if (!jump || jump.chapterIndex !== chapterIndex) return;
+        const body = scrollRef.current;
+        const surface = surfaceRef.current;
+        if (!body || !surface) return;
+        const el = surface.querySelector<HTMLElement>(
+            `[data-chapter="${jump.chapterIndex}"][data-paragraph="${jump.paragraphIndex}"]`,
+        );
+        if (!el) return;
+        pendingParagraphJumpRef.current = null;
+        const bodyRect = body.getBoundingClientRect();
+        const elRect = el.getBoundingClientRect();
+        // 留一点上边距，正好把这一行露在顶部附近而不是贴着边缘
+        body.scrollTop = Math.max(0, body.scrollTop + (elRect.top - bodyRect.top) - 16);
+    }, [annotations, chapterIndex, chaptersLoaded, isPdf, isScrollMode, txtLayoutVersion]);
 
     useEffect(() => {
         if (!chaptersLoaded || chapters.length === 0) return;
@@ -4988,9 +5115,13 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                             ))}
                                             {chapterMarks.map(group => (
                                                 <div key={group[0].id} className="reading-mark-row">
-                                                    <span className="reading-mark" data-style={group[0].style}>
-                                                        {group.map(mark => mark.text).join("").slice(0, 40)}
-                                                    </span>
+                                                    {renderJumpableQuote(
+                                                        group.map(mark => mark.text).join("").slice(0, 40),
+                                                        group[0].chapterIndex,
+                                                        group[0].paragraphIndex,
+                                                        "reading-mark",
+                                                        group[0].style,
+                                                    )}
                                                     <button type="button" onClick={() => {
                                                         const ids = new Set(group.map(mark => mark.id));
                                                         group.forEach(mark => deleteReadingMark(book.id, mark.id));
