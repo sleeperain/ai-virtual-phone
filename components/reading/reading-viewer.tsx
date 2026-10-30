@@ -33,7 +33,15 @@ import {
 import { annotationExportFileName, buildAnnotationMarkdown } from "@/lib/reading-export";
 import { downloadFile } from "@/lib/download-utils";
 import { collectSelectionSegments, splitParagraphIntoSentences, textOffsetWithin, type ReadingSelectionSegment } from "./reading-selection";
-import { isUserAnnotation, type ReadingBookmark, type ReadingMark, type ReadingMarkStyle } from "@/lib/reading-types";
+import {
+    isCommentAnnotation,
+    isNoteAnnotation,
+    isUserAnnotation,
+    resolveReadingAnnotationKind,
+    type ReadingBookmark,
+    type ReadingMark,
+    type ReadingMarkStyle,
+} from "@/lib/reading-types";
 import { generateAnnotationBatch, generateParagraphCommentReply, generateReadingChat, parseReadingDiscussResponse, summarizeReadingRange, type ReadingDiscussAction, type ReadingDiscussContext } from "@/lib/reading-engine";
 import { READING_PROFILE_CHANGED_EVENT, loadReadingProfile, loadReadingProfileAvatar } from "@/lib/reading-profile";
 import { loadChatMessages, pushChatMessage, deleteChatMessage, editChatMessage, loadChatContacts, createOrGetSession, isReadingDiscussMessage } from "@/lib/chat-storage";
@@ -75,18 +83,10 @@ function clampMenuX(centerX: number, width: number): number {
     return Math.min(Math.max(centerX, MENU_HALF_WIDTH), Math.max(MENU_HALF_WIDTH, width - MENU_HALF_WIDTH));
 }
 
-function isSentenceNoteAnnotation(annotation: ReadingAnnotation): boolean {
-    if (annotation.annotationKind === "note") return true;
-    if (annotation.annotationKind === "comment") return false;
-    return typeof annotation.quoteEnd === "number" && annotation.quoteEnd > 0;
-}
-
-/** 段评：挂在段落下面的一串评论和回复。和「批注」（写在某句话 / 某段旁边的）
- *  是两回事——段评不进摘抄图、不进批注提示词，记忆里也不该被说成批注。
- *  老数据没有 annotationKind 字段，一律按批注处理。 */
-function isCommentAnnotation(annotation: ReadingAnnotation): boolean {
-    return annotation.annotationKind === "comment";
-}
+// 「批注 / 段评」的判据统一在 lib/reading-types.ts：
+//   批注（note）= 写在某句话旁边，锚定了 quote；
+//   段评（comment）= 挂在段落下面的一串评论与回复。
+// 这个组件里所有分栏、计数、提示词、记忆都只认那一个判据，不再各自推断。
 
 function formatCommentTimestamp(iso: string): string {
     if (!iso) return "";
@@ -1232,10 +1232,36 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                 quote: annotation.quote,
                 content: annotation.content,
                 createdAt: annotation.createdAt,
-                // 段评和批注分开记：混成一种，记忆区和提示词就会把两者说串
-                annotationKind: isCommentAnnotation(annotation) ? "comment" as const : "note" as const,
+                // 段评和批注分开记：混成一种，记忆区和提示词就会把两者说串。
+                // kind 统一走 resolveReadingAnnotationKind，不在这里再判一遍。
+                annotationKind: resolveReadingAnnotationKind(annotation),
                 ...(isCommentAnnotation(annotation) ? { paragraphIndex: annotation.paragraphIndex } : {}),
             }));
+
+    /** 批注列表里那行「划线句子」。取批注锚定的 quote；
+     *  老数据是整段批注、没有 quote 的，退回它所在段落开头的原文，
+     *  免得列表里只剩一句没头没脑的话。 */
+    const annotationQuotePreview = (annotation: ReadingAnnotation): string => {
+        const quote = (annotation.quote || "").replace(/\s+/g, " ").trim();
+        if (quote) return quote.slice(0, 40);
+        const paragraph = chapters[annotation.chapterIndex]?.paragraphs[annotation.paragraphIndex] || "";
+        return stripReadingInlineIconMarkers(paragraph).replace(/\s+/g, " ").trim().slice(0, 40);
+    };
+
+    /** 批注列表里的一行：上面是划线句子，下面是这条批注本身，右边删除。
+     *  段评不走这里——段评只出现在段末 💬 弹窗里。 */
+    const renderAnnotationRow = (annotation: ReadingAnnotation, onDelete: () => void) => {
+        const quote = annotationQuotePreview(annotation);
+        return (
+            <div key={annotation.id} className="reading-mark-row">
+                <span className="reading-my-annotation-row-body">
+                    {quote && <span className="reading-my-annotation-row-quote">{quote}</span>}
+                    <span>{annotation.content}</span>
+                </span>
+                <button type="button" onClick={onDelete}>删除</button>
+            </div>
+        );
+    };
 
     /** 按章折叠的列表壳。当前章默认展开，其余收起，长书里才好找。 */
     const renderChapterFoldList = (
@@ -1297,9 +1323,11 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
             content: text,
             createdAt: new Date().toISOString(),
             authorType: "user",
+            // 句子批注一律是「批注」，哪怕范围算不出来（没有 quoteEnd）也不能落进段评
+            annotationKind: "note",
             quote: pendingQuote.text,
             ...(typeof pendingQuote.start === "number" ? { quoteStart: pendingQuote.start } : {}),
-            ...(hasRange ? { quoteEnd: pendingQuote.end, annotationKind: "note" as const } : {}),
+            ...(hasRange ? { quoteEnd: pendingQuote.end } : {}),
         };
         await saveAnnotation(annotation);
         appendReadingAnnotationMemos(toAnnotationMemos([annotation]));
@@ -1368,7 +1396,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                 (a) =>
                     a.chapterIndex === cIdx &&
                     a.paragraphIndex === pIdx &&
-                    !isSentenceNoteAnnotation(a),
+                    !isNoteAnnotation(a),
             )
             .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 
@@ -2980,13 +3008,21 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                     characterName: companion.name,
                     content: action.content,
                     createdAt: new Date().toISOString(),
+                    // 讨论里「新增批注」写的是批注，不是段评
+                    annotationKind: "note",
                 };
                 await saveAnnotation(annotation);
                 nextAnnotations = [...nextAnnotations, annotation];
                 continue;
             }
 
-            const target = nextAnnotations.find((annotation) => annotation.id === action.annotationId && annotation.chapterIndex === chapterIndex);
+            // 讨论只能改 / 删批注。段评是评论区的东西，不能让模型从这个入口动手，
+            // 否则「删掉那条批注」会连带把段落下面的评论删掉。
+            const target = nextAnnotations.find(
+                (annotation) => annotation.id === action.annotationId
+                    && annotation.chapterIndex === chapterIndex
+                    && isNoteAnnotation(annotation),
+            );
             if (!target) continue;
 
             if (action.type === "delete_annotation") {
@@ -3297,7 +3333,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
             const paragraphAnnotations = annotationMap.get(index) || [];
             // 句子批注（显示在被高亮/划线句子末字所在行下方）与段评（显示在段末💬气泡弹窗内）拆分
             const sentenceNotes = paragraphAnnotations.filter(isSentenceNoteAnnotation);
-            const paragraphComments = paragraphAnnotations.filter((a) => !isSentenceNoteAnnotation(a));
+            const paragraphComments = paragraphAnnotations.filter((a) => !isNoteAnnotation(a));
             const insertedNoteIds = new Set<string>();
             const segments = paragraph.split("\n");
             // 段落内的字符游标：wrapTextToLines 不裁剪字符，各行拼接等于原段落，
@@ -3941,7 +3977,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                         (annotation) => annotation.chapterIndex === chapter.index && annotation.paragraphIndex === pIndex
                                     );
                                     const sentenceNotes = paragraphAnnotations.filter(isSentenceNoteAnnotation);
-                                    const paragraphComments = paragraphAnnotations.filter((a) => !isSentenceNoteAnnotation(a));
+                                    const paragraphComments = paragraphAnnotations.filter((a) => !isNoteAnnotation(a));
                                     return (
                                         <div key={pIndex} className="reading-scroll-block">
                                             {(() => {
@@ -4584,7 +4620,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                         (a) =>
                             a.chapterIndex === cIdx &&
                             a.paragraphIndex === pIdx &&
-                            !isSentenceNoteAnnotation(a),
+                            !isNoteAnnotation(a),
                     )
                     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
                 const topLevelComments = allComments.filter((c) => !c.parentId);
@@ -4851,7 +4887,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                 const markedParagraphs = new Set(shareTarget.map(item => `${item.chapterIndex}:${item.paragraphIndex}`));
                 const relatedAnnotations = annotations
                     .filter(annotation => markedParagraphs.has(`${annotation.chapterIndex}:${annotation.paragraphIndex}`))
-                    .filter(annotation => !isCommentAnnotation(annotation))
+                    .filter(annotation => isNoteAnnotation(annotation))
                     .sort((a, b) => a.paragraphIndex - b.paragraphIndex || a.createdAt.localeCompare(b.createdAt))
                     .map(annotation => ({
                         name: isUserAnnotation(annotation) ? (userDisplayName || "我") : (annotation.characterName || "TA"),
@@ -4880,7 +4916,9 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                 >
                     <div className="reading-settings-grid">
                         {(() => {
-                            const theirs = panelAnnotations.filter(a => !isUserAnnotation(a));
+                            // 这里是「批注」列表：只列写在句子旁边的批注。
+                            // 段评是段落下面那串评论与回复，只在段末 💬 弹窗里出现，不进这里。
+                            const theirs = panelAnnotations.filter(a => !isUserAnnotation(a) && isNoteAnnotation(a));
                             const indexes = Array.from(new Set(theirs.map(a => a.chapterIndex))).sort((a, b) => a - b);
                             const sections = indexes.map(index => {
                                 const rows = theirs
@@ -4891,14 +4929,9 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                     count: rows.length,
                                     rows: (
                                         <>
-                                            {rows.map(annotation => (
-                                                <div key={annotation.id} className="reading-mark-row">
-                                                    <span className="reading-my-annotation-row-body">
-                                                        {annotation.quote && <span className="reading-my-annotation-row-quote">{annotation.quote.slice(0, 40)}</span>}
-                                                        <span>{annotation.content}</span>
-                                                    </span>
-                                                    <button type="button" onClick={() => { void removeAnnotationEverywhere(annotation.id); }}>删除</button>
-                                                </div>
+                                            {rows.map(annotation => renderAnnotationRow(
+                                                annotation,
+                                                () => { void removeAnnotationEverywhere(annotation.id); },
                                             ))}
                                         </>
                                     ),
@@ -4920,13 +4953,14 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                     <div className="reading-settings-grid">
                         {(() => {
                             const indexes = Array.from(new Set([
-                                ...panelAnnotations.filter(isUserAnnotation).map(a => a.chapterIndex),
+                                ...panelAnnotations.filter(a => isUserAnnotation(a) && isNoteAnnotation(a)).map(a => a.chapterIndex),
                                 ...marks.map(m => m.chapterIndex),
                             ])).sort((a, b) => a - b);
 
                             const sections = indexes.map(index => {
+                                // 同上：段评不进批注列表，只留写在句子旁边的批注
                                 const mine = panelAnnotations
-                                    .filter(a => a.chapterIndex === index && isUserAnnotation(a))
+                                    .filter(a => a.chapterIndex === index && isUserAnnotation(a) && isNoteAnnotation(a))
                                     .sort((a, b) => a.paragraphIndex - b.paragraphIndex);
                                 // 跨段划选出来的几条是一次划选，这里按组合成一行，
                                 // 否则一次跨三段的高亮会在列表里排成三条，看着像划了三次
@@ -4948,14 +4982,9 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                     count: mine.length + chapterMarks.length,
                                     rows: (
                                         <>
-                                            {mine.map(annotation => (
-                                                <div key={annotation.id} className="reading-mark-row">
-                                                    <span className="reading-my-annotation-row-body">
-                                                        {annotation.quote && <span className="reading-my-annotation-row-quote">{annotation.quote.slice(0, 40)}</span>}
-                                                        <span>{annotation.content}</span>
-                                                    </span>
-                                                    <button type="button" onClick={() => { void removeAnnotationEverywhere(annotation.id); }}>删除</button>
-                                                </div>
+                                            {mine.map(annotation => renderAnnotationRow(
+                                                annotation,
+                                                () => { void removeAnnotationEverywhere(annotation.id); },
                                             ))}
                                             {chapterMarks.map(group => (
                                                 <div key={group[0].id} className="reading-mark-row">

@@ -2,6 +2,7 @@
 // All prompts go through the preset system via assemblePromptPayload. No extra message push.
 
 import type { Book, BookChapter, ReadingAnnotation, ReadingMark, ReadingMarkStyle } from "./reading-types";
+import { isCommentAnnotation, isNoteAnnotation } from "./reading-types";
 import type { ChatSession } from "./chat-storage";
 import { loadChatMessages, pushChatMessage } from "./chat-storage";
 import { loadCharacters } from "./character-storage";
@@ -167,15 +168,11 @@ function formatChapterContent(paragraphs: string[]): string {
     return paragraphs.map((p, i) => `[${i + 1}] ${p}`).join("\n\n");
 }
 
-/** 这条是「批注」（写在某句话 / 某段旁边的）还是「段评」（段落下面的一串评论） */
-function isCommentAnnotation(annotation: ReadingAnnotation): boolean {
-    return annotation.annotationKind === "comment";
-}
-
 /** 只留批注，剔掉段评。段评是评论区的东西，喂进批注提示词会让模型以为
- *  「这一段已经有人评论过」，然后顺着评论区聊天，写出来的就不是批注了。 */
+ *  「这一段已经有人评论过」，然后顺着评论区聊天，写出来的就不是批注了。
+ *  判据见 lib/reading-types.ts，这里不再自己写一份。 */
 function onlyNoteAnnotations(annotations: ReadingAnnotation[]): ReadingAnnotation[] {
-    return annotations.filter(annotation => !isCommentAnnotation(annotation));
+    return annotations.filter(annotation => isNoteAnnotation(annotation));
 }
 
 function formatAnnotationHistory(annotations: ReadingAnnotation[]): string {
@@ -289,14 +286,19 @@ function formatBatchAnnotationHistory(annotations: ReadingAnnotation[], targets:
 
 function formatAnnotationActionContext(annotations: ReadingAnnotation[]): string {
     if (annotations.length === 0) return "（当前范围暂无批注）";
-    // 每条标出类型：模型据此知道哪条是自己的批注（可改可删），
-    // 哪条是读者在段落下面的评论（段评），不会把两者当成一回事
-    return annotations
-        .map((annotation) => {
-            const kind = isCommentAnnotation(annotation) ? "段评" : "批注";
-            return `- ID=${annotation.id} | 类型=${kind} | 段落=${annotation.paragraphIndex + 1} | 角色=${annotation.characterName} | 内容=${annotation.content}`;
-        })
-        .join("\n");
+    // 批注和段评分成两块列。混成一张表时，模型会把段落下面那串段评也当成
+    // 「自己写过、可以就地改的批注」，接着写出来的东西既不像批注也不像段评。
+    const line = (annotation: ReadingAnnotation) =>
+        `- ID=${annotation.id} | 段落=${annotation.paragraphIndex + 1} | 角色=${annotation.characterName} | 内容=${annotation.content}`;
+    const notes = annotations.filter(isNoteAnnotation);
+    const comments = annotations.filter(isCommentAnnotation);
+    return [
+        "【批注】写在某句话旁边，可以用上面的 ID 修改或删除",
+        notes.length > 0 ? notes.map(line).join("\n") : "（当前范围没有批注）",
+        "",
+        "【段评】挂在段落下面的一串评论与互相回复，属于评论区，不是批注",
+        comments.length > 0 ? comments.map(line).join("\n") : "（当前范围没有段评）",
+    ].join("\n");
 }
 
 function isDiscussActionLine(line: string): boolean {
@@ -571,6 +573,9 @@ export async function generateAnnotationBatch(
             characterName: character.name,
             content,
             createdAt: new Date().toISOString(),
+            // 这条永远是「批注」。锚不到原文的批注没有 quoteEnd，不显式写 kind 的话，
+            // 界面会按「没有 quoteEnd 就是段评」把它塞进段末 💬 里，批注和段评就混了。
+            annotationKind: "note",
             ...(anchor ? { quote: anchor.quote, quoteStart: anchor.start, quoteEnd: anchor.end } : {}),
         });
     }

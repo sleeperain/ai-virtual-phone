@@ -2,6 +2,7 @@
 
 import Dexie from "dexie";
 import type { Book, BookChapter, ReadingAnnotation, ReadingBookmark, ReadingProgress } from "./reading-types";
+import { isNoteAnnotation, normalizeReadingAnnotation } from "./reading-types";
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 import { DEFAULT_READING_BILINGUAL_PROMPT } from "./bilingual-prompt-defaults";
 import { DEFAULT_READING_ANNOTATION_GUIDANCE, DEFAULT_READING_SUMMARY_PROMPT } from "./reading-prompt-defaults";
@@ -272,7 +273,10 @@ function annotationKey(bookId: string, chapterIndex: number): string {
 export async function loadAnnotations(bookId: string, chapterIndex: number): Promise<ReadingAnnotation[]> {
     const key = annotationKey(bookId, chapterIndex);
     if (_annotationsCache.has(key)) return _annotationsCache.get(key)!;
-    const annots = await db.annotations.where("[bookId+chapterIndex]").equals([bookId, chapterIndex]).toArray();
+    // 读出来就把「批注 / 段评」补齐：老数据没有 annotationKind，各调用方再自己推断
+    // 就会出现「同一个列表里一处按批注算、一处按段评算」的错乱
+    const annots = (await db.annotations.where("[bookId+chapterIndex]").equals([bookId, chapterIndex]).toArray())
+        .map(normalizeReadingAnnotation);
     _annotationsCache.set(key, annots);
     return annots;
 }
@@ -281,9 +285,11 @@ export async function saveAnnotation(annotation: ReadingAnnotation): Promise<voi
     await db.annotations.put(annotation);
     const key = annotationKey(annotation.bookId, annotation.chapterIndex);
     const cached = _annotationsCache.get(key) || [];
+    // 缓存里一律放补齐 kind 的版本，和 loadAnnotations 保持一致
+    const normalized = normalizeReadingAnnotation(annotation);
     const existingIndex = cached.findIndex((item) => item.id === annotation.id);
-    if (existingIndex >= 0) cached[existingIndex] = annotation;
-    else cached.push(annotation);
+    if (existingIndex >= 0) cached[existingIndex] = normalized;
+    else cached.push(normalized);
     _annotationsCache.set(key, cached);
 }
 
@@ -294,15 +300,20 @@ export async function saveAnnotations(annotations: ReadingAnnotation[]): Promise
     const affected = new Set(annotations.map(a => annotationKey(a.bookId, a.chapterIndex)));
     for (const key of affected) {
         const [bookId, chapterIdx] = key.split(":");
-        _annotationsCache.set(key, await db.annotations.where("[bookId+chapterIndex]").equals([bookId, Number(chapterIdx)]).toArray());
+        _annotationsCache.set(
+            key,
+            (await db.annotations.where("[bookId+chapterIndex]").equals([bookId, Number(chapterIdx)]).toArray())
+                .map(normalizeReadingAnnotation),
+        );
     }
 }
 
-/** 判断一条记录是否属于「批注」（句子批注 note），与「段评」（comment）严格区分 */
-export function isReadingNoteAnnotation(annotation: Pick<ReadingAnnotation, "annotationKind" | "quoteEnd">): boolean {
-    if (annotation.annotationKind === "note") return true;
-    if (annotation.annotationKind === "comment") return false;
-    return typeof annotation.quoteEnd === "number" && annotation.quoteEnd > 0;
+/** 判断一条记录是否属于「批注」（note），与「段评」（comment）严格区分。
+ *  判据统一在 lib/reading-types.ts，这里只是保留老名字给书架等调用方用。 */
+export function isReadingNoteAnnotation(
+    annotation: Pick<ReadingAnnotation, "annotationKind" | "quoteEnd" | "parentId">,
+): boolean {
+    return isNoteAnnotation(annotation);
 }
 
 /** 每本书的批注条数与段评条数分别统计（用户 + 角色一起算）。

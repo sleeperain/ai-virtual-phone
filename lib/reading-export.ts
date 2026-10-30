@@ -2,7 +2,7 @@
 
 import type { Book, BookChapter, ReadingAnnotation, ReadingMark } from "./reading-types";
 import { readingMarkGroupId } from "./reading-marks";
-import { isUserAnnotation } from "./reading-types";
+import { isCommentAnnotation, isNoteAnnotation, isUserAnnotation } from "./reading-types";
 
 export type AnnotationExportInput = {
     book: Book;
@@ -27,11 +27,14 @@ function formatDate(date: Date): string {
 /** 整本书的批注和标记导出成 Markdown。按章节、章节内按段落顺序排。 */
 export function buildAnnotationMarkdown(input: AnnotationExportInput): string {
     const { book, chapters, annotations, marks, userName } = input;
+    // 批注和段评分开计数：混成一个数，导出来就看不出各有多少
+    const noteTotal = annotations.filter(isNoteAnnotation).length;
+    const commentTotal = annotations.filter(isCommentAnnotation).length;
     const lines: string[] = [
         `# 《${book.title}》批注`,
         "",
         `> 导出于 ${formatDate(input.exportedAt ?? new Date())}`,
-        `> 批注 ${annotations.length} 条 · 标记 ${new Set(marks.map(readingMarkGroupId)).size} 处`,
+        `> 批注 ${noteTotal} 条 · 段评 ${commentTotal} 条 · 标记 ${new Set(marks.map(readingMarkGroupId)).size} 处`,
         "",
     ];
 
@@ -50,15 +53,25 @@ export function buildAnnotationMarkdown(input: AnnotationExportInput): string {
         wroteAny = true;
         lines.push(`## ${chapter.title?.trim() || `第${chapter.index + 1}章`}`, "");
 
-        for (const annotation of chapterAnnotations) {
+        // 批注和段评分两块导出。以前混在一个列表里、只给段评加个「（段评）」后缀，
+        // 导出来看着像同一种东西，还看不出哪条对应哪句话。
+        const notes = chapterAnnotations.filter(isNoteAnnotation);
+        const comments = chapterAnnotations.filter(isCommentAnnotation);
+
+        for (const annotation of notes) {
             if (annotation.quote) lines.push(`> ${annotation.quote.replace(/\n+/g, " ")}`, "");
-            // 段评是段落下面的一串评论，批注是写在某句话旁边的，导出来要分得清，
-            // 否则回头看不出哪条是对哪句说的
-            const isComment = annotation.annotationKind === "comment";
-            if (annotation.quote && !isComment) lines.push(`> ${annotation.quote.replace(/\n+/g, " ")}`, "");
             const who = isUserAnnotation(annotation) ? userName : (annotation.characterName || "TA");
-            const kindTag = isComment ? "（段评）" : "";
-            lines.push(`**${who}**${kindTag}：${annotation.content.replace(/\n+/g, " ")}`, "");
+            lines.push(`**${who}**：${annotation.content.replace(/\n+/g, " ")}`, "");
+        }
+
+        if (comments.length > 0) {
+            lines.push("### 段评", "");
+            for (const annotation of comments) {
+                const who = isUserAnnotation(annotation) ? userName : (annotation.characterName || "TA");
+                const target = annotation.replyToName ? `（回复 ${annotation.replyToName}）` : "";
+                lines.push(`- 第${annotation.paragraphIndex + 1}段 **${who}**${target}：${annotation.content.replace(/\n+/g, " ")}`);
+            }
+            lines.push("");
         }
 
         if (chapterMarks.length > 0) {

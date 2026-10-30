@@ -6,6 +6,7 @@ import { splitBilingualText } from "@/lib/bilingual-text";
 import { scrollElementWithinContainer } from "@/lib/dom-scroll";
 
 import type { ReadingAnnotation, BookChapter } from "@/lib/reading-types";
+import { isCommentAnnotation } from "@/lib/reading-types";
 
 type Props = {
     bookId: string;
@@ -122,6 +123,8 @@ export function PdfPageRenderer({
         if (!chapter?.paragraphPages || !annotations?.length) return [] as HTMLDivElement[];
         const elements: HTMLDivElement[] = [];
         for (const ann of annotations) {
+            // 段评挂在段落下面，PDF 里没有那个 💬 入口，别把它当成批注钉钉在页面上
+            if (isCommentAnnotation(ann)) continue;
             const pIdx = ann.paragraphIndex;
             if (pIdx < 0 || pIdx >= (chapter.paragraphPages?.length || 0)) continue;
             if (chapter.paragraphPages[pIdx] !== pageNum) continue;
