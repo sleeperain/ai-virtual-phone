@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect, type CSSProperties } from "react";
-import { ChevronDown, ChevronRight, Highlighter, Languages, Menu, Minus, PenLine, Rocket, SendHorizontal, X, ZoomIn } from "lucide-react";
+import { ChevronDown, ChevronRight, Highlighter, Languages, Menu, Minus, MoreHorizontal, PenLine, Rocket, SendHorizontal, X, ZoomIn } from "lucide-react";
 import {
     loadChapters,
     loadProgress,
@@ -420,6 +420,15 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     } | null>(null);
     /** 手动触发陪读角色发段评的加载态 */
     const [generatingParagraphComment, setGeneratingParagraphComment] = useState(false);
+    /** 段评弹窗里当前展开「⋯」菜单的那条评论（主评论和回复共用，一次只开一个） */
+    const [commentActionMenuId, setCommentActionMenuId] = useState<string | null>(null);
+    /** 刚从批注列表跳过来时闪一下的那一段，用来让人一眼看到落点 */
+    const [jumpFlash, setJumpFlash] = useState<{ chapterIndex: number; paragraphIndex: number } | null>(null);
+    const jumpFlashTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+    // 离开阅读器时别把定时器留着，否则会在已卸载的组件上 setState
+    useEffect(() => () => {
+        if (jumpFlashTimerRef.current) clearTimeout(jumpFlashTimerRef.current);
+    }, []);
     /** 阅读账号自定义头像 objectURL */
     const [readingProfileAvatarUrl, setReadingProfileAvatarUrl] = useState<string>("");
     const [immersive, setImmersive] = useState(true);
@@ -1377,6 +1386,8 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         setActiveParagraphCommentModal({ chapterIndex: cIdx, paragraphIndex: pIdx });
         setParagraphCommentReplyTarget(null);
         setParagraphCommentDraft("");
+        // 上一次留下的「⋯」菜单别带进来
+        setCommentActionMenuId(null);
         setSentenceMenu(null);
     }, []);
 
@@ -1806,10 +1817,22 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
             activeParagraphCommentModal !== null &&
             activeParagraphCommentModal.chapterIndex === item.chapterIndex &&
             activeParagraphCommentModal.paragraphIndex === item.paragraphIndex;
+        // 刚从批注列表跳过来的那一段：界面上闪一下作为落点提示
+        const isJumpFlash =
+            jumpFlash !== null &&
+            jumpFlash.chapterIndex === item.chapterIndex &&
+            jumpFlash.paragraphIndex === item.paragraphIndex;
         return (
             <p
                 key={key}
-                className={`reading-line${item.indent ? " reading-line-indent" : ""}${item.segEnd ? " reading-line-seg-end" : ""}`}
+                className={`reading-line${item.indent ? " reading-line-indent" : ""}${item.segEnd ? " reading-line-seg-end" : ""}${isJumpFlash ? " is-jump-flash" : ""}`}
+                // 落点提示直接写在行内：这里只有一行要变色，不值得为它加一条全局样式。
+                // 2 秒后状态清掉，靠 transition 淡出，不会「啪」一下消失。
+                style={{
+                    backgroundColor: isJumpFlash ? "rgba(255, 206, 84, 0.34)" : "transparent",
+                    borderRadius: 4,
+                    transition: "background-color 700ms ease",
+                }}
                 data-chapter={item.chapterIndex}
                 data-paragraph={item.paragraphIndex}
                 data-charstart={item.charStart ?? 0}
@@ -2852,6 +2875,17 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         setBookmarks(await loadBookmarks(book.id));
     };
 
+    /** 跳过去以后把落点闪一下，免得翻到那一页还找不到是哪一段。
+     *  2 秒后自动收掉，和 .reading-line.is-jump-flash 的动画时长对应。 */
+    const flashJumpTarget = (chapterIdx: number, paragraphIdx: number) => {
+        if (jumpFlashTimerRef.current) clearTimeout(jumpFlashTimerRef.current);
+        setJumpFlash({ chapterIndex: chapterIdx, paragraphIndex: paragraphIdx });
+        jumpFlashTimerRef.current = setTimeout(() => {
+            setJumpFlash(null);
+            jumpFlashTimerRef.current = undefined;
+        }, 2000);
+    };
+
     /** 批注列表里点了那句原文：跳回它在正文里的位置，并把批注面板收起来。
      *  和书签不一样，这里知道「第几段」，所以优先精确落到那一段所在的页；
      *  跨章时先切章，等目标章的排版算完再定位（见后面两个 effect）。 */
@@ -2866,6 +2900,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
 
         setShowCharAnnotationMenu(false);
         setShowMyMarksPanel(false);
+        flashJumpTarget(target, paragraphIndex);
 
         if (isPdf) {
             // PDF 每段都记了自己在哪一页，直接翻到那一页
@@ -4782,6 +4817,88 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                     };
                 };
 
+                /** 每条段评 / 回复右上角的「⋯」。编辑、删除原来直接摆在外面，
+                 *  手指一滑就误删，改成点开菜单再选。 */
+                const renderCommentActions = (item: ReadingAnnotation, label: string) => {
+                    const open = commentActionMenuId === item.id;
+                    return (
+                        <div className="reading-comment-head-actions" style={{ position: "relative" }}>
+                            <button
+                                type="button"
+                                className="reading-comment-more-btn"
+                                aria-label={`${label}操作`}
+                                aria-haspopup="menu"
+                                aria-expanded={open}
+                                // 内联样式：阅读区没有单独的样式文件承接这个新按钮，
+                                // 不写就会退回浏览器默认的灰底方块
+                                style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    width: 28,
+                                    height: 28,
+                                    padding: 0,
+                                    border: "none",
+                                    borderRadius: 6,
+                                    background: open ? "var(--c-panel-border)" : "transparent",
+                                    color: "var(--c-icon)",
+                                    cursor: "pointer",
+                                }}
+                                onClick={(event) => {
+                                    event.stopPropagation();
+                                    setCommentActionMenuId(open ? null : item.id);
+                                }}
+                            >
+                                <MoreHorizontal size={18} strokeWidth={2} />
+                            </button>
+                            {open && (
+                                <>
+                                    {/* 铺一层透明遮罩接点击：点别处就收起，也免得点空时落到下面的评论上 */}
+                                    <div
+                                        style={{ position: "fixed", inset: 0, zIndex: 40 }}
+                                        onClick={(event) => {
+                                            event.stopPropagation();
+                                            setCommentActionMenuId(null);
+                                        }}
+                                    />
+                                    <div
+                                        className="ctx-menu"
+                                        role="menu"
+                                        style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 41, minWidth: 96 }}
+                                        onClick={(event) => event.stopPropagation()}
+                                    >
+                                        <button
+                                            type="button"
+                                            className="ctx-menu-btn"
+                                            role="menuitem"
+                                            onClick={(event) => {
+                                                event.stopPropagation();
+                                                setCommentActionMenuId(null);
+                                                setEditingAnnotation(item);
+                                                setEditingText(item.content);
+                                            }}
+                                        >
+                                            编辑
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="ctx-menu-btn ctx-menu-btn-danger"
+                                            role="menuitem"
+                                            onClick={(event) => {
+                                                event.stopPropagation();
+                                                setCommentActionMenuId(null);
+                                                void handleDeleteReadingAnnotation(item.id);
+                                            }}
+                                        >
+                                            删除
+                                        </button>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+                    );
+                };
+
                 return (
                     <div
                         className="reading-comment-modal-backdrop"
@@ -4791,6 +4908,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                             e.stopPropagation();
                             setActiveParagraphCommentModal(null);
                             setParagraphCommentReplyTarget(null);
+                            setCommentActionMenuId(null);
                         }}
                     >
                         <div
@@ -4839,27 +4957,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                                     <div className="reading-comment-main">
                                                         <div className="reading-comment-name-row">
                                                             <span className="reading-comment-name">{author.name}</span>
-                                                            <div className="reading-comment-head-actions">
-                                                                <button
-                                                                    type="button"
-                                                                    className="reading-comment-edit-btn"
-                                                                    onClick={() => {
-                                                                        setEditingAnnotation(comment);
-                                                                        setEditingText(comment.content);
-                                                                    }}
-                                                                    aria-label="编辑段评"
-                                                                >
-                                                                    编辑
-                                                                </button>
-                                                                <button
-                                                                    type="button"
-                                                                    className="reading-comment-delete-btn"
-                                                                    onClick={() => { void handleDeleteReadingAnnotation(comment.id); }}
-                                                                    aria-label="删除段评"
-                                                                >
-                                                                    删除
-                                                                </button>
-                                                            </div>
+                                                            {renderCommentActions(comment, "段评")}
                                                         </div>
                                                         <div className="reading-comment-content">{comment.content}</div>
                                                         <div className="reading-comment-meta">
@@ -4901,27 +4999,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                                                                             <span className="reading-comment-reply-to"> 回复 {reply.replyToName}</span>
                                                                                         ) : null}
                                                                                     </span>
-                                                                                    <div className="reading-comment-head-actions">
-                                                                                        <button
-                                                                                            type="button"
-                                                                                            className="reading-comment-edit-btn"
-                                                                                            onClick={() => {
-                                                                                                setEditingAnnotation(reply);
-                                                                                                setEditingText(reply.content);
-                                                                                            }}
-                                                                                            aria-label="编辑回复"
-                                                                                        >
-                                                                                            编辑
-                                                                                        </button>
-                                                                                        <button
-                                                                                            type="button"
-                                                                                            className="reading-comment-delete-btn"
-                                                                                            onClick={() => { void handleDeleteReadingAnnotation(reply.id); }}
-                                                                                            aria-label="删除回复"
-                                                                                        >
-                                                                                            删除
-                                                                                        </button>
-                                                                                    </div>
+                                                                                    {renderCommentActions(reply, "回复")}
                                                                                 </div>
                                                                                 <div className="reading-comment-content">{reply.content}</div>
                                                                                 <div className="reading-comment-meta">
