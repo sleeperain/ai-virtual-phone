@@ -77,11 +77,14 @@ type TxtPageItem =
 const MENU_HALF_WIDTH = 152;
 
 /** 段评「⋯」菜单里图标和文字取同一号：图标比字大看起来头重脚轻，两行也对不齐 */
-const READING_MENU_ICON_SIZE = 14;
-const READING_MENU_FONT_SIZE = 14;
-/** 这个菜单往下展开要占的高度：两行（各 8+8 内边距 + 一行字）+ 4 内边距 + 与按钮的 4 间距。
+const READING_MENU_ICON_SIZE = 11;
+const READING_MENU_FONT_SIZE = 11;
+/** 小字号下描边也得跟着加粗一点：strokeWidth 是按 24 的 viewBox 算的，
+ *  缩到 11px 只剩不到一像素，1.8 会显得发虚 */
+const READING_MENU_ICON_STROKE = 2.2;
+/** 这个菜单往下展开要占的高度：两行（各 5+5 内边距 + 一行 11px 字）+ 4 内边距 + 与按钮的 4 间距。
  *  只在判断「下方还剩不剩地方」时用，宁可估大一点。 */
-const READING_MENU_ESTIMATED_HEIGHT = 80;
+const READING_MENU_ESTIMATED_HEIGHT = 64;
 
 /** 正文句子/已有标记的长按时长：和批注卡片、共读消息的长按保持一致 */
 const SENTENCE_LONG_PRESS_MS = 500;
@@ -4911,12 +4914,13 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                             // 输入框那一行带自己的层级，原来 41 会被它压住；
                                             // 抬到 60，保证菜单永远在最上面（遮罩是 40）
                                             zIndex: 60,
-                                            minWidth: 104,
+                                            // 字号降到 11px 后整块跟着收：宽度和行距都别按 14px 的量留
+                                            minWidth: 76,
                                             // 纵向排列：左边图标、右边文字，一行一项
                                             display: "flex",
                                             flexDirection: "column",
-                                            padding: 4,
-                                            gap: 2,
+                                            padding: 3,
+                                            gap: 1,
                                             // 固定白底：跟着主题走的话深色主题下这块会变成深色，
                                             // 和段评弹窗的浅色底对不上。白底要配深色字，否则看不清。
                                             background: "#fff",
@@ -4938,11 +4942,12 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                             style={{
                                                 display: "flex",
                                                 alignItems: "center",
-                                                gap: 8,
+                                                // 11px 字配 5px 图标间距就够，8px 会显得中间空了一截
+                                                gap: 5,
                                                 width: "100%",
-                                                padding: "8px 10px",
+                                                padding: "5px 7px",
                                                 border: "none",
-                                                borderRadius: 6,
+                                                borderRadius: 5,
                                                 background: "transparent",
                                                 // 白底上要用深色字，不能沿用它原来的颜色（那是按深色底配的）
                                                 color: "var(--c-text-title)",
@@ -4958,7 +4963,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                                 setEditingText(item.content);
                                             }}
                                         >
-                                            <PenLine size={READING_MENU_ICON_SIZE} strokeWidth={1.8} aria-hidden="true" />
+                                            <PenLine size={READING_MENU_ICON_SIZE} strokeWidth={READING_MENU_ICON_STROKE} aria-hidden="true" />
                                             <span>编辑</span>
                                         </button>
                                         <button
@@ -4968,11 +4973,11 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                             style={{
                                                 display: "flex",
                                                 alignItems: "center",
-                                                gap: 8,
+                                                gap: 5,
                                                 width: "100%",
-                                                padding: "8px 10px",
+                                                padding: "5px 7px",
                                                 border: "none",
-                                                borderRadius: 6,
+                                                borderRadius: 5,
                                                 background: "transparent",
                                                 color: "var(--c-danger)",
                                                 // 字号必须显式写：不写就继承菜单容器的默认字号，
@@ -4988,7 +4993,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                                 void handleDeleteReadingAnnotation(item.id);
                                             }}
                                         >
-                                            <Trash2 size={READING_MENU_ICON_SIZE} strokeWidth={1.8} aria-hidden="true" />
+                                            <Trash2 size={READING_MENU_ICON_SIZE} strokeWidth={READING_MENU_ICON_STROKE} aria-hidden="true" />
                                             <span>删除</span>
                                         </button>
                                     </div>
