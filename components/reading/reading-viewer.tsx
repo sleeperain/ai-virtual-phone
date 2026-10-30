@@ -4875,6 +4875,13 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                             flexDirection: "column",
                                             padding: 4,
                                             gap: 2,
+                                            // 固定白底：跟着主题走的话深色主题下这块会变成深色，
+                                            // 和段评弹窗的浅色底对不上。白底要配深色字，否则看不清。
+                                            background: "#fff",
+                                            color: "var(--c-text-title)",
+                                            border: "1px solid var(--c-panel-border)",
+                                            borderRadius: 8,
+                                            boxShadow: "0 6px 18px rgba(0, 0, 0, 0.16)",
                                         }}
                                         onClick={(event) => event.stopPropagation()}
                                     >
@@ -4891,7 +4898,9 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                                 border: "none",
                                                 borderRadius: 6,
                                                 background: "transparent",
-                                                color: "inherit",
+                                                // 白底上要用深色字，不能沿用它原来的颜色（那是按深色底配的）
+                                                color: "var(--c-text-title)",
+                                                fontSize: 14,
                                                 textAlign: "left",
                                                 cursor: "pointer",
                                             }}
