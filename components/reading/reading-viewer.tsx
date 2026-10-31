@@ -907,15 +907,20 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         syncSentenceHandles();
     }, [syncSentenceHandles]);
 
-    // 滚一滚、转个屏，字的位置就变了，把手跟着重新贴一次
+    // 滚一滚、转个屏，字的位置就变了，把手跟着重新贴一次。
+    // 翻页模式下 .reading-page-content 自己也是滚动区（展开批注撑高时才会滚），
+    // scroll 不冒泡，所以在 surface 上用捕获阶段一并接住内部各层的滚动。
     useEffect(() => {
         if (!sentenceMenu) return;
         const body = scrollRef.current;
+        const surface = surfaceRef.current;
         const onShift = () => syncSentenceHandles();
         body?.addEventListener("scroll", onShift, { passive: true });
+        surface?.addEventListener("scroll", onShift, { passive: true, capture: true });
         window.addEventListener("resize", onShift);
         return () => {
             body?.removeEventListener("scroll", onShift);
+            surface?.removeEventListener("scroll", onShift, { capture: true } as EventListenerOptions);
             window.removeEventListener("resize", onShift);
         };
     }, [sentenceMenu, syncSentenceHandles]);
@@ -1794,20 +1799,36 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         return Math.max(0, Math.min(paragraphLength, end));
     };
 
+    /** 把某个元素滚进它所在滚动容器的可见范围。只挪 scrollTop，不用 scrollIntoView——
+     *  那会把外层手机壳（甚至整个页面）一起滚走。 */
+    const revealInScrollContainer = (container: HTMLElement | null, el: HTMLElement, margin = 12) => {
+        if (!container) return;
+        const containerRect = container.getBoundingClientRect();
+        const elRect = el.getBoundingClientRect();
+        const overBottom = elRect.bottom - containerRect.bottom + margin;
+        const overTop = containerRect.top - elRect.top + margin;
+        if (overBottom > 0) container.scrollTop += overBottom;
+        else if (overTop > 0) container.scrollTop -= overTop;
+    };
+
     /** 展开后把卡片露出来：它插在被批注那一段的下方，可能正好在视口外。
-     *  只挪阅读区自己的 scrollTop，不用 scrollIntoView——那会把外层手机壳一起滚走。 */
+     *  卡片自己那一层（`.reading-page-content`）在翻页模式下是滚动区，
+     *  滚动模式下则在正文区 `scrollRef` 里——两边都试一次，哪层真能滚就滚哪层。 */
     const ensureNoteCardVisible = (noteId: string) => {
         const reveal = () => {
-            const body = scrollRef.current;
             const el = surfaceRef.current?.querySelector<HTMLElement>(`[data-annotation-id="${noteId}"]`);
-            if (!body || !el) return;
-            const bodyRect = body.getBoundingClientRect();
-            const elRect = el.getBoundingClientRect();
-            const margin = 12;
-            const overBottom = elRect.bottom - bodyRect.bottom + margin;
-            const overTop = bodyRect.top - elRect.top + margin;
-            if (overBottom > 0) body.scrollTop += overBottom;
-            else if (overTop > 0) body.scrollTop -= overTop;
+            if (!el) return;
+            // 从卡片往上找到最近的可滚动祖先，优先照顾它
+            for (let node = el.parentElement; node && node !== surfaceRef.current; node = node.parentElement) {
+                const style = window.getComputedStyle(node);
+                const scrollable = /(auto|scroll)/.test(style.overflowY)
+                    && node.scrollHeight > node.clientHeight + 1;
+                if (scrollable) {
+                    revealInScrollContainer(node, el);
+                    return;
+                }
+            }
+            revealInScrollContainer(scrollRef.current, el);
         };
         // 等卡片真正进 DOM 再量：一帧内 setState 还没 commit，量到的是旧布局
         window.requestAnimationFrame(() => window.requestAnimationFrame(reveal));
