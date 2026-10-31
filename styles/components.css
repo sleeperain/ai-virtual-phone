@@ -6177,22 +6177,32 @@
   transform: scale(0.86);
 }
 
-/* 展开批注会把这一页撑得比一屏高，末行不能因为裁剪就看不见。这里给两道保险，
-   任意一道生效都够用（只依赖阅读区自己的滚动能力，不改版面基准）：
-
-   ① 页面内容自成滚动区：高度封顶一屏，超出就在卡片所在的这一页里滚。
-   ② 外层三代容器一律放开裁剪，溢出照常流进正文区的滚动区域。 */
+/* 展开批注会把这一页撑得比一屏高，末行不能因为裁剪就看不见：
+   这三层全部放开裁剪，让超出的部分流进外层正文区（它本来就是滚动容器）。
+   ⚠️ 千万不要把 .reading-page-content 改成自己的滚动容器（overflow-y:auto）——
+   一旦这里出现滚动条，浏览器会给它预留宽度，可用宽度比排版时量的窄一点点，
+   于是每一行都差一个字符：末尾那个字被挤到下一行，整页看着像「一行一个碎字」。
+   末行可见性靠外层放开裁剪 + 正文区滚动来保证，不改这一层的盒子。 */
 .reading-app-surface .reading-page-stage,
-.reading-app-surface .reading-page-surface {
+.reading-app-surface .reading-page-surface,
+.reading-app-surface .reading-page-content {
   overflow: visible !important;
   max-height: none !important;
 }
 
-.reading-app-surface .reading-page-content {
-  overflow-x: visible !important;
-  overflow-y: auto !important;
-  max-height: 100% !important;
-  -webkit-overflow-scrolling: touch;
+/* 正文区（data-ui="body"）在翻页模式下也允许纵向滚动（展开批注撑高时才滚得动）。
+   但滚动条本身会占宽度，桌面端/PWA 里会把可用宽度挤窄十几个像素——
+   排版是按挤窄之前的宽度量的，于是每行末尾那个字被挤到下一行，整页「一行一个碎字」。
+   所以这里把滚动条宽度归零：照样能滚，只是不占地方、不显示。 */
+.reading-app-surface [data-ui="body"] {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.reading-app-surface [data-ui="body"]::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 /* 展开的批注卡片是插进正文流的块：父级如果是 flex 列，卡片会被压扁/裁掉，

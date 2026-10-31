@@ -1812,8 +1812,8 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     };
 
     /** 展开后把卡片露出来：它插在被批注那一段的下方，可能正好在视口外。
-     *  卡片自己那一层（`.reading-page-content`）在翻页模式下是滚动区，
-     *  滚动模式下则在正文区 `scrollRef` 里——两边都试一次，哪层真能滚就滚哪层。 */
+     *  从卡片往上找最近的可滚动祖先，找到谁就滚谁；都没有就交给正文区 `scrollRef`。
+     *  （翻页模式下页面那几层是放开裁剪、不自己滚的，最终落到正文区上。） */
     const ensureNoteCardVisible = (noteId: string) => {
         const reveal = () => {
             const el = surfaceRef.current?.querySelector<HTMLElement>(`[data-annotation-id="${noteId}"]`);
