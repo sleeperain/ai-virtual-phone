@@ -533,7 +533,7 @@ export function PhoneThemeApp({
         >
           <div className="flex flex-col gap-4">
             <p className="ts-13 leading-relaxed text-[var(--c-text)]">
-              主题包会包含主题色、壁纸、图标、网页图标、桌面组件、自定义组件，以及桌面图标和组件位置。
+              主题包会包含主题色、壁纸、图标、桌面组件、自定义组件，以及桌面图标和组件位置。
             </p>
             <div className="grid grid-cols-2 gap-8 py-1">
               <button
