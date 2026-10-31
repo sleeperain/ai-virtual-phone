@@ -6124,6 +6124,69 @@
   padding-left: 2px;
 }
 
+/* ══════════════════════════════════════════
+   阅读 · 连续滚动模式的滚动容器
+   章节块是列式 flex 的子项，默认可被压缩：内容略超容器时子项被压进容器
+   （scrollHeight == clientHeight），手指怎么划都不动，只能去点「下一章」。
+   这里钉死子项自然高度，超出即滚——短章节滑不动的另一半原因就在这。
+   ══════════════════════════════════════════ */
+.reading-app-surface .reading-scroll-content,
+.reading-app-surface .reading-scroll-content > *,
+.reading-app-surface .reading-scroll-block,
+.reading-app-surface .reading-scroll-segment {
+  flex-shrink: 0;
+  min-height: 0;
+}
+
+/* ══════════════════════════════════════════
+   阅读 · 行内批注羽毛（🪶）
+   翻页模式下批注不再作为独立块参与分页（那样会把当页最末几行挤出屏幕，
+   而翻页容器不滚动，末行怎么都看不到）。改成在被批注文字「最末字」右侧
+   挂一枚比正文小一号的羽毛：点开就地展开卡片、下文顺次下推，
+   正文区已放开纵向滚动，展开撑高了也能滚到。
+   ══════════════════════════════════════════ */
+.reading-app-surface .reading-note-feather {
+  display: inline-block;
+  /* 0.7em 跟着阅读字号/字体一起缩放，不另配变量 */
+  font-size: 0.7em;
+  line-height: 1;
+  /* 紧贴最后一个字：左边留 1px，右边不吃字距 */
+  margin: 0 0 0 1px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  /* emoji 基线比汉字低，往上抬一点才和字的中线齐平 */
+  vertical-align: 0.15em;
+  opacity: 0.62;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+/* 展开态亮起来：一眼看出这段正文挂着哪条批注 */
+.reading-app-surface .reading-note-feather[data-open] {
+  opacity: 1;
+}
+
+.reading-app-surface .reading-note-feather:active {
+  opacity: 1;
+  transform: scale(0.86);
+}
+
+/* 展开批注会把这一页撑得比一屏高。这几个容器原先是谁裁剪谁就看不见：
+   一律放开，溢出部分计入外层正文区的滚动区域，末行照样滚得到。
+   高度不动（保持一屏），只放开裁剪，避免影响翻页动画的版面基准。 */
+.reading-app-surface .reading-page-stage,
+.reading-app-surface .reading-page-surface,
+.reading-app-surface .reading-page-content {
+  overflow: visible !important;
+  max-height: none !important;
+}
+
 /* 提示词查看器：组成标签默认收起，点小按钮展开 */
 .pv-msg-badge-toggle {
   display: inline-flex;

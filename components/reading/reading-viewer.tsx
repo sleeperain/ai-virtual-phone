@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect, type CSSProperties } from "react";
+import { Fragment, useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect, type CSSProperties } from "react";
 import { ChevronDown, ChevronRight, Highlighter, Languages, Menu, Minus, MoreHorizontal, PenLine, Rocket, SendHorizontal, Trash2, X, ZoomIn } from "lucide-react";
 import {
     loadChapters,
@@ -68,7 +68,7 @@ import {
 import { loadReadingAsset } from "@/lib/reading-appearance";
 
 type TxtPageItem =
-    | { kind: "line"; text: string; chapterIndex: number; paragraphIndex: number; indent?: boolean; segEnd?: boolean; charStart?: number; annotationCount?: number }
+    | { kind: "line"; text: string; chapterIndex: number; paragraphIndex: number; indent?: boolean; segEnd?: boolean; charStart?: number; annotationCount?: number; notes?: ReadingAnnotation[] }
     | { kind: "gap"; chapterIndex: number; paragraphIndex: number }
     | { kind: "image"; image: ReadingImageRef; chapterIndex: number; paragraphIndex: number }
     | { kind: "annotation"; annotation: ReadingAnnotation; chapterIndex: number; paragraphIndex: number };
@@ -515,6 +515,9 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     const [editingText, setEditingText] = useState("");
     const [annotationTranslationOverrides, setAnnotationTranslationOverrides] = useState<Record<string, boolean>>({});
     const [openAnnotationParagraphs, setOpenAnnotationParagraphs] = useState<Record<string, boolean>>({});
+    /** 翻页模式下就地展开的句子批注。默认全部收起，正文里只留一枚 🪶。
+     *  展开把下文推下去、不收进分页高度——所以这一页可能比一屏高，正文区允许滚动。 */
+    const [expandedNotes, setExpandedNotes] = useState<Record<string, boolean>>({});
     const toggleParagraphAnnotationBubble = useCallback((cIdx: number, pIdx: number) => {
         const key = `${cIdx}:${pIdx}`;
         setOpenAnnotationParagraphs((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -586,6 +589,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
 
     useEffect(() => {
         setOpenAnnotationParagraphs({});
+        setExpandedNotes({});
     }, [book.id]);
 
     const companion = companionId ? (enrichedContacts.find(c => c.characterId === companionId)?.char || loadCharacters().find(c => c.id === companionId)) : null;
@@ -601,7 +605,23 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     const windowChapters = useMemo(() => {
         if (chapters.length === 0) return [] as BookChapter[];
         const start = Math.max(0, chapterIndex - 1);
-        const end = Math.min(chapters.length - 1, chapterIndex + 1);
+        let end = Math.min(chapters.length - 1, chapterIndex + 1);
+        const charCount = (chapter: BookChapter) => chapter.paragraphs.reduce((sum, paragraph) => sum + paragraph.length, 0);
+        // 短章节（版权页、一句话的小节、诗歌）三章拼起来也撑不满一屏时，滚动余量恒为 0：
+        // 手指怎么划都不动，只能去点「下一章」。所以窗口往后多吃几章，吃到「够两屏左右」为止，
+        // 实在没得吃（已经到书尾）也就到底了，不会硬撑。
+        let chars = 0;
+        for (let i = start; i <= end; i += 1) chars += charCount(chapters[i]);
+        // 2400 字约等于两三屏；上限给到 12 章，是为了「每章只有几十个字」的书
+        // （诗歌、日记体、版权页连着版权页）也能凑够可滑动的长度。
+        const MIN_WINDOW_CHARS = 2400;
+        const MAX_EXTRA_CHAPTERS = 12;
+        let extra = 0;
+        while (chars < MIN_WINDOW_CHARS && end < chapters.length - 1 && extra < MAX_EXTRA_CHAPTERS) {
+            end += 1;
+            extra += 1;
+            chars += charCount(chapters[end]);
+        }
         const out: BookChapter[] = [];
         for (let i = start; i <= end; i++) out.push(chapters[i]);
         return out;
@@ -748,7 +768,16 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                             ? renderAnnotationItem(item.annotation)
                             : item.kind === "image"
                                 ? renderImageItem(item.image, i)
-                                : renderLine(item, i)
+                                : (
+                                    <Fragment key={i}>
+                                        {renderLine(item, i)}
+                                        {/* 点开 🪶 后，批注卡片就地接在这一行下面，下文顺次往下推。
+                                            这一页因此有可能比一屏高——正文区已经允许滚动，末行不会再被裁掉。 */}
+                                        {(item.notes || [])
+                                            .filter((note) => expandedNotes[note.id])
+                                            .map((note) => renderAnnotationItem(note))}
+                                    </Fragment>
+                                )
                 ))}
             </div>
         );
@@ -1756,7 +1785,43 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         return parts;
     };
 
-    /** 按「。」「？」「！」拆分出的句子包裹每行正文，并把落在本行区间内的荧光笔/划线渲染为片段 */
+    /** 一条句子批注的锚点：被批注文字「最末字之后」在段落里的字符位置。
+     *  老数据没有 quoteEnd（整段批注），退回段末。 */
+    const noteAnchorOffset = (note: ReadingAnnotation, paragraphLength: number): number => {
+        const end = typeof note.quoteEnd === "number" && note.quoteEnd > 0 ? note.quoteEnd : paragraphLength;
+        return Math.max(0, Math.min(paragraphLength, end));
+    };
+
+    /** 行内那枚小羽毛。点一下就在这一行下面把批注卡片展开/收起（就地展开、下文顺次推下去），
+     *  所以它本身不占正文高度，也不参与分页。 */
+    const renderNoteFeather = (note: ReadingAnnotation) => {
+        const open = expandedNotes[note.id] === true;
+        return (
+            <button
+                key={`feather-${note.id}`}
+                type="button"
+                className="reading-note-feather"
+                data-open={open ? "" : undefined}
+                data-no-nav="true"
+                aria-label={open ? "收起这条批注" : "展开这条批注"}
+                aria-expanded={open}
+                onPointerDown={(e) => e.stopPropagation()}
+                onPointerUp={(e) => e.stopPropagation()}
+                onPointerCancel={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                    // 别让阅读区把这一下当成「点空白处收起菜单」或「左右三分之一翻页」
+                    e.stopPropagation();
+                    setExpandedNotes((prev) => ({ ...prev, [note.id]: !prev[note.id] }));
+                }}
+            >
+                🪶
+            </button>
+        );
+    };
+
+    /** 按「。」「？」「！」拆分出的句子包裹每行正文，并把落在本行区间内的荧光笔/划线渲染为片段。
+     *  行内还要插 🪶：位置是「被批注文字最末字」的右边，不是整行末尾——所以渲染前先把
+     *  句子边界和羽毛锚点一起当成切点，逐片铺出去，羽毛落在它对应的那一刀上。 */
     const renderLineContent = (item: Extract<TxtPageItem, { kind: "line" }>) => {
         const lineStart = item.charStart ?? 0;
         const lineEnd = lineStart + item.text.length;
@@ -1771,32 +1836,47 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         const sentenceSpans = (sentencesByParagraph.get(pKey) || []).filter(
             (span) => span.start < lineEnd && span.end > lineStart,
         );
-        if (sentenceSpans.length === 0) {
-            return renderRangeWithActiveSelection(item.text, lineStart, lineStart, lineEnd, paragraphMarks, activeRange, `L${lineStart}`);
+        const paragraphLength = chapters[item.chapterIndex]?.paragraphs[item.paragraphIndex]?.length ?? lineEnd;
+        // 锚点落在本行内的批注 → 羽毛插在这个字符位置上；跨行的批注只在末字那一行出现一次
+        const feathersAt = new Map<number, ReadingAnnotation[]>();
+        for (const note of item.notes || []) {
+            const anchor = Math.max(lineStart, Math.min(lineEnd, noteAnchorOffset(note, paragraphLength)));
+            const bucket = feathersAt.get(anchor);
+            if (bucket) bucket.push(note);
+            else feathersAt.set(anchor, [note]);
         }
 
+        // 切点：行首行尾、句子边界、羽毛锚点。逐片渲染，羽毛紧贴它所属那一刀的右侧。
+        const cutPoints = new Set<number>([lineStart, lineEnd]);
+        for (const span of sentenceSpans) {
+            if (span.start > lineStart && span.start < lineEnd) cutPoints.add(span.start);
+            if (span.end > lineStart && span.end < lineEnd) cutPoints.add(span.end);
+        }
+        for (const anchor of feathersAt.keys()) cutPoints.add(anchor);
+        const points = [...cutPoints].sort((a, b) => a - b);
+
         const nodes: React.ReactNode[] = [];
-        let cursor = lineStart;
-        sentenceSpans.forEach((span, idx) => {
-            const from = Math.max(cursor, span.start);
-            const to = Math.min(lineEnd, span.end);
-            if (from > cursor) {
-                nodes.push(
-                    renderRangeWithActiveSelection(
-                        item.text,
-                        lineStart,
-                        cursor,
-                        from,
-                        paragraphMarks,
-                        activeRange,
-                        `L${lineStart}-gap-${idx}`,
-                    ),
-                );
-            }
-            if (to > from) {
+        for (let i = 0; i < points.length - 1; i += 1) {
+            const from = points[i];
+            const to = points[i + 1];
+            // 先把落在这个切点上的羽毛铺出去，再铺它右边的那一片字，
+            // 顺序正好是「被批注的最后一个字 → 🪶 → 后面的字」
+            for (const note of feathersAt.get(from) || []) nodes.push(renderNoteFeather(note));
+            if (to <= from) continue;
+            const slice = renderRangeWithActiveSelection(
+                item.text,
+                lineStart,
+                from,
+                to,
+                paragraphMarks,
+                activeRange,
+                `L${lineStart}-${from}`,
+            );
+            const span = sentenceSpans.find((item2) => item2.start <= from && item2.end >= to);
+            if (span) {
                 nodes.push(
                     <span
-                        key={`sent-${span.start}-${idx}`}
+                        key={`sent-${span.start}-${from}`}
                         className="reading-sentence"
                         data-sentence-chapter={item.chapterIndex}
                         data-sentence-paragraph={item.paragraphIndex}
@@ -1804,33 +1884,15 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                         data-sentence-end={span.end}
                         data-no-nav="true"
                     >
-                        {renderRangeWithActiveSelection(
-                            item.text,
-                            lineStart,
-                            from,
-                            to,
-                            paragraphMarks,
-                            activeRange,
-                            `L${lineStart}-s-${idx}`,
-                        )}
+                        {slice}
                     </span>,
                 );
-                cursor = to;
+            } else {
+                nodes.push(<Fragment key={`slice-${from}`}>{slice}</Fragment>);
             }
-        });
-        if (cursor < lineEnd) {
-            nodes.push(
-                renderRangeWithActiveSelection(
-                    item.text,
-                    lineStart,
-                    cursor,
-                    lineEnd,
-                    paragraphMarks,
-                    activeRange,
-                    `L${lineStart}-end`,
-                ),
-            );
         }
+        // 行尾那一刀的羽毛（锚点 = 行末 / 整段批注）
+        for (const note of feathersAt.get(points[points.length - 1]) || []) nodes.push(renderNoteFeather(note));
         return nodes;
     };
 
@@ -3482,6 +3544,11 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
             const sentenceNotes = paragraphAnnotations.filter(isNoteAnnotation);
             const paragraphComments = paragraphAnnotations.filter((a) => !isNoteAnnotation(a));
             const insertedNoteIds = new Set<string>();
+            // 行内 🪶 是真的占字宽的（约 0.7 个字号 + 1px 间距）。不预留的话，带批注的那些行
+            // 会在渲染时被这枚羽毛顶出新的一行，行数和分页算出来的对不上。
+            // 按段落预留一次，宁可这一段的断行早一点点，也不会多折行。
+            const featherReserve = sentenceNotes.length > 0 ? Math.ceil(fontSize * 0.8) : 0;
+            const wrapWidth = Math.max(1, maxWidth - featherReserve);
             const segments = paragraph.split("\n");
             // 段落内的字符游标：wrapTextToLines 不裁剪字符，各行拼接等于原段落，
             // 所以逐行累加长度就能得到每行在段落中的起始偏移（荧光笔/划线按此定位）。
@@ -3489,11 +3556,29 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
             segments.forEach((segment, segmentIndex) => {
                 const shouldIndent = segmentIndex === 0;
                 const isLastSegment = segmentIndex === segments.length - 1;
-                const wrappedLines = wrapTextToLines(segment, maxWidth, ctx, shouldIndent ? indentWidth : 0);
+                const wrappedLines = wrapTextToLines(segment, wrapWidth, ctx, shouldIndent ? indentWidth : 0);
                 wrappedLines.forEach((line, lineIndex) => {
                     const isLastLine = isLastSegment && lineIndex === wrappedLines.length - 1;
                     const lineStart = charCursor;
                     const lineEnd = lineStart + line.length;
+                    // 句子批注不再作为独立块参与分页。以前它是按一个「量具节点」估高度插进正文流的，
+                    // 估矮了就撑破一页：当页最末几行被裁掉，而且翻页容器不滚动，怎么都看不到。
+                    // 现在批注只挂在「被批注文字最末字所在的那一行」上（行内出现一枚 🪶），
+                    // 分页只按纯文字行算高度，批注写多长都不影响排版。
+                    const lineNotes = sentenceNotes.filter((note) => {
+                        if (insertedNoteIds.has(note.id)) return false;
+                        const targetEnd = typeof note.quoteEnd === "number" && note.quoteEnd > 0
+                            ? note.quoteEnd
+                            : paragraph.length;
+                        if (
+                            (targetEnd > lineStart && targetEnd <= lineEnd)
+                            || (isLastLine && targetEnd > lineEnd)
+                        ) {
+                            insertedNoteIds.add(note.id);
+                            return true;
+                        }
+                        return false;
+                    });
                     tokens.push({
                         kind: "line",
                         text: line,
@@ -3502,27 +3587,23 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                         indent: shouldIndent && lineIndex === 0,
                         segEnd: lineIndex === wrappedLines.length - 1,
                         charStart: lineStart,
+                        ...(lineNotes.length > 0 ? { notes: lineNotes } : {}),
                         ...(isLastLine && paragraphComments.length > 0 ? { annotationCount: paragraphComments.length } : {}),
                     });
-                    // 找出被高亮/划线句子最末字落在当前行的批注，紧贴本行正下方渲染
-                    for (const note of sentenceNotes) {
-                        const targetEnd = typeof note.quoteEnd === "number" ? note.quoteEnd : paragraph.length;
-                        if (
-                            !insertedNoteIds.has(note.id) &&
-                            ((targetEnd > lineStart && targetEnd <= lineEnd) || (isLastLine && targetEnd > lineEnd))
-                        ) {
-                            insertedNoteIds.add(note.id);
-                            tokens.push({ kind: "annotation", annotation: note, chapterIndex, paragraphIndex: index });
-                        }
-                    }
                     charCursor += line.length;
                 });
                 if (segmentIndex < segments.length - 1) charCursor += 1; // 被 split 掉的 \n
                 if (segmentIndex < segments.length - 1) tokens.push({ kind: "gap", chapterIndex, paragraphIndex: index });
             });
-            for (const note of sentenceNotes) {
-                if (!insertedNoteIds.has(note.id)) {
-                    tokens.push({ kind: "annotation", annotation: note, chapterIndex, paragraphIndex: index });
+            // 没对上任何一行的（老数据没有 quoteEnd、锚点算到了段首之前、整段只有一行空行）：
+            // 挂到本段最后一个正文行的行尾，至少还找得到、点得开。
+            const leftoverNotes = sentenceNotes.filter((note) => !insertedNoteIds.has(note.id));
+            if (leftoverNotes.length > 0) {
+                for (let i = tokens.length - 1; i >= 0; i -= 1) {
+                    const token = tokens[i];
+                    if (token.kind !== "line" || token.paragraphIndex !== index) continue;
+                    tokens[i] = { ...token, notes: [...(token.notes || []), ...leftoverNotes] };
+                    break;
                 }
             }
             if (index < currentChapter.paragraphs.length - 1) tokens.push({ kind: "gap", chapterIndex, paragraphIndex: index });
@@ -3741,7 +3822,10 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     useEffect(() => {
         if (isScrollMode) return;
         scrollRef.current?.scrollTo(0, 0);
-    }, [txtPage, isScrollMode]);
+        // 翻页时把就地展开的批注收起来：那一页已经翻走了，留着展开态会让下一页
+        // 一进来就带着「比一屏高」的排版和残留的滚动位置。
+        setExpandedNotes((prev) => (Object.keys(prev).length === 0 ? prev : {}));
+    }, [txtPage, chapterIndex, isScrollMode]);
 
     // 展开/收起段末批注气泡后，滚动模式下重新测量章节块高度
     useLayoutEffect(() => {
@@ -4100,7 +4184,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
             {/* Reading content */}
             <div
                 ref={scrollRef}
-                className={`relative flex-1 min-h-0 px-4 pt-1 pb-3 ${(isPdf || isScrollMode) ? "overflow-auto" : "overflow-hidden"}`}
+                className={`relative flex-1 min-h-0 px-4 pt-1 pb-3 ${(isPdf || isScrollMode) ? "overflow-auto" : "overflow-y-auto overflow-x-hidden"}`}
                 data-ui="body"
                 onClick={handleReadingSurfaceClick}
             >
