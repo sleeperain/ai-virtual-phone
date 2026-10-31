@@ -6187,6 +6187,14 @@
   max-height: none !important;
 }
 
+/* 展开的批注卡片是插进正文流的块：父级如果是 flex 列，卡片会被压扁/裁掉，
+   钉死自然高度，让下文老老实实往下推。 */
+.reading-app-surface .reading-page-content > .reading-annotation,
+.reading-app-surface .reading-scroll-segment > .reading-annotation,
+.reading-app-surface .reading-scroll-block > .reading-annotation {
+  flex-shrink: 0;
+}
+
 /* 提示词查看器：组成标签默认收起，点小按钮展开 */
 .pv-msg-badge-toggle {
   display: inline-flex;

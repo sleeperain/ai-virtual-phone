@@ -1589,11 +1589,13 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     };
 
     // 批注块（翻页与滚动模式共用）：长按呼出 编辑/复制/删除 菜单
+    // data-annotation-id 是给「点开 🪶 后把卡片滚进视野」用的
     const renderAnnotationItem = (annotation: ReadingAnnotation) => (
         <div
             key={annotation.id}
             // 菜单挂在卡片下沿外面，不抬层就会被下一张批注卡片盖住
             className={`reading-annotation reading-annotation-interactive${activeAnnotationId === annotation.id ? " is-menu-open" : ""}`}
+            data-annotation-id={annotation.id}
             data-author={annotation.authorType === "user" ? "user" : "character"}
             data-no-nav="true"
             onPointerDown={() => {
@@ -1792,8 +1794,27 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         return Math.max(0, Math.min(paragraphLength, end));
     };
 
-    /** 行内那枚小羽毛。点一下就在这一行下面把批注卡片展开/收起（就地展开、下文顺次推下去），
-     *  所以它本身不占正文高度，也不参与分页。 */
+    /** 展开后把卡片露出来：它插在被批注那一段的下方，可能正好在视口外。
+     *  只挪阅读区自己的 scrollTop，不用 scrollIntoView——那会把外层手机壳一起滚走。 */
+    const ensureNoteCardVisible = (noteId: string) => {
+        const reveal = () => {
+            const body = scrollRef.current;
+            const el = surfaceRef.current?.querySelector<HTMLElement>(`[data-annotation-id="${noteId}"]`);
+            if (!body || !el) return;
+            const bodyRect = body.getBoundingClientRect();
+            const elRect = el.getBoundingClientRect();
+            const margin = 12;
+            const overBottom = elRect.bottom - bodyRect.bottom + margin;
+            const overTop = bodyRect.top - elRect.top + margin;
+            if (overBottom > 0) body.scrollTop += overBottom;
+            else if (overTop > 0) body.scrollTop -= overTop;
+        };
+        // 等卡片真正进 DOM 再量：一帧内 setState 还没 commit，量到的是旧布局
+        window.requestAnimationFrame(() => window.requestAnimationFrame(reveal));
+    };
+
+    /** 行内那枚小羽毛。点一下就在这一行（滚动模式下是这一段）下面把批注卡片展开/收起，
+     *  下文顺次往下推；它本身不占正文高度，也不参与分页。翻页与滚动模式共用。 */
     const renderNoteFeather = (note: ReadingAnnotation) => {
         const open = expandedNotes[note.id] === true;
         return (
@@ -1811,7 +1832,11 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                 onClick={(e) => {
                     // 别让阅读区把这一下当成「点空白处收起菜单」或「左右三分之一翻页」
                     e.stopPropagation();
+                    // 翻页动画那一层是张快照，点它不该改状态（否则下一页一进来就是展开的）
+                    if (flipAnim) return;
+                    const next = !expandedNotes[note.id];
                     setExpandedNotes((prev) => ({ ...prev, [note.id]: !prev[note.id] }));
+                    if (next) ensureNoteCardVisible(note.id);
                 }}
             >
                 🪶
@@ -3842,7 +3867,9 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
             metrics.set(idx, { top: rect.top - bodyRect.top + body.scrollTop, height: rect.height });
         }
         chapterMetricsRef.current = metrics;
-    }, [isScrollMode, chaptersLoaded, openAnnotationParagraphs]);
+        // expandedNotes：展开/收起一条行内批注会改变章块高度，度量不跟着重算，
+        // 后面「章底滚到视口」的衔接触发点就会算偏。
+    }, [isScrollMode, chaptersLoaded, openAnnotationParagraphs, expandedNotes]);
 
     // 滚动模式：监听滚动 —— 更新章节内滚动比例；无缝衔接（多章窗口平移，保持视觉连续）
     // 前向：当前章内容读完（章底滚到视口顶部/底部）→ 移除顶部章块 + 补偿滚动位置，自然过渡到下一章
@@ -4276,9 +4303,13 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                                                 indent: true,
                                                                 segEnd: isLastSeg,
                                                                 charStart,
+                                                                // 滚动模式也走折叠：正文里只留一枚 🪶，点开才在这一段下面展开
+                                                                ...(matchingNotes.length > 0 ? { notes: matchingNotes } : {}),
                                                                 ...(isLastSeg && paragraphComments.length > 0 ? { annotationCount: paragraphComments.length } : {}),
                                                             }, sIndex)}
-                                                            {matchingNotes.map((note) => renderAnnotationItem(note))}
+                                                            {matchingNotes
+                                                                .filter((note) => expandedNotes[note.id])
+                                                                .map((note) => renderAnnotationItem(note))}
                                                         </div>
                                                     );
                                                 });
