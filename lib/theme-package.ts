@@ -34,7 +34,6 @@ const ASSET_TYPES = new Set<ThemeAssetType>([
   "icon_skin",
   "dock_skin",
   "font",
-  "favicon",
   "bg",
   "chat_bg",
   "sticker",
@@ -332,7 +331,6 @@ function collectResetDeleteAssetIds(themeProfile: ThemeProfile): string[] {
       : "",
     themeProfile.fontAssetId ?? "",
     themeProfile.dockSkinAssetId ?? "",
-    themeProfile.faviconAssetId ?? "",
     ...iconIds,
     ...iconSchemeIds
   ].filter(Boolean)));
