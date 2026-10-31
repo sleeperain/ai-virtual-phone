@@ -32,10 +32,6 @@ import {
     loadMusicBg, saveMusicBg, clearMusicBg, fileToCompressedDataUrl, appBgStyle,
     MUSIC_BG_EVENT, type MusicBgConfig, type MusicPlayerBgMode,
 } from "@/lib/music-bg";
-import {
-    loadMusicPromptInjectMode, saveMusicPromptInjectMode,
-    loadMusicLyricPad, saveMusicLyricPad, type MusicPromptInjectMode,
-} from "@/lib/music-now-playing";
 
 type Props = { onClose: () => void };
 type TabId = "recommend" | "mine" | "search" | "local";
@@ -1529,18 +1525,6 @@ function MusicSettingsTab({ onBack, onSaved }: { onBack: () => void; onSaved: ()
     const bgFileRef = useRef<HTMLInputElement>(null);
     const playerFileRef = useRef<HTMLInputElement>(null);
 
-    // 角色感知：把「此刻在听什么 / 有没有在一起听」注入聊天提示词
-    const [injectMode, setInjectMode] = useState<MusicPromptInjectMode>(() => loadMusicPromptInjectMode());
-    const [lyricPad, setLyricPad] = useState<number>(() => loadMusicLyricPad());
-    const handleInjectMode = (mode: MusicPromptInjectMode) => {
-        saveMusicPromptInjectMode(mode);
-        setInjectMode(mode);
-    };
-    const handleLyricPad = (pad: number) => {
-        saveMusicLyricPad(pad);
-        setLyricPad(pad);
-    };
-
     const applyBg = (next: MusicBgConfig) => {
         const result = saveMusicBg(next);
         setBgMsg(result.ok ? null : result.message);
@@ -1859,38 +1843,6 @@ function MusicSettingsTab({ onBack, onSaved }: { onBack: () => void; onSaved: ()
                         </div>
                     )}
                     {bgMsg && <div className="music-qr-status">{bgMsg}</div>}
-                </div>
-
-                {/* 角色感知：实时播放状态注入聊天提示词 */}
-                <div className="music-settings-section music-qr-section">
-                    <div className="music-settings-label">角色感知（一起听 / 此刻在听）</div>
-                    <div className="music-settings-hint">
-                        开启后，聊天里的角色会知道你在听哪首歌、唱到哪一句；在一起听时还会知道已经一起听了多久
-                    </div>
-                    <div className="music-bg-modes">
-                        <button className="music-bg-mode" {...(injectMode === "together" ? { "data-on": "" } : {})} onClick={() => handleInjectMode("together")}>仅一起听时</button>
-                        <button className="music-bg-mode" {...(injectMode === "always" ? { "data-on": "" } : {})} onClick={() => handleInjectMode("always")}>放着歌就告知</button>
-                        <button className="music-bg-mode" {...(injectMode === "off" ? { "data-on": "" } : {})} onClick={() => handleInjectMode("off")}>关闭</button>
-                    </div>
-
-                    <div className="music-settings-hint" style={{ marginTop: 8 }}>
-                        歌词窗口：当前句 + 前后各 {lyricPad} 句（共 {lyricPad * 2 + 1} 句）
-                    </div>
-                    <input
-                        type="range"
-                        className="music-bg-range"
-                        min={1}
-                        max={4}
-                        value={lyricPad}
-                        onChange={e => handleLyricPad(parseInt(e.target.value, 10))}
-                    />
-
-                    <div className="music-settings-hint">
-                        预设里也可以直接用 {"{{musicNowPlaying}}"}（歌名/进度/一起听）与 {"{{musicLyricsWindow}}"}（歌词窗口）自己排版
-                    </div>
-                    <div className="music-settings-hint" style={{ opacity: 0.7 }}>
-                        说明：注入的是曲目、进度、歌词文本与一起听时长，属于文本线索；不做音频分析（听不出音高、节拍、配器）
-                    </div>
                 </div>
             </div>
         </div>

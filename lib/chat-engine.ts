@@ -1948,8 +1948,8 @@ export async function buildChatPromptMessages(
         buildMusicLocalMacro(),
         buildMusicCloudMacro(),
     ]);
-    // 实时播放 / 一起听状态：读播放器快照 + 一起听会话，压成提示词上下文。
-    // 注入策略在设置里可切换（together=只在一起听时注入 / always=放了歌就注入 / off=关闭）。
+    // 实时播放 / 一起听状态：只有这段聊天正处在一起听会话里才产出内容，
+    // 否则返回空串，独自听歌时播放信息不进提示词。
     const musicLive = buildMusicPromptContext({
         contactId: character.id,
         sessionId: session.id,
