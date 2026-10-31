@@ -75,6 +75,10 @@ export interface AssemblerInput {
     musicLocal?: string;                   // local music titles for {{musicLocal}} macro
     musicCloud?: string;                   // netease playlist summary for {{musicCloud}} macro
     musicOnlineHint?: string;              // online search hint for {{musicOnlineHint}} macro
+    musicNowPlaying?: string;              // now playing + listen-together line for {{musicNowPlaying}} macro
+    musicLyricsWindow?: string;            // current lyric ±2 lines for {{musicLyricsWindow}} macro
+    /** 实时播放/一起听状态块（由注入策略判定好，空串=不注入）。不依赖预设条目，直接作为深度 0 的系统块 */
+    musicLiveContext?: string;
     timeContext?: CharacterTimeContext;     // precomputed system/character local time context
     promptTimestampOptions?: PromptTimestampOptions; // chat-history timestamp display options
     timeAware?: boolean;                   // when true, inject timestamps into chat history
@@ -738,6 +742,8 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
         engine.musicLocal = input.musicLocal ?? "";
         engine.musicCloud = input.musicCloud ?? "";
         engine.musicOnlineHint = input.musicOnlineHint ?? "";
+        engine.musicNowPlaying = input.musicNowPlaying ?? "";
+        engine.musicLyricsWindow = input.musicLyricsWindow ?? "";
         engine.currentSchedule = input.currentSchedule ?? "";
         engine.vnScenes = input.vnScenes ?? "";
         engine.vnSprites = input.vnSprites ?? "";
@@ -940,6 +946,19 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
             });
         });
 
+    }
+
+    // --- 实时音乐状态（此刻在听什么 / 是否在一起听）---
+    // 不绑定预设条目：这是系统实时状态，预设里没写对应宏也该让角色知道。
+    // 深度 0 = 贴在最新一轮消息之后，order 5 让它在 chatHistory 之后的条目（order 10 起）之前。
+    if (input.musicLiveContext && input.musicLiveContext.trim()) {
+        blocks.push({
+            text: input.musicLiveContext.trim(),
+            role: "system",
+            depth: 0,
+            order: 5,
+            marker: "musicLive",
+        });
     }
 
     // --- CHAT HISTORY / SHORT-TERM MEMORY ---
@@ -1953,6 +1972,8 @@ export function assembleGroupPromptPayload(input: GroupAssemblerInput): LLMMessa
         engine.musicLocal = input.musicLocal ?? "";
         engine.musicCloud = input.musicCloud ?? "";
         engine.musicOnlineHint = input.musicOnlineHint ?? "";
+        engine.musicNowPlaying = input.musicNowPlaying ?? "";
+        engine.musicLyricsWindow = input.musicLyricsWindow ?? "";
         engine.currentSchedule = m.currentSchedule ?? "";
         engine.tools = input.tools ?? "";
         engine.cocreateWriteActions = input.cocreateWriteActions ?? "";

@@ -37,6 +37,7 @@ import {
 import { assemblePromptPayload, applyOutputRegex, type LLMMessage, type LLMContentPart } from "./llm-prompt-assembler";
 import { MacroEngine, postProcessTrim } from "./macro-engine";
 import { getStatusRegionConfig, resolveStatusRegionSection, resolveStatusRegionExampleLine, resolveStatusRegionComposition, resolveStatusRegionFullExample } from "./chat-status-region";
+import { buildMusicPromptContext } from "./music-now-playing";
 import {
     buildProviderDebugMessages,
     buildProviderRequest,
@@ -1947,6 +1948,13 @@ export async function buildChatPromptMessages(
         buildMusicLocalMacro(),
         buildMusicCloudMacro(),
     ]);
+    // 实时播放 / 一起听状态：读播放器快照 + 一起听会话，压成提示词上下文。
+    // 注入策略在设置里可切换（together=只在一起听时注入 / always=放了歌就注入 / off=关闭）。
+    const musicLive = buildMusicPromptContext({
+        contactId: character.id,
+        sessionId: session.id,
+        userName: userIdentity?.name,
+    });
 
     const longTermMemories = memResults ? formatLongTermMemories(memResults) : "";
     const coreMemories = coreResults ? formatCoreMemories(coreResults) : "";
@@ -2003,6 +2011,9 @@ export async function buildChatPromptMessages(
         musicLocal,
         musicCloud,
         musicOnlineHint,
+        musicNowPlaying: musicLive.nowPlaying,
+        musicLyricsWindow: musicLive.lyricsWindow,
+        musicLiveContext: musicLive.block,
         timeContext: promptTimeContext,
         promptTimestampOptions,
         enableVision: config.enableImageRecognition,

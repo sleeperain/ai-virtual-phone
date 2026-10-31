@@ -37,6 +37,8 @@ export class MacroEngine {
     musicLocal: string = "";
     musicCloud: string = "";
     musicOnlineHint: string = "";
+    musicNowPlaying: string = "";
+    musicLyricsWindow: string = "";
     currentSchedule: string = "";
     vnScenes: string = "";
     vnSprites: string = "";
@@ -169,6 +171,9 @@ export class MacroEngine {
         if (body === "musicLocal") return this.musicLocal || "无";
         if (body === "musicCloud") return this.musicCloud || "无";
         if (body === "musicOnlineHint") return this.musicOnlineHint;
+        // 此刻在听什么 / 唱到哪一句：空值也直返 TRIM（没有在放歌时整行消失，不留空标题）
+        if (body === "musicNowPlaying") return this.musicNowPlaying || "\x00TRIM\x00";
+        if (body === "musicLyricsWindow") return this.musicLyricsWindow || "\x00TRIM\x00";
         if (body === "currentSchedule" || body === "当前日程") return this.currentSchedule || "无";
         if (body === "vnScenes") return this.vnScenes || "暂无";
         if (body === "vnSprites") return this.vnSprites || "暂无";
