@@ -186,6 +186,7 @@ const CHAT_VISUAL_MEDIA_TYPES = new Set([
     "transfer",
     "payment_request",
     "gift",
+    "delivery_card",
     "contact_card",
     "image",
     "location",
@@ -234,6 +235,7 @@ const CHAT_MEDIA_BUBBLE_TYPES = new Set([
     "transfer",
     "payment_request",
     "gift",
+    "delivery_card",
     "contact_card",
     "image",
     "location",
@@ -6250,8 +6252,8 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                                 },
                                                 onContextMenu: (e: React.MouseEvent) => { e.preventDefault(); openMessageContextMenu(msg.id, { x: e.clientX, y: e.clientY }); },
                                             } : {})}
-                                            className={`chat-bubble-role-${msg.role} ${isMediaBubble ? "chat-bubble-media" : ""} ${isStandaloneHtmlPreview ? "chat-bubble-html-preview" : ""} ${renderMsg.mediaType === "music_share" ? "chat-bubble-music-share" : ""} ${renderMsg.mediaType === "gift" || renderMsg.mediaType === "image" || isStandaloneHtmlPreview ? "rounded-none" : "rounded-md"} break-words relative cursor-pointer select-none`}
-                                            style={isStandaloneHtmlPreview ? STANDALONE_CARD_BUBBLE_STYLE : undefined}
+                                            className={`chat-bubble-role-${msg.role} ${isMediaBubble ? "chat-bubble-media" : ""} ${isStandaloneHtmlPreview ? "chat-bubble-html-preview" : ""} ${renderMsg.mediaType === "music_share" ? "chat-bubble-music-share" : ""} ${renderMsg.mediaType === "gift" || renderMsg.mediaType === "delivery_card" || renderMsg.mediaType === "image" || isStandaloneHtmlPreview ? "rounded-none" : "rounded-md"} break-words relative cursor-pointer select-none`}
+                                            style={isStandaloneHtmlPreview || renderMsg.mediaType === "delivery_card" ? STANDALONE_CARD_BUBBLE_STYLE : undefined}
                                             data-ui={msg.role === "user" ? "bubble-user" : "bubble-bot"}
                                             data-msg-id={msg.id}
                                             {...(activeMessageId === msg.id ? { "data-active": "" } : {})}
