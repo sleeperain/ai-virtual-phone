@@ -4994,12 +4994,13 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                     display: "inline-flex",
                                     alignItems: "center",
                                     justifyContent: "center",
-                                    // 原来 32×32 的正方形在名字行右侧太占地方，像个方块；
-                                    // 三个点本来就是横向排的，改成扁长方形（30×22）更贴合内容，
-                                    // 视觉面积少了三成多。高度 22 仍在手指能稳当点中的范围内，
-                                    // 又不会把名字行撑高。
-                                    width: 30,
-                                    height: 22,
+                                    // 这一行的高度由最高的子元素决定。早先右侧是「编辑」「删除」两个
+                                    // 纯文字按钮，行高就是文字高度；换成 32×32 的正方形以后，整行被撑到 32，
+                                    // 头像相对昵称的位置、昵称到正文的间距全被推开——段评「看着变了」就是从这儿来的。
+                                    // 所以按钮要横向拉长、纵向压矮：34×20 贴近文字行高，行高重新由文字主导，
+                                    // 三个点横向排布也正好吃满这个扁比例。
+                                    width: 34,
+                                    height: 20,
                                     padding: 0,
                                     border: "none",
                                     borderRadius: 5,
