@@ -649,6 +649,13 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
     // 切换订单/关闭详情时清掉一次性提示，避免串到下一张单
     setPickupHint(null);
   }, [selectedOrderId]);
+
+  // 签收之后「待签收」节点收起，只留「已签收」一条，避免同一件事显示两行
+  const activeOrderTimeline = activeOrderShipping
+    ? activeOrderShipping.timeline.filter(event => !(event.status === "pickup_waiting"
+      && activeOrderShipping.pickup.signed
+      && !activeOrderShipping.pickup.legacy))
+    : [];
   const normalizedCartSearchQuery = normalizeShoppingSearchValue(sectionSearchInputs.cart);
   const normalizedOrderSearchQuery = normalizeShoppingSearchValue(sectionSearchInputs.orders);
   const normalizedSavedSearchQuery = normalizeShoppingSearchValue(sectionSearchInputs.account);
@@ -1860,26 +1867,30 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
                 </div>
               </div>
 
-              {activeOrderShipping?.timeline.length ? (
+              {activeOrderTimeline.length ? (
                 <div style={{ background: "#fff", borderRadius: "20px", padding: "20px", boxShadow: "0 4px 20px rgba(0,0,0,0.02)" }}>
                   <h4 style={{ fontSize: "calc(13px*var(--app-text-scale,1))", fontWeight: "bold", color: "#222", margin: "0 0 16px 0" }}>物流进度</h4>
                   <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-                    {activeOrderShipping.timeline.map((event, index) => {
+                    {activeOrderTimeline.map((event, index) => {
                       const eventTime = new Date(event.timestamp).getTime();
-                      const isPickupEvent = event.status === "pickup_waiting";
                       const pickup = activeOrderShipping.pickup;
+                      // 取件流程订单才有「待签收」这一步；存量订单直接是「已签收」，不展示取件码
+                      const isPickupEvent = event.status === "pickup_waiting" && !pickup.legacy;
+                      const isSignedEvent = event.status === "signed";
                       // 「待签收」节点只有在签收后才算完成；签收一落盘就变成已完成
                       const completed = isPickupEvent
                         ? pickup.signed
-                        : !Number.isNaN(eventTime) && eventTime <= nowTick && !(pickup.signed && event.status === "pickup_waiting");
+                        : !Number.isNaN(eventTime) && eventTime <= nowTick;
                       const current = isPickupEvent
                         ? pickup.canPickup
-                        : event.status === activeOrderShipping.currentStage && !pickup.signed;
-                      const isLastEvent = index === activeOrderShipping.timeline.length - 1;
+                        : isSignedEvent
+                          ? pickup.signed
+                          : event.status === activeOrderShipping.currentStage && !pickup.signed;
+                      const isLastEvent = index === activeOrderTimeline.length - 1;
                       return (
                         <div key={`${event.status}-${event.timestamp}`} style={{ display: "grid", gridTemplateColumns: "18px 1fr", gap: "10px", position: "relative", alignItems: "start" }}>
                           <div style={{ position: "relative", display: "flex", justifyContent: "center" }}>
-                            {index < activeOrderShipping.timeline.length - 1 ? (
+                            {index < activeOrderTimeline.length - 1 ? (
                               <span style={{ position: "absolute", top: "18px", width: "2px", height: "28px", background: completed ? "rgba(255,107,0,0.26)" : "#ececec" }} />
                             ) : null}
                             <span style={{ width: "10px", height: "10px", marginTop: "3px", borderRadius: "50%", background: completed ? current ? "#ff6b00" : "#16a34a" : "#d8d8d8", boxShadow: current ? "0 0 0 5px rgba(255,107,0,0.12)" : "none", zIndex: 1 }} />

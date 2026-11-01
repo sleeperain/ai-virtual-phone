@@ -59,7 +59,17 @@ export type ShoppingPickupState = {
   unboxed: boolean;
   signedBy?: "user" | "character";
   signedByCharacterName?: string;
+  /**
+   * 存量订单（没有取件码的历史数据）：不参与取件流程，
+   * 到货即视为已签收，物流节点显示「已签收」且不展示取件码，商品正常进包裹。
+   */
+  legacy: boolean;
 };
+
+/** 是否是需要走取件流程的订单（下单时分配过取件码，或有签收记录） */
+export function isPickupFlowOrder(order: ShoppingOrder): boolean {
+  return Boolean(order.pickupCode || order.signedAt || order.signedBy || order.refundedAt);
+}
 
 function parseMs(value?: string): number {
   if (!value) return 0;
@@ -87,8 +97,10 @@ export function resolveOrderPickup(order: ShoppingOrder, nowMs: number): Shoppin
   const pickupCode = getOrderPickupCode(order);
   const signed = Boolean(order.signedAt);
   const refunded = Boolean(order.refundedAt);
+  const legacy = !isPickupFlowOrder(order);
   const reached = reachedEvents(order, nowMs);
   const lastReached = reached[reached.length - 1];
+  const arrived = reached.some(event => event.status === "delivered" || event.status === "pickup_waiting");
 
   if (signed || refunded) {
     return {
@@ -103,10 +115,26 @@ export function resolveOrderPickup(order: ShoppingOrder, nowMs: number): Shoppin
       unboxed: Boolean(order.unboxedAt),
       signedBy: order.signedBy,
       signedByCharacterName: order.signedByCharacterName,
+      legacy,
     };
   }
 
-  const arrived = reached.some(event => event.status === "delivered" || event.status === "pickup_waiting");
+  // 存量订单：到货即已签收，不出取件码、不需要取件，商品直接进包裹
+  if (legacy && arrived) {
+    return {
+      stage: "signed",
+      statusLabel: "已签收",
+      pickupCode,
+      canPickup: false,
+      canConfirm: !order.confirmedAt,
+      canAfterSale: true,
+      signed: true,
+      refunded: false,
+      unboxed: Boolean(order.unboxedAt),
+      legacy: true,
+    };
+  }
+
   if (arrived) {
     return {
       stage: "waiting",
@@ -118,6 +146,7 @@ export function resolveOrderPickup(order: ShoppingOrder, nowMs: number): Shoppin
       signed: false,
       refunded: false,
       unboxed: false,
+      legacy: false,
     };
   }
 
@@ -143,6 +172,7 @@ export function resolveOrderPickup(order: ShoppingOrder, nowMs: number): Shoppin
     signed: false,
     refunded: false,
     unboxed: false,
+    legacy,
   };
 }
 
@@ -163,7 +193,11 @@ function parseAmount(label?: string): number {
   return Number.isFinite(amount) && amount > 0 ? amount : 0;
 }
 
-/** 把「待签收」节点补进物流时间线（到货即待签收，时间同到货） */
+/**
+ * 把签收相关节点补进物流时间线（时间同到货，不改写存档）：
+ * - 取件流程订单 → 补「待签收」（之后签收时由 signShoppingOrder 落「已签收」）；
+ * - 存量订单 → 直接补「已签收」，不展示取件码。
+ */
 export function withPickupTimeline(order: ShoppingOrder): ShoppingOrder {
   const timeline = Array.isArray(order.shippingTimeline) ? [...order.shippingTimeline] : [];
   if (timeline.length === 0) return order;
@@ -172,13 +206,14 @@ export function withPickupTimeline(order: ShoppingOrder): ShoppingOrder {
   const deliveredEvent = timeline.find(event => event.status === "delivered");
   if (!deliveredEvent) return order;
 
-  const pickupEvent: ShoppingShippingEvent = {
-    status: "pickup_waiting",
-    label: "待签收",
+  const legacy = !isPickupFlowOrder(order);
+  const closingEvent: ShoppingShippingEvent = {
+    status: legacy ? "signed" : "pickup_waiting",
+    label: legacy ? "已签收" : "待签收",
     timeLabel: deliveredEvent.timeLabel,
     timestamp: deliveredEvent.timestamp,
   };
-  const nextTimeline = [...timeline, pickupEvent].sort((a, b) => parseMs(a.timestamp) - parseMs(b.timestamp));
+  const nextTimeline = [...timeline, closingEvent].sort((a, b) => parseMs(a.timestamp) - parseMs(b.timestamp));
   return { ...order, shippingTimeline: nextTimeline };
 }
 
