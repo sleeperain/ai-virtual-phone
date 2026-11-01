@@ -1659,8 +1659,8 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
                           <span
                             style={{
                               fontSize: "calc(12px*var(--app-text-scale,1))",
-                              color: shipping.pickup.signed ? "#16a34a" : "#ff6b00",
-                              fontWeight: shipping.pickup.canPickup ? 700 : 500,
+                              color: shipping.pickup.refunded ? "#9a9a9a" : shipping.pickup.signed ? "#16a34a" : "#666",
+                              fontWeight: shipping.pickup.canPickup ? 600 : 500,
                               letterSpacing: shipping.pickup.canPickup ? "0.06em" : undefined,
                             }}
                           >
@@ -1846,6 +1846,11 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
                   本单已确认收货
                 </div>
               ) : null}
+              {activeOrderShipping?.pickup.refunded ? (
+                <div style={{ background: "#f6f7f8", border: "1px solid #eceef0", borderRadius: "14px", padding: "12px 16px", fontSize: "calc(12px*var(--app-text-scale,1))", color: "#8a8f96" }}>
+                  本单已退货，商品已退回
+                </div>
+              ) : null}
               <div style={{ background: "#fff", borderRadius: "20px", padding: "20px", boxShadow: "0 4px 20px rgba(0,0,0,0.02)" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "12px", marginBottom: "16px" }}>
                   <span style={{ fontSize: "calc(12px*var(--app-text-scale,1))", color: "#999" }}>Order Status</span>
@@ -1854,8 +1859,12 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
                       fontSize: activeOrderShipping?.pickup.canPickup
                         ? "calc(18px*var(--app-text-scale,1))"
                         : "calc(12px*var(--app-text-scale,1))",
-                      color: activeOrderShipping?.pickup.signed ? "#16a34a" : "#ff6b00",
-                      fontWeight: activeOrderShipping?.pickup.canPickup ? 800 : 600,
+                      color: activeOrderShipping?.pickup.refunded
+                        ? "#9a9a9a"
+                        : activeOrderShipping?.pickup.signed
+                          ? "#16a34a"
+                          : "#222",
+                      fontWeight: activeOrderShipping?.pickup.canPickup ? 600 : 600,
                       letterSpacing: activeOrderShipping?.pickup.canPickup ? "0.08em" : undefined,
                       textAlign: "right",
                     }}

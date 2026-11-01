@@ -106,7 +106,8 @@ export function resolveOrderPickup(order: ShoppingOrder, nowMs: number): Shoppin
   if (signed || refunded) {
     return {
       stage: "signed",
-      statusLabel: "已签收",
+      // 申请售后之后订单状态直接显示「退货」（物流里仍留有已签收 + 商品已退回说明）
+      statusLabel: refunded ? "退货" : "已签收",
       pickupCode,
       canPickup: false,
       canConfirm: !refunded && !order.confirmedAt,
