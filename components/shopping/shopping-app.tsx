@@ -1678,8 +1678,14 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
                           <span
                             style={{
                               fontSize: "calc(12px*var(--app-text-scale,1))",
-                              color: shipping.pickup.refunded ? "#9a9a9a" : shipping.pickup.signed ? "#16a34a" : "#666",
-                              fontWeight: shipping.pickup.canPickup ? 600 : 500,
+                              color: shipping.pickup.refunded
+                                ? "#9a9a9a"
+                                : shipping.pickup.signed
+                                  ? "#16a34a"
+                                  : shipping.pickup.canPickup
+                                    ? "#ff6b00"
+                                    : "#666",
+                              fontWeight: shipping.pickup.canPickup ? 700 : 500,
                               letterSpacing: shipping.pickup.canPickup ? "0.06em" : undefined,
                             }}
                           >
@@ -1882,8 +1888,10 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
                         ? "#9a9a9a"
                         : activeOrderShipping?.pickup.signed
                           ? "#16a34a"
-                          : "#222",
-                      fontWeight: activeOrderShipping?.pickup.canPickup ? 600 : 600,
+                          : activeOrderShipping?.pickup.canPickup
+                            ? "#ff6b00"
+                            : "#222",
+                      fontWeight: 600,
                       letterSpacing: activeOrderShipping?.pickup.canPickup ? "0.08em" : undefined,
                       textAlign: "right",
                     }}
@@ -1944,7 +1952,7 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
                               <span style={{ display: "inline-flex", alignItems: "baseline", gap: "10px", minWidth: 0, flexWrap: "wrap" }}>
                                 <span style={{ fontSize: "calc(12px*var(--app-text-scale,1))", color: completed || current ? "#222" : "#999", fontWeight: current || isPickupEvent ? 700 : 500 }}>{event.label}</span>
                                 {isPickupEvent ? (
-                                  <span style={{ fontSize: "calc(19px*var(--app-text-scale,1))", fontWeight: 600, color: pickup.signed ? "#16a34a" : "#222", letterSpacing: "0.08em", lineHeight: 1.1, fontVariantNumeric: "tabular-nums" }}>
+                                  <span style={{ fontSize: "calc(19px*var(--app-text-scale,1))", fontWeight: 700, color: pickup.signed ? "#16a34a" : "#ff6b00", letterSpacing: "0.08em", lineHeight: 1.1, fontVariantNumeric: "tabular-nums" }}>
                                     {pickup.pickupCode}
                                   </span>
                                 ) : null}
@@ -2027,7 +2035,7 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
                     <button
                       type="button"
                       onClick={handleBuyAgain}
-                      style={{ border: "1px solid #dcdfe3", background: "#fff", color: "#333", borderRadius: "8px", padding: "6px 14px", fontSize: "calc(12px*var(--app-text-scale,1))", fontWeight: 500 }}
+                      style={{ border: "none", background: "#ff6b00", color: "#fff", borderRadius: "8px", padding: "7px 16px", fontSize: "calc(12px*var(--app-text-scale,1))", fontWeight: 600 }}
                     >
                       再买一单
                     </button>
@@ -2037,13 +2045,13 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
                       onClick={activeOrderShipping?.pickup.canConfirm ? handleConfirmReceipt : () => setPickupHint("需要先取件，才能确认收货。")}
                       aria-disabled={!activeOrderShipping?.pickup.canConfirm}
                       style={{
-                        border: activeOrderShipping?.pickup.canConfirm ? "1px solid #dcdfe3" : "1px solid #eee",
-                        background: "#fff",
-                        color: activeOrderShipping?.pickup.canConfirm ? "#333" : "#c2c2c2",
+                        border: activeOrderShipping?.pickup.canConfirm ? "none" : "1px solid #eee",
+                        background: activeOrderShipping?.pickup.canConfirm ? "#ff6b00" : "#f7f7f7",
+                        color: activeOrderShipping?.pickup.canConfirm ? "#fff" : "#c2c2c2",
                         borderRadius: "8px",
-                        padding: "6px 14px",
+                        padding: "7px 16px",
                         fontSize: "calc(12px*var(--app-text-scale,1))",
-                        fontWeight: 500,
+                        fontWeight: 600,
                         cursor: "pointer",
                       }}
                     >
