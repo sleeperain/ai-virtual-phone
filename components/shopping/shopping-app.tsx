@@ -1994,7 +1994,8 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
                 </div>
               ) : null}
 
-              {/* 卡片外下方右侧：从左到右「申请售后」「确认收货」；已确认收货则换成只剩「再买一单」。
+              {/* 卡片外下方右侧：从左到右「申请售后」「确认收货」；已确认收货则只剩「再买一单」；
+                  已退货则只剩「删除记录」（整条订单记录删除）。
                   没到待签收状态（已发货/配送中）时整行都不出现。 */}
               {activeOrderShipping && (
                 activeOrderShipping.pickup.canAfterSale
@@ -2021,7 +2022,8 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
                       申请售后
                     </button>
                   ) : null}
-                  {activeOrder.confirmedAt || activeOrderShipping?.pickup.refunded ? (
+                  {/* 退货单只留「删除记录」：没有再买一单，也没有确认收货 */}
+                  {activeOrderShipping?.pickup.refunded ? null : activeOrder.confirmedAt ? (
                     <button
                       type="button"
                       onClick={handleBuyAgain}
