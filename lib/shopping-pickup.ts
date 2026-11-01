@@ -11,7 +11,8 @@
 // - 拆件是隐性行为（动作标记不渲染），由系统把商品信息作为提示词补给角色。
 
 import { loadShoppingState, saveShoppingState } from "./shopping-storage";
-import { createOrGetSession, pushChatMessage } from "./chat-storage";
+import { countSentGiftsForOrder } from "./shopping-gift-utils";
+import { createOrGetSession, loadChatMessages, loadChatSessions, pushChatMessage, updateMessageMediaData } from "./chat-storage";
 import { adjustWalletCardAccount, creditWalletBalance } from "./wallet-storage";
 import type { ShoppingOrder, ShoppingShippingEvent } from "./shopping-types";
 
@@ -288,6 +289,13 @@ export function refundShoppingOrder(orderId: string): RefundOrderResult {
   const order = state.orders.find(item => item.id === orderId);
   if (!order) return { ok: false, amount: 0, error: "未找到该订单。" };
   if (order.refundedAt) return { ok: false, amount: 0, error: "该订单已申请过售后。" };
+  // 商品已经送给角色了就不能退：钱货两清的前提是东西还在自己手上
+  if (countSentGiftsForOrder(order.id) > 0) {
+    return { ok: false, amount: 0, error: "该订单的商品已赠送给对方，无法申请售后。" };
+  }
+  if (order.confirmedAt) {
+    return { ok: false, amount: 0, error: "该订单已确认收货，无法申请售后。" };
+  }
 
   const amount = parseAmount(order.totalLabel);
   const now = new Date();
@@ -494,6 +502,48 @@ export function loadPendingUnboxOrder(sessionId: string): ShoppingOrder | null {
 export const PICKUP_PROXY_SUCCESS_RE = /\[(?:代取成功|已代取)\]/;
 /** 角色动作标记：拆快递（不渲染，只用于追加提示） */
 export const PICKUP_UNBOX_RE = /\[拆(?:开)?(?:快递|包裹|箱子|件)\]/;
+/** 角色动作标记：把收到的礼物退回去（礼物会回到用户的赠礼列表） */
+export const GIFT_RETURN_RE = /\[退回礼物(?:[：:]([^\]]+))?\]/;
+
+/**
+ * 角色退回礼物：把这件礼物标记为已退回，它会重新出现在用户的赠礼列表里。
+ * 指定礼物名时只退那一件，不指定就退最近一件还没退回的礼物。
+ */
+export function returnShoppingGift(input: {
+  sessionId: string;
+  giftName?: string;
+}): { ok: boolean; productName?: string; error?: string } {
+  const { sessionId, giftName } = input;
+  const messages = loadChatMessages(sessionId);
+  const candidates = messages.filter(message => message.mediaType === "gift"
+    && !message.mediaData?.giftReturnedAt);
+  const keyword = String(giftName ?? "").replace(/\s+/g, "");
+  const target = (keyword
+    ? [...candidates].reverse().find(message => String(message.mediaData?.giftName ?? "").replace(/\s+/g, "").includes(keyword))
+    : undefined) ?? candidates[candidates.length - 1];
+
+  if (!target) return { ok: false, error: "这个会话里没有可以退回的礼物。" };
+
+  updateMessageMediaData(target.id, {
+    ...target.mediaData,
+    status: "declined",
+    giftReturnedAt: new Date().toISOString(),
+  });
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("chat-messages-updated", { detail: { sessionId } }));
+  }
+  return { ok: true, productName: target.mediaData?.giftName || "礼物" };
+}
+
+/** 找出所有还挂在角色手上、没被退回的礼物所在会话（用于给角色提示可以退回） */
+export function loadGiftReturnCandidates(sessionId: string): Array<{ giftName: string; orderId?: string }> {
+  return loadChatMessages(sessionId)
+    .filter(message => message.mediaType === "gift" && !message.mediaData?.giftReturnedAt)
+    .map(message => ({
+      giftName: message.mediaData?.giftName || "礼物",
+      orderId: message.mediaData?.giftOrderId,
+    }));
+}
 
 export type DeliveryMarkerResult = {
   /** 剥离标记后的正文 */
@@ -518,6 +568,19 @@ export function stripDeliveryMarkers(text: string): DeliveryMarkerResult {
   return { text: cleaned, pickedProxy, unboxed };
 }
 
+/** 提炼并剥离「退回礼物」标记（同样不在界面显示） */
+export function stripGiftReturnMarker(text: string): { text: string; giftName?: string; returned: boolean } {
+  if (!text) return { text: "", returned: false };
+  const match = GIFT_RETURN_RE.exec(text);
+  if (!match) return { text, returned: false };
+  const giftName = match[1]?.trim() || undefined;
+  const cleaned = text
+    .replace(new RegExp(GIFT_RETURN_RE.source, "g"), "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return { text: cleaned, giftName, returned: true };
+}
+
 /**
  * 处理一条助手回复里的快递标记：
  * 1. 代取成功 → 签收订单 + 落「代取成功」卡片；
@@ -529,8 +592,17 @@ export function applyDeliveryMarkers(
   sessionId: string,
   options?: { characterId?: string; characterName?: string },
 ): { text: string; revealText?: string } {
-  const marker = stripDeliveryMarkers(rawText);
-  if (!marker.pickedProxy && !marker.unboxed) return { text: rawText };
+  // 先处理「退回礼物」：它可能和快递标记同时出现
+  const giftReturn = stripGiftReturnMarker(rawText);
+  const source = giftReturn.returned ? giftReturn.text : rawText;
+  if (giftReturn.returned) {
+    returnShoppingGift({ sessionId, giftName: giftReturn.giftName });
+  }
+
+  const marker = stripDeliveryMarkers(source);
+  if (!marker.pickedProxy && !marker.unboxed) {
+    return { text: giftReturn.returned ? source : rawText };
+  }
 
   if (marker.pickedProxy) {
     settlePickupProxySuccess(sessionId);

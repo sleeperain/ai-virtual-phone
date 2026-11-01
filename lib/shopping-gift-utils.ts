@@ -71,11 +71,27 @@ export function loadSentShoppingGiftIds(): Set<string> {
   for (const session of loadChatSessions()) {
     for (const message of loadChatMessages(session.id)) {
       if (message.mediaType !== "gift") continue;
+      // 角色把礼物退回来的那几条不算「已送出」：礼物重新回到赠礼列表
+      if (message.mediaData?.giftReturnedAt) continue;
       const giftId = message.mediaData?.shoppingGiftId;
       if (giftId) sentIds.add(giftId);
     }
   }
   return sentIds;
+}
+
+/** 该订单里已经被送出、且没有被退回的礼物件数（用于判断还能不能售后） */
+export function countSentGiftsForOrder(orderId: string): number {
+  let count = 0;
+  for (const session of loadChatSessions()) {
+    for (const message of loadChatMessages(session.id)) {
+      if (message.mediaType !== "gift") continue;
+      if (message.mediaData?.giftOrderId !== orderId) continue;
+      if (message.mediaData?.giftReturnedAt) continue;
+      count += 1;
+    }
+  }
+  return count;
 }
 
 export function loadDeliveredShoppingGifts(options: LoadShoppingGiftOptions = {}): ShoppingGiftCandidate[] {

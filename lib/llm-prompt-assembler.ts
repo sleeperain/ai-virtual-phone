@@ -1258,9 +1258,15 @@ export function formatRichMediaForHistory(msg: ChatMessage, userName: string, ch
         }
         case "gift": {
             const giftName = d?.giftName || d?.label || "礼物";
-            return isGroup && d?.recipientName
+            // 退回之后：东西回到用户手上，角色别再当成自己的
+            if (d?.giftReturnedAt) {
+                return `[礼物:${giftName}]（你已把这份礼物退回给对方，东西不在你这里了）`;
+            }
+            const base = isGroup && d?.recipientName
                 ? `[礼物:${giftName}:${d.recipientName}]`
                 : `[礼物:${giftName}]`;
+            // 说明退回标记的用法（不依赖预设条目）
+            return `${base}（不想要就写 [退回礼物] 或 [退回礼物:${giftName}]，礼物会回到对方手上）`;
         }
         case "payment_request":
             return formatShoppingPaymentRequestHistory({

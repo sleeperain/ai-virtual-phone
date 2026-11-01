@@ -150,6 +150,7 @@ export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charNa
         if (prev.msg.mediaData?.label !== next.msg.mediaData?.label) return false;
         if (prev.msg.mediaData?.deliveryCardCodeLabel !== next.msg.mediaData?.deliveryCardCodeLabel) return false;
         if (prev.msg.mediaData?.deliveryCardKind !== next.msg.mediaData?.deliveryCardKind) return false;
+        if (prev.msg.mediaData?.giftReturnedAt !== next.msg.mediaData?.giftReturnedAt) return false;
         if (prev.msg.mediaData?.claimedBy?.length !== next.msg.mediaData?.claimedBy?.length) return false;
         if (prev.msg.mediaData?.appName !== next.msg.mediaData?.appName) return false;
         if (prev.msg.mediaData?.appCardTitle !== next.msg.mediaData?.appCardTitle) return false;
@@ -1111,10 +1112,13 @@ function GiftBubble({ msg }: { msg: ChatMessage }) {
     const sentLabel = d?.giftSentAt
         ? new Date(d.giftSentAt).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
         : "";
+    // 角色把礼物退回来：卡片保留在聊天里，只把状态标成已退回，礼物回到用户赠礼列表
+    const returned = Boolean(d?.giftReturnedAt);
 
     return (
         <div
             className="chat-gift-card w-[248px] rounded-none"
+            {...(returned ? { "data-status": "returned" } : {})}
         >
             <div
                 className="chat-gift-card-body relative min-h-[338px] px-5 py-5"
@@ -1125,8 +1129,11 @@ function GiftBubble({ msg }: { msg: ChatMessage }) {
                             <div className="chat-gift-card-kicker ts-11 uppercase font-semibold tracking-normal text-[var(--c-icon)]">Gift Card</div>
                             <div className="chat-gift-card-source ts-12 text-[var(--c-text)] mt-1 truncate">{merchant}</div>
                         </div>
-                        <div className="chat-gift-card-status ts-11 font-semibold px-2 py-1 shrink-0">
-                            已送出
+                        <div
+                            className="chat-gift-card-status ts-11 font-semibold px-2 py-1 shrink-0"
+                            style={returned ? { color: "var(--c-icon)", opacity: 0.85 } : undefined}
+                        >
+                            {returned ? "已退回" : "已送出"}
                         </div>
                     </div>
 

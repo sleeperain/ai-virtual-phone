@@ -46,6 +46,7 @@ import {
   type ShoppingPaymentStatus,
 } from "@/lib/shopping-payment-request";
 import { createDefaultShoppingState, loadShoppingState, saveShoppingState, SHOPPING_STATE_UPDATED_EVENT } from "@/lib/shopping-storage";
+import { countSentGiftsForOrder } from "@/lib/shopping-gift-utils";
 import {
   confirmShoppingOrder,
   generatePickupCode,
@@ -1159,6 +1160,11 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
 
   function requestAfterSale() {
     if (!activeOrder) return;
+    // 送出去的礼物收不回来：订单里只要有一件送礼没被退回，就不允许售后
+    if (countSentGiftsForOrder(activeOrder.id) > 0) {
+      setAfterSaleResult("该订单的商品已赠送给对方，无法申请售后。");
+      return;
+    }
     setAfterSaleConfirmOrderId(activeOrder.id);
   }
 
