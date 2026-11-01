@@ -1916,7 +1916,7 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
                               <span style={{ display: "inline-flex", alignItems: "baseline", gap: "10px", minWidth: 0, flexWrap: "wrap" }}>
                                 <span style={{ fontSize: "calc(12px*var(--app-text-scale,1))", color: completed || current ? "#222" : "#999", fontWeight: current || isPickupEvent ? 700 : 500 }}>{event.label}</span>
                                 {isPickupEvent ? (
-                                  <span style={{ fontSize: "calc(20px*var(--app-text-scale,1))", fontWeight: 800, color: pickup.signed ? "#16a34a" : "#ff6b00", letterSpacing: "0.09em", lineHeight: 1.1 }}>
+                                  <span style={{ fontSize: "calc(19px*var(--app-text-scale,1))", fontWeight: 600, color: pickup.signed ? "#16a34a" : "#222", letterSpacing: "0.08em", lineHeight: 1.1, fontVariantNumeric: "tabular-nums" }}>
                                     {pickup.pickupCode}
                                   </span>
                                 ) : null}
@@ -1931,14 +1931,14 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
                                 <button
                                   type="button"
                                   onClick={handlePickupBySelf}
-                                  style={{ border: "none", background: "#ff6b00", color: "#fff", borderRadius: "8px", padding: "9px 18px", fontSize: "calc(13px*var(--app-text-scale,1))", fontWeight: 700, boxShadow: "0 6px 14px rgba(255,107,0,0.24)" }}
+                                  style={{ border: "1px solid #dcdfe3", background: "#fff", color: "#333", borderRadius: "8px", padding: "5px 12px", fontSize: "calc(12px*var(--app-text-scale,1))", fontWeight: 500, lineHeight: 1.4 }}
                                 >
                                   去取件
                                 </button>
                                 <button
                                   type="button"
                                   onClick={openPickupProxySheet}
-                                  style={{ border: "none", background: "transparent", color: "#ff6b00", padding: 0, fontSize: "calc(13px*var(--app-text-scale,1))", fontWeight: 600 }}
+                                  style={{ border: "none", background: "transparent", color: "#8a8f96", padding: 0, fontSize: "calc(12px*var(--app-text-scale,1))", fontWeight: 400 }}
                                 >
                                   找人代取
                                 </button>
@@ -1981,7 +1981,7 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
                     <button
                       type="button"
                       onClick={requestAfterSale}
-                      style={{ border: "1px solid #e5e5e5", background: "#fff", color: "#666", borderRadius: "20px", padding: "9px 18px", fontSize: "calc(13px*var(--app-text-scale,1))", fontWeight: 500 }}
+                      style={{ border: "1px solid #dcdfe3", background: "#fff", color: "#666", borderRadius: "8px", padding: "6px 14px", fontSize: "calc(12px*var(--app-text-scale,1))", fontWeight: 500 }}
                     >
                       申请售后
                     </button>
@@ -1990,7 +1990,7 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
                     <button
                       type="button"
                       onClick={handleBuyAgain}
-                      style={{ border: "none", background: "#ff6b00", color: "#fff", borderRadius: "20px", padding: "10px 20px", fontSize: "calc(13px*var(--app-text-scale,1))", fontWeight: 700, boxShadow: "0 6px 16px rgba(255,107,0,0.22)" }}
+                      style={{ border: "1px solid #dcdfe3", background: "#fff", color: "#333", borderRadius: "8px", padding: "6px 14px", fontSize: "calc(12px*var(--app-text-scale,1))", fontWeight: 500 }}
                     >
                       再买一单
                     </button>
@@ -2000,14 +2000,13 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
                       onClick={activeOrderShipping?.pickup.canConfirm ? handleConfirmReceipt : () => setPickupHint("需要先取件，才能确认收货。")}
                       aria-disabled={!activeOrderShipping?.pickup.canConfirm}
                       style={{
-                        border: activeOrderShipping?.pickup.canConfirm ? "none" : "1px solid #ececec",
-                        background: activeOrderShipping?.pickup.canConfirm ? "#ff6b00" : "#f7f7f7",
-                        color: activeOrderShipping?.pickup.canConfirm ? "#fff" : "#b0b0b0",
-                        borderRadius: "20px",
-                        padding: "10px 20px",
-                        fontSize: "calc(13px*var(--app-text-scale,1))",
-                        fontWeight: 700,
-                        boxShadow: activeOrderShipping?.pickup.canConfirm ? "0 6px 16px rgba(255,107,0,0.22)" : "none",
+                        border: activeOrderShipping?.pickup.canConfirm ? "1px solid #dcdfe3" : "1px solid #eee",
+                        background: "#fff",
+                        color: activeOrderShipping?.pickup.canConfirm ? "#333" : "#c2c2c2",
+                        borderRadius: "8px",
+                        padding: "6px 14px",
+                        fontSize: "calc(12px*var(--app-text-scale,1))",
+                        fontWeight: 500,
                         cursor: "pointer",
                       }}
                     >
