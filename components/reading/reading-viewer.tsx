@@ -4994,13 +4994,15 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                     display: "inline-flex",
                                     alignItems: "center",
                                     justifyContent: "center",
-                                    // 28 太小，手指按不准还会连带点开下面那条评论的气泡；
-                                    // 32 也还是收在名字行的高度里，不会把行撑高
-                                    width: 32,
-                                    height: 32,
+                                    // 原来 32×32 的正方形在名字行右侧太占地方，像个方块；
+                                    // 三个点本来就是横向排的，改成扁长方形（30×22）更贴合内容，
+                                    // 视觉面积少了三成多。高度 22 仍在手指能稳当点中的范围内，
+                                    // 又不会把名字行撑高。
+                                    width: 30,
+                                    height: 22,
                                     padding: 0,
                                     border: "none",
-                                    borderRadius: 6,
+                                    borderRadius: 5,
                                     // 展开态不描边、也不填底色：菜单本身已经浮出来了，
                                     // 按钮上再画框或压灰都会显得像按动效果没复位。
                                     // 只让图标变深一点表示「这条的菜单是开的」。
@@ -5032,7 +5034,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                     setCommentActionMenuId(item.id);
                                 }}
                             >
-                                <MoreHorizontal size={18} strokeWidth={2} />
+                                <MoreHorizontal size={16} strokeWidth={2} />
                             </button>
                             {open && (
                                 <>
