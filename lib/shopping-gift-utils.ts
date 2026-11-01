@@ -52,6 +52,20 @@ function isOrderDelivered(order: ShoppingOrder, nowMs: number): boolean {
   return /已到货|已签收|已完成/.test(order.statusLabel);
 }
 
+/**
+ * 商品是否已「进入背包」= 出现在可送礼物列表。
+ *
+ * 新流程（下单时即写入取件码）必须签收后才算到手：待签收阶段还锁在驿站里。
+ * 申请售后的订单商品退回，永远不进列表。
+ * 旧订单（没有取件码的老数据）保持原有行为：到货即可送，避免升级后凭空少礼物。
+ */
+function isOrderGiftable(order: ShoppingOrder, nowMs: number): boolean {
+  if (order.refundedAt) return false;
+  if (order.signedAt) return true;
+  if (order.pickupCode) return false;
+  return isOrderDelivered(order, nowMs);
+}
+
 export function loadSentShoppingGiftIds(): Set<string> {
   const sentIds = new Set<string>();
   for (const session of loadChatSessions()) {
@@ -71,7 +85,7 @@ export function loadDeliveredShoppingGifts(options: LoadShoppingGiftOptions = {}
   const gifts: ShoppingGiftCandidate[] = [];
 
   for (const order of state.orders) {
-    if (!isOrderDelivered(order, nowMs)) continue;
+    if (!isOrderGiftable(order, nowMs)) continue;
     const deliveredEvent = getDeliveredEvent(order);
 
     order.items.forEach((item, itemIndex) => {

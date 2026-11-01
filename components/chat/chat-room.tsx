@@ -68,6 +68,7 @@ import { parseActionTags } from "@/lib/action-parser";
 import { kvGet, kvSet, kvRemove } from "@/lib/kv-db";
 import { creditWalletBalance, payWithWalletBalance } from "@/lib/wallet-storage";
 import { loadDeliveredShoppingGifts, type ShoppingGiftCandidate } from "@/lib/shopping-gift-utils";
+import { applyDeliveryMarkers } from "@/lib/shopping-pickup";
 import { settleShoppingPaymentRequest } from "@/lib/shopping-payment-request";
 import type { RegexConfig } from "@/lib/settings-types";
 import { MacroEngine } from "@/lib/macro-engine";
@@ -2868,6 +2869,20 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         }
     };
 
+    // 拆快递后补给角色的商品信息：作为隐性系统提示落库，不进气泡、只进上下文
+    const persistDeliveryReveal = (revealText: string) => {
+        if (!revealText.trim()) return;
+        // tool_call 气泡在聊天室隐藏、但会原样进入上下文——正好用来给角色补充
+        // 「你刚拆开了什么」，用户看不到，拆件保持隐蔽。
+        pushChatMessage({
+            sessionId: session.id,
+            role: "system",
+            content: revealText,
+            mediaType: "tool_call",
+        });
+        syncMessagesFromStorage();
+    };
+
     // Helper: Split AI response by \n\n into multiple messages (online chat mode)
     // Uses shared parseAIResponse for rich-media support.
     // Returns { hasVisible, stateValues, hasDecline } — hasVisible is false if the AI chose [静默].
@@ -2888,7 +2903,21 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             ? getLatestStateValues(session.id)
             : getLatestCharacterStateValues(session.contactId);
 
-        const { parts: rawParts, stateValues, freshStateValues, statusPanel, innerMonologue } = parseAIResponse(aiResponseText, previousState);
+        // 快递相关隐性动作标记（[代取成功] / [拆快递]）：解析后从正文剥离，
+        // 拆件时把商品信息补给角色。必须在分条之前处理，卡片才不会混进正文气泡。
+        const delivery = applyDeliveryMarkers(aiResponseText, session.id, {
+            characterId: session.isGroup ? undefined : session.contactId,
+            characterName: character?.name,
+        });
+        const deliveryMarkersApplied = delivery.text !== aiResponseText;
+        if (delivery.revealText) {
+            persistDeliveryReveal(delivery.revealText);
+        }
+        if (deliveryMarkersApplied) {
+            // 代取成功后由 shopping-pickup 直接落了「代取成功」卡片，这里同步一次消息列表
+            syncMessagesFromStorage();
+        }
+        const { parts: rawParts, stateValues, freshStateValues, statusPanel, innerMonologue } = parseAIResponse(deliveryMarkersApplied ? delivery.text : aiResponseText, previousState);
         const parts = stripInvalidStickerParts(rawParts);
         throwIfGenerationStopped(options);
 

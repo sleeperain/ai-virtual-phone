@@ -115,6 +115,7 @@ export type ChatMessage = {
         | "music" | "music_share" | "music_notify" | "music_not_found"
         | "xiaohongshu_note_share"
         | "gift"
+        | "delivery_card"
         | "contact_card"
         | "app_card"
         | "tool_notice"
@@ -150,6 +151,12 @@ export type ChatMessage = {
         walletRefundTransactionId?: string; // 被拒收/退回时退款流水
         walletDepositTransactionId?: string; // 领取红包/转账时入账流水
         shoppingGiftId?: string; // 购物订单中的可送礼物实例 ID
+        /** 快递取件卡片：pickup=用户发出的取件码卡，picked=角色代取成功卡。两者都不含商品信息 */
+        deliveryCardKind?: "pickup" | "picked";
+        deliveryCardOrderId?: string;
+        /** 卡片首行主文案：取件码（pickup）或「代取成功」（picked） */
+        deliveryCardCodeLabel?: string;
+        deliveryCardCaption?: string;
         giftOrderId?: string;    // 礼物来源订单 ID
         giftItemId?: string;     // 礼物来源商品 ID
         giftName?: string;       // 礼物商品名

@@ -96,11 +96,14 @@ export function buildShoppingShippingTimeline(
   );
   const shippedOffset = Math.max(1, Math.floor(totalMinutes * 0.18));
   const deliveringOffset = Math.max(shippedOffset, Math.floor(totalMinutes * 0.55));
+  const arrivedAt = addShoppingMinutes(orderedAt, totalMinutes);
   const timeline = [
     { status: "ordered" as const, label: "已下单", date: orderedAt },
     { status: "shipped" as const, label: "已发货", date: addShoppingMinutes(orderedAt, Math.min(shippedOffset, totalMinutes)) },
     { status: "delivering" as const, label: "配送中", date: addShoppingMinutes(orderedAt, Math.min(deliveringOffset, totalMinutes)) },
-    { status: "delivered" as const, label: "已到货", date: addShoppingMinutes(orderedAt, totalMinutes) },
+    { status: "delivered" as const, label: "已到货", date: arrivedAt },
+    // 到货即待签收，与购物 App 内的时间线保持一致
+    { status: "pickup_waiting" as const, label: "待签收", date: arrivedAt },
   ];
   return timeline.map(event => ({
     status: event.status,

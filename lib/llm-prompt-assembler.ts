@@ -1269,6 +1269,14 @@ export function formatRichMediaForHistory(msg: ChatMessage, userName: string, ch
                 items: d?.paymentRequestItems,
                 itemsText: d?.paymentRequestItemsText,
             });
+        case "delivery_card": {
+            // 取件卡片只带取件码，绝不带商品信息：角色拆件之前不知道包裹里是什么。
+            // 规则随卡片一起进上下文（不依赖预设条目），模型才知道两个隐性标记怎么用。
+            const code = d?.deliveryCardCodeLabel || d?.label || "取件码";
+            return d?.deliveryCardKind === "picked"
+                ? `[快递:已代取:${code}]`
+                : `[快递:取件码:${code}]（想帮对方去取就在回复里写 [代取成功]；取到后想拆开包裹就写 [拆快递]，拆之前你不知道包裹里是什么）`;
+        }
         case "contact_card":
             return `[名片:${d?.contactCardName || d?.label || "联系人"}]`;
         case "app_card": {

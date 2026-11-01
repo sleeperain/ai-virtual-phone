@@ -21,7 +21,7 @@ import remarkGfm from "remark-gfm";
 import remarkCjkFriendly from "remark-cjk-friendly";
 import remarkBreaks from "remark-breaks";
 import { createPortal } from "react-dom";
-import { Blocks, Maximize2, ReceiptText } from "lucide-react";
+import { Blocks, Maximize2, Package, PackageCheck, ReceiptText } from "lucide-react";
 import { retryChatGeneratedImage } from "@/lib/generated-image-retry";
 import { hasCharacterReferenceImage, isImageGenerationConfigured } from "@/lib/image-generation-service";
 import { GeneratedImageErrorDialog } from "./generated-image-error-dialog";
@@ -96,6 +96,8 @@ export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charNa
             return <TransferBubble msg={msg} charName={charName} userName={userName} onShowDetail={onShowDetail} />;
         case "gift":
             return <GiftBubble msg={msg} />;
+        case "delivery_card":
+            return <DeliveryCardBubble msg={msg} />;
         case "contact_card":
             return <ContactCardBubble msg={msg} characterId={characterId} />;
         case "payment_request":
@@ -146,6 +148,8 @@ export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charNa
         if (prev.msg.isTyping !== next.msg.isTyping) return false;
         if (prev.msg.mediaData?.status !== next.msg.mediaData?.status) return false;
         if (prev.msg.mediaData?.label !== next.msg.mediaData?.label) return false;
+        if (prev.msg.mediaData?.deliveryCardCodeLabel !== next.msg.mediaData?.deliveryCardCodeLabel) return false;
+        if (prev.msg.mediaData?.deliveryCardKind !== next.msg.mediaData?.deliveryCardKind) return false;
         if (prev.msg.mediaData?.claimedBy?.length !== next.msg.mediaData?.claimedBy?.length) return false;
         if (prev.msg.mediaData?.appName !== next.msg.mediaData?.appName) return false;
         if (prev.msg.mediaData?.appCardTitle !== next.msg.mediaData?.appCardTitle) return false;
@@ -1154,6 +1158,57 @@ function GiftBubble({ msg }: { msg: ChatMessage }) {
                         <div className="chat-gift-card-brand ts-10 font-semibold text-[var(--c-icon)]">AI PHONE</div>
                     </div>
                 </div>
+            </div>
+        </div>
+    );
+}
+
+// ── Delivery card（快递取件 / 代取成功）─────────────────────────────
+// 布局：左侧取件码（大字）+ 下方装饰小字，右侧正方形 8px 圆角色块 + 快递箱图标。
+// 卡片刻意不含任何商品信息：角色拆件之前无从判断包裹里是什么。
+
+function DeliveryCardBubble({ msg }: { msg: ChatMessage }) {
+    const d = msg.mediaData;
+    const isPicked = d?.deliveryCardKind === "picked";
+    const codeLabel = d?.deliveryCardCodeLabel || d?.label || (isPicked ? "代取成功" : "取件码");
+    const caption = d?.deliveryCardCaption || (isPicked ? "快递已替你取到" : "凭取件码到驿站自取");
+    const accent = isPicked ? "var(--c-success)" : "var(--c-text-title)";
+
+    return (
+        <div
+            className="chat-delivery-card w-[248px] rounded-[14px] overflow-hidden"
+            style={{ background: "var(--c-card)", boxShadow: "0 6px 22px rgba(0,0,0,0.08)" }}
+            data-kind={d?.deliveryCardKind || "pickup"}
+        >
+            <div className="flex items-center gap-3 px-4 py-4">
+                <div className="flex-1 min-w-0">
+                    <div
+                        className="ts-20 font-semibold leading-tight truncate"
+                        style={{ color: accent, letterSpacing: isPicked ? "0.02em" : "0.08em" }}
+                    >
+                        {codeLabel}
+                    </div>
+                    <div className="ts-10 mt-1.5 text-[var(--c-icon)] truncate">{caption}</div>
+                </div>
+                <div
+                    className="w-[56px] h-[56px] shrink-0 flex items-center justify-center"
+                    style={{
+                        borderRadius: "8px",
+                        background: isPicked
+                            ? "color-mix(in srgb, var(--c-success) 16%, var(--c-input))"
+                            : "color-mix(in srgb, var(--c-text-title) 10%, var(--c-input))",
+                        color: isPicked ? "var(--c-success)" : "var(--c-text-title)",
+                    }}
+                    aria-hidden
+                >
+                    {isPicked
+                        ? <PackageCheck size={26} strokeWidth={1.7} />
+                        : <Package size={26} strokeWidth={1.7} />}
+                </div>
+            </div>
+            <div className="ui-media-footer px-4 py-1.5 ts-11 flex justify-between items-center">
+                <span>{isPicked ? "快递代取" : "快递取件"}</span>
+                <span className="opacity-70">{isPicked ? "已签收" : "待签收"}</span>
             </div>
         </div>
     );

@@ -46,6 +46,16 @@ import {
   type ShoppingPaymentStatus,
 } from "@/lib/shopping-payment-request";
 import { createDefaultShoppingState, loadShoppingState, saveShoppingState, SHOPPING_STATE_UPDATED_EVENT } from "@/lib/shopping-storage";
+import {
+  confirmShoppingOrder,
+  generatePickupCode,
+  refundShoppingOrder,
+  resolveOrderPickup,
+  sendPickupProxyCard,
+  signShoppingOrder,
+  withPickupTimeline,
+  type ShoppingPickupState,
+} from "@/lib/shopping-pickup";
 import type { ShoppingCartItem, ShoppingCategory, ShoppingOrder, ShoppingProduct, ShoppingShippingEvent, ShoppingState } from "@/lib/shopping-types";
 import {
   formatWalletAmount,
@@ -95,6 +105,8 @@ type ResolvedShoppingShipping = {
   statusLabel: string;
   currentStage?: ShoppingShippingEvent["status"];
   timeline: ShoppingShippingEvent[];
+  /** 取件 / 签收 / 售后状态（取件码、去取件、确认收货都看它） */
+  pickup: ShoppingPickupState;
 };
 
 const DEFAULT_DELIVERY_MIN_MINUTES = 60;
@@ -248,11 +260,14 @@ function buildShippingTimeline(orderId: string, orderedAt: Date, settings: Shopp
   );
   const shippedOffset = Math.max(1, Math.floor(totalMinutes * 0.18));
   const deliveringOffset = Math.max(shippedOffset, Math.floor(totalMinutes * 0.55));
+  const arrivedAt = addShoppingMinutes(orderedAt, totalMinutes);
   const timeline = [
     { status: "ordered" as const, label: "已下单", date: orderedAt },
     { status: "shipped" as const, label: "已发货", date: addShoppingMinutes(orderedAt, Math.min(shippedOffset, totalMinutes)) },
     { status: "delivering" as const, label: "配送中", date: addShoppingMinutes(orderedAt, Math.min(deliveringOffset, totalMinutes)) },
-    { status: "delivered" as const, label: "已到货", date: addShoppingMinutes(orderedAt, totalMinutes) },
+    { status: "delivered" as const, label: "已到货", date: arrivedAt },
+    // 到货即进入待签收：取件码在这一步出现，签收后才有「已签收」
+    { status: "pickup_waiting" as const, label: "待签收", date: arrivedAt },
   ];
   return timeline.map(event => ({
     status: event.status,
@@ -263,20 +278,25 @@ function buildShippingTimeline(orderId: string, orderedAt: Date, settings: Shopp
 }
 
 function resolveOrderShipping(order: ShoppingOrder, nowMs: number): ResolvedShoppingShipping {
-  const timeline = Array.isArray(order.shippingTimeline) ? order.shippingTimeline : [];
+  const pickup = resolveOrderPickup(order, nowMs);
+  // 内存里补出「待签收」节点：旧订单也能看到取件流程，但不改写存档
+  const enriched = withPickupTimeline(order);
+  const timeline = Array.isArray(enriched.shippingTimeline) ? enriched.shippingTimeline : [];
   if (timeline.length === 0) {
-    return { statusLabel: order.statusLabel, timeline: [] };
+    return { statusLabel: pickup.statusLabel || order.statusLabel, timeline: [], pickup };
   }
   const reached = timeline
     .filter(event => !Number.isNaN(new Date(event.timestamp).getTime()) && new Date(event.timestamp).getTime() <= nowMs)
     .slice(-1)[0];
   if (!reached || reached.status === "ordered") {
-    return { statusLabel: "待发货", currentStage: "ordered", timeline };
+    return { statusLabel: pickup.statusLabel, currentStage: "ordered", timeline, pickup };
   }
   return {
-    statusLabel: reached.label,
+    // 到货未签收时这里就是取件码；签收后是「已签收」
+    statusLabel: pickup.statusLabel,
     currentStage: reached.status,
     timeline,
+    pickup,
   };
 }
 
@@ -344,52 +364,81 @@ function productAsCartItem(product: ShoppingProductDetail | ShoppingProduct, qua
   };
 }
 
-function buildOrderFromCart(
+/** 单个购物车条目的小计（分），避免浮点误差影响拆单金额 */
+function cartItemCents(item: ShoppingCartItem): number {
+  const unitCents = Math.round(parseShoppingAmount(item.priceLabel) * 100);
+  return unitCents * Math.max(1, parseShoppingQuantity(item.quantityLabel));
+}
+
+/** 按店铺分组：同店合并、异店分单 */
+function groupCartItemsByMerchant(cartItems: ShoppingCartItem[]): Array<{ merchantLabel: string; items: ShoppingCartItem[] }> {
+  const groups = new Map<string, ShoppingCartItem[]>();
+  for (const item of cartItems) {
+    const key = normalizeCheckPhoneText(item.merchantLabel).trim() || "商城";
+    const bucket = groups.get(key);
+    if (bucket) bucket.push(item);
+    else groups.set(key, [item]);
+  }
+  return Array.from(groups.entries()).map(([merchantLabel, items]) => ({ merchantLabel, items }));
+}
+
+type BuildOrderOptions = {
+  statusLabel?: string;
+  note?: string;
+  skipShipping?: boolean;
+  paymentStatus?: ShoppingPaymentStatus;
+  paymentRequestId?: string;
+  payerCharacterId?: string;
+  payerCharacterName?: string;
+  paymentRequestedAt?: string;
+};
+
+/**
+ * 结算拆单：同一店铺的商品合并成一张订单，不同店铺各生成一张独立订单。
+ * 例：同时买 A 店的肥皂和 B 店的沐浴露 → 两张订单；两件都来自 A 店 → 一张订单。
+ */
+function buildOrdersFromCart(
   cartItems: ShoppingCartItem[],
-  totalLabel: string,
   settings: ShoppingState["settings"],
-  options: {
-    statusLabel?: string;
-    note?: string;
-    skipShipping?: boolean;
-    paymentStatus?: ShoppingPaymentStatus;
-    paymentRequestId?: string;
-    payerCharacterId?: string;
-    payerCharacterName?: string;
-    paymentRequestedAt?: string;
-  } = {},
-): ShoppingOrder {
+  options: BuildOrderOptions = {},
+): ShoppingOrder[] {
   const now = new Date();
-  const id = `shop_order_${now.getTime()}_${Math.random().toString(36).slice(2, 7)}`;
-  const summaryTitles = cartItems.slice(0, 3).map(item => normalizeCheckPhoneText(item.title));
-  const summary = summaryTitles.join("、") + (cartItems.length > 3 ? ` 等 ${cartItems.length} 件商品` : "");
-  const merchantLabel = cartItems.length === 1 ? cartItems[0]?.merchantLabel ?? "SHOP" : `${cartItems.length} 件商品`;
-  return {
-    id,
-    statusLabel: options.statusLabel ?? "待发货",
-    timeLabel: formatShoppingDateTime(now),
-    totalLabel,
-    merchantLabel,
-    summary,
-    note: options.note ?? `已结算购物车中的 ${cartItems.length} 件商品。`,
-    shippingTimeline: options.skipShipping ? [] : buildShippingTimeline(id, now, settings),
-    paymentStatus: options.paymentStatus,
-    paymentRequestId: options.paymentRequestId,
-    payerCharacterId: options.payerCharacterId,
-    payerCharacterName: options.payerCharacterName,
-    paymentRequestedAt: options.paymentRequestedAt,
-    items: cartItems.map((item, index) => ({
-      id: `${id}_item_${index + 1}`,
-      title: item.title,
-      merchantLabel: item.merchantLabel,
-      priceLabel: item.priceLabel,
-      quantityLabel: item.quantityLabel,
-      subtitle: item.subtitle,
-      detail: item.detail,
-      previewIcon: item.previewIcon,
-      tone: item.tone,
-    })),
-  };
+  const batchId = `${now.getTime()}_${Math.random().toString(36).slice(2, 7)}`;
+  return groupCartItemsByMerchant(cartItems).map((group, groupIndex) => {
+    const id = `shop_order_${batchId}_${groupIndex + 1}`;
+    const summaryTitles = group.items.slice(0, 3).map(item => normalizeCheckPhoneText(item.title));
+    const summary = summaryTitles.join("、") + (group.items.length > 3 ? ` 等 ${group.items.length} 件商品` : "");
+    const groupCents = group.items.reduce((sum, item) => sum + cartItemCents(item), 0);
+    return {
+      id,
+      statusLabel: options.statusLabel ?? "待发货",
+      timeLabel: formatShoppingDateTime(now),
+      totalLabel: formatShoppingAmount(groupCents / 100),
+      merchantLabel: group.merchantLabel,
+      summary,
+      note: options.note ?? `已结算购物车中的 ${group.items.length} 件商品。`,
+      shippingTimeline: options.skipShipping ? [] : buildShippingTimeline(id, now, settings),
+      // 下单即分配取件码（稳定不变），到货后才会展示
+      pickupCode: generatePickupCode(id),
+      pickupCodeAt: now.toISOString(),
+      paymentStatus: options.paymentStatus,
+      paymentRequestId: options.paymentRequestId,
+      payerCharacterId: options.payerCharacterId,
+      payerCharacterName: options.payerCharacterName,
+      paymentRequestedAt: options.paymentRequestedAt,
+      items: group.items.map((item, index) => ({
+        id: `${id}_item_${index + 1}`,
+        title: item.title,
+        merchantLabel: item.merchantLabel,
+        priceLabel: item.priceLabel,
+        quantityLabel: item.quantityLabel,
+        subtitle: item.subtitle,
+        detail: item.detail,
+        previewIcon: item.previewIcon,
+        tone: item.tone,
+      })),
+    };
+  });
 }
 
 export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: ShoppingAppProps) {
@@ -428,6 +477,14 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
   const [paymentRequestTargets, setPaymentRequestTargets] = useState<Character[]>([]);
   const [selectedPaymentRequestTargetId, setSelectedPaymentRequestTargetId] = useState("");
   const [paymentRequestError, setPaymentRequestError] = useState<string | null>(null);
+  // 取件相关：找人代取弹窗、申请售后确认、按钮区提示
+  const [pickupProxyOpen, setPickupProxyOpen] = useState(false);
+  const [pickupProxyTargets, setPickupProxyTargets] = useState<Character[]>([]);
+  const [pickupProxyTargetId, setPickupProxyTargetId] = useState("");
+  const [pickupProxyError, setPickupProxyError] = useState<string | null>(null);
+  const [afterSaleConfirmOrderId, setAfterSaleConfirmOrderId] = useState<string | null>(null);
+  const [afterSaleResult, setAfterSaleResult] = useState<string | null>(null);
+  const [pickupHint, setPickupHint] = useState<string | null>(null);
   const [confirmCartDeleteItemId, setConfirmCartDeleteItemId] = useState<string | null>(null);
   const [walletState, setWalletState] = useState<WalletState>(() => loadWalletState());
   const [selectedPaymentSourceId, setSelectedPaymentSourceId] = useState<string>(WALLET_BALANCE_ACCOUNT_ID);
@@ -587,6 +644,11 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
         : "可搜索商品，或点刷新生成分类推荐"
       : "可切回全部，或点刷新生成分类推荐";
   const activeOrderShipping = activeOrder ? resolveOrderShipping(activeOrder, nowTick) : null;
+
+  useEffect(() => {
+    // 切换订单/关闭详情时清掉一次性提示，避免串到下一张单
+    setPickupHint(null);
+  }, [selectedOrderId]);
   const normalizedCartSearchQuery = normalizeShoppingSearchValue(sectionSearchInputs.cart);
   const normalizedOrderSearchQuery = normalizeShoppingSearchValue(sectionSearchInputs.orders);
   const normalizedSavedSearchQuery = normalizeShoppingSearchValue(sectionSearchInputs.account);
@@ -868,22 +930,20 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
     }
     const paymentRequestedAt = new Date().toISOString();
     const paymentRequestId = createShoppingPaymentRequestId();
-    const order = buildOrderFromCart(
-      state.cartItems,
-      formatShoppingAmount(cartTotals.totalPayment),
-      state.settings,
-      {
-        statusLabel: "待代付",
-        note: `已向 ${target.name} 发起代付请求。`,
-        skipShipping: true,
-        paymentStatus: "payment_requested",
-        paymentRequestId,
-        payerCharacterId: target.id,
-        payerCharacterName: target.name,
-        paymentRequestedAt,
-      },
-    );
-    const requestItems = buildShoppingPaymentRequestItems(order.items);
+    // 代付同样按店铺拆单：同一请求下多张订单共享 paymentRequestId，结算时一起转状态
+    const orders = buildOrdersFromCart(state.cartItems, state.settings, {
+      statusLabel: "待代付",
+      note: `已向 ${target.name} 发起代付请求。`,
+      skipShipping: true,
+      paymentStatus: "payment_requested",
+      paymentRequestId,
+      payerCharacterId: target.id,
+      payerCharacterName: target.name,
+      paymentRequestedAt,
+    });
+    const order = orders[0];
+    const ordersSummary = orders.map(item => item.summary).join("；");
+    const requestItems = buildShoppingPaymentRequestItems(orders.flatMap(item => item.items));
     const requestItemsText = formatShoppingPaymentRequestItems(requestItems);
     const amountLabel = formatShoppingPaymentAmountForHistory(cartTotals.totalPayment);
     const chatSession = createOrGetSession(target.id);
@@ -899,7 +959,7 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
         shoppingOrderId: order.id,
         paymentRequestItems: requestItems,
         paymentRequestItemsText: requestItemsText,
-        paymentRequestSummary: order.summary,
+        paymentRequestSummary: ordersSummary,
         paymentPayerId: target.id,
         paymentPayerName: target.name,
         paymentRequestedAt,
@@ -912,7 +972,7 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
     }
     persist(current => ({
       ...current,
-      orders: [order, ...current.orders],
+      orders: [...orders, ...current.orders],
       cartItems: [],
     }));
     setSelectedTab("orders");
@@ -923,7 +983,10 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
 
   function handleCheckout() {
     if (state.cartItems.length === 0) return;
-    const order = buildOrderFromCart(state.cartItems, formatShoppingAmount(cartTotals.totalPayment), state.settings);
+    // 按店铺拆单：一笔结算生成多张独立订单，金额各按本店商品计算
+    const orders = buildOrdersFromCart(state.cartItems, state.settings);
+    if (orders.length === 0) return;
+    const ordersTotal = orders.reduce((sum, item) => sum + Math.round(parseShoppingAmount(item.totalLabel) * 100), 0) / 100;
     const paymentSource = selectedPaymentSource;
     if (!paymentSource) {
       setPaymentError("请选择付款方式。");
@@ -931,11 +994,11 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
     }
     const paymentResult = payWithWalletAccount({
       accountId: paymentSource.id,
-      amount: cartTotals.totalPayment,
+      amount: ordersTotal,
       title: "购物付款",
-      detail: `购物订单：${order.summary}`,
+      detail: `购物订单：${orders.map(item => item.summary).join("；")}`,
       category: "购物",
-      relatedOrderId: order.id,
+      relatedOrderId: orders[0].id,
     });
     if (!paymentResult.ok || !paymentResult.transaction) {
       setWalletState(paymentResult.state);
@@ -943,20 +1006,24 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
       return;
     }
     setWalletState(paymentResult.state);
-    const paidOrder: ShoppingOrder = {
+    const paymentCardLabel = paymentSource.id === WALLET_BALANCE_ACCOUNT_ID
+      ? "余额支付"
+      : `${paymentSource.title}（${paymentSource.description.replace(" · 银行卡", "")}）`;
+    const paidOrders: ShoppingOrder[] = orders.map(order => ({
       ...order,
       paymentCardId: paymentSource.id,
-      paymentCardLabel: paymentSource.id === WALLET_BALANCE_ACCOUNT_ID ? "余额支付" : `${paymentSource.title}（${paymentSource.description.replace(" · 银行卡", "")}）`,
-      paymentTransactionId: paymentResult.transaction.id,
-      paidAt: paymentResult.transaction.createdAt,
-    };
+      paymentCardLabel,
+      paymentTransactionId: paymentResult.transaction!.id,
+      paidAt: paymentResult.transaction!.createdAt,
+      paymentStatus: "paid_by_user",
+    }));
     persist(current => ({
       ...current,
-      orders: [paidOrder, ...current.orders],
+      orders: [...paidOrders, ...current.orders],
       cartItems: [],
     }));
     setSelectedTab("orders");
-    setSelectedOrderId(paidOrder.id);
+    setSelectedOrderId(paidOrders[0].id);
     setPaymentError(null);
     setConfirmCheckoutOpen(false);
   }
@@ -964,6 +1031,133 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
   function openProduct(product: ShoppingProduct | ShoppingCartItem | ShoppingOrder["items"][number], defaults?: { tagLabel?: string; detailLabel?: string }) {
     setTranslationPreview(null);
     setSelectedProduct(toProductDetail(product, defaults));
+  }
+
+  // ── 取件 / 签收 / 代取 / 售后 ──────────────────────────────
+
+  function handlePickupBySelf() {
+    if (!activeOrder) return;
+    const signed = signShoppingOrder(activeOrder.id, { by: "user" });
+    if (!signed) {
+      setPickupHint("取件失败，请重试。");
+      return;
+    }
+    setPickupHint("取件成功，商品已放入背包，可去确认收货。");
+    setState(loadShoppingState());
+  }
+
+  function openPickupProxySheet() {
+    if (!activeOrder) return;
+    // 只列出单聊好友，群聊不参与代取
+    const friends = loadCharacters();
+    if (friends.length === 0) {
+      setPickupHint("还没有可以帮忙取件的联系人。");
+      return;
+    }
+    setPickupProxyTargets(friends);
+    setPickupProxyTargetId(friends[0].id);
+    setPickupProxyError(null);
+    setPickupProxyOpen(true);
+  }
+
+  function submitPickupProxy() {
+    if (!activeOrder) return;
+    const target = pickupProxyTargets.find(item => item.id === pickupProxyTargetId);
+    if (!target) {
+      setPickupProxyError("请选择代取的联系人。");
+      return;
+    }
+    const result = sendPickupProxyCard(activeOrder.id, { id: target.id, name: target.name });
+    if (!result.ok) {
+      setPickupProxyError(result.error ?? "发送取件卡片失败。");
+      return;
+    }
+    setState(loadShoppingState());
+    setPickupProxyOpen(false);
+    setPickupProxyError(null);
+    setPickupHint(`取件码已发给${target.name}，等对方代取。`);
+  }
+
+  function handleConfirmReceipt() {
+    if (!activeOrder) return;
+    // 必须先取件（自己取或角色代取成功）才能确认收货
+    const pickup = resolveOrderPickup(activeOrder, Date.now());
+    if (!pickup.canConfirm) {
+      setPickupHint("需要先取件，才能确认收货。");
+      return;
+    }
+    const confirmed = confirmShoppingOrder(activeOrder.id);
+    if (!confirmed) {
+      setPickupHint("确认收货失败，请重试。");
+      return;
+    }
+    setState(loadShoppingState());
+    setPickupHint("已确认收货，可以再买一单了。");
+  }
+
+  function handleBuyAgain() {
+    if (!activeOrder) return;
+    // 再买一单：把订单商品重新放回购物车并直接进入结算
+    const items = activeOrder.items;
+    persist(current => {
+      let nextCart = [...current.cartItems];
+      for (const item of items) {
+        // 同店同名的商品合并数量，其余作为新行加入
+        const existsIndex = nextCart.findIndex(cartItem => cartItem.title === item.title
+          && cartItem.merchantLabel === item.merchantLabel
+          && cartItem.priceLabel === item.priceLabel);
+        if (existsIndex >= 0) {
+          const existing = nextCart[existsIndex];
+          nextCart = nextCart.map((cartItem, index) => index === existsIndex
+            ? {
+              ...existing,
+              quantityLabel: cartQuantityLabel(parseShoppingQuantity(existing.quantityLabel) + parseShoppingQuantity(item.quantityLabel)),
+            }
+            : cartItem);
+          continue;
+        }
+        nextCart = [{
+          id: `rebuy_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          title: item.title,
+          merchantLabel: item.merchantLabel,
+          priceLabel: item.priceLabel,
+          tagLabel: "购物车",
+          subtitle: item.subtitle,
+          detail: item.detail,
+          previewIcon: item.previewIcon,
+          tone: item.tone,
+          quantityLabel: item.quantityLabel || "× 1",
+        }, ...nextCart];
+      }
+      return { ...current, cartItems: nextCart };
+    });
+    setSelectedOrderId(null);
+    setSelectedTab("cart");
+    const nextWalletState = loadWalletState();
+    setWalletState(nextWalletState);
+    setSelectedPaymentSourceId(WALLET_BALANCE_ACCOUNT_ID);
+    setPaymentError(null);
+    setConfirmCheckoutOpen(true);
+  }
+
+  function requestAfterSale() {
+    if (!activeOrder) return;
+    setAfterSaleConfirmOrderId(activeOrder.id);
+  }
+
+  function confirmAfterSale() {
+    if (!afterSaleConfirmOrderId) return;
+    const result = refundShoppingOrder(afterSaleConfirmOrderId);
+    setAfterSaleConfirmOrderId(null);
+    if (!result.ok) {
+      setAfterSaleResult(result.error ?? "申请售后失败。");
+      return;
+    }
+    setWalletState(loadWalletState());
+    setState(loadShoppingState());
+    setAfterSaleResult(result.amount > 0
+      ? `已退款 ${formatShoppingAmount(result.amount)}，商品已退回。`
+      : "已提交售后，商品已退回。");
   }
 
   function renderShoppingCardText(text: string) {
@@ -1439,7 +1633,16 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
                       >
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
                           <strong style={{ fontSize: "calc(13px*var(--app-text-scale,1))", color: "#222" }}>{order.merchantLabel}</strong>
-                          <span style={{ fontSize: "calc(12px*var(--app-text-scale,1))", color: shipping.statusLabel === "已到货" ? "#16a34a" : "#ff6b00", fontWeight: 500 }}>{shipping.statusLabel}</span>
+                          <span
+                            style={{
+                              fontSize: "calc(12px*var(--app-text-scale,1))",
+                              color: shipping.pickup.signed ? "#16a34a" : "#ff6b00",
+                              fontWeight: shipping.pickup.canPickup ? 700 : 500,
+                              letterSpacing: shipping.pickup.canPickup ? "0.06em" : undefined,
+                            }}
+                          >
+                            {shipping.statusLabel}
+                          </span>
                         </div>
                         <div style={{ display: "flex", gap: "10px", width: "100%", alignItems: "stretch" }}>
                           <div style={{ width: "56px", height: "56px", background: "#f5f5f5", borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "calc(24px*var(--app-text-scale,1))", flexShrink: 0 }}>
@@ -1615,10 +1818,27 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
             </header>
 
             <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "24px", display: "flex", flexDirection: "column", gap: "16px" }}>
+              {activeOrder.confirmedAt ? (
+                <div style={{ background: "#f0fdf4", border: "1px solid #dcfce7", borderRadius: "14px", padding: "12px 16px", fontSize: "calc(12px*var(--app-text-scale,1))", color: "#15803d" }}>
+                  本单已确认收货
+                </div>
+              ) : null}
               <div style={{ background: "#fff", borderRadius: "20px", padding: "20px", boxShadow: "0 4px 20px rgba(0,0,0,0.02)" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "16px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "12px", marginBottom: "16px" }}>
                   <span style={{ fontSize: "calc(12px*var(--app-text-scale,1))", color: "#999" }}>Order Status</span>
-                  <span style={{ fontSize: "calc(12px*var(--app-text-scale,1))", color: activeOrderShipping?.statusLabel === "已到货" ? "#16a34a" : "#ff6b00", fontWeight: 600 }}>{activeOrderShipping?.statusLabel ?? activeOrder.statusLabel}</span>
+                  <span
+                    style={{
+                      fontSize: activeOrderShipping?.pickup.canPickup
+                        ? "calc(18px*var(--app-text-scale,1))"
+                        : "calc(12px*var(--app-text-scale,1))",
+                      color: activeOrderShipping?.pickup.signed ? "#16a34a" : "#ff6b00",
+                      fontWeight: activeOrderShipping?.pickup.canPickup ? 800 : 600,
+                      letterSpacing: activeOrderShipping?.pickup.canPickup ? "0.08em" : undefined,
+                      textAlign: "right",
+                    }}
+                  >
+                    {activeOrderShipping?.statusLabel ?? activeOrder.statusLabel}
+                  </span>
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
                   <span style={{ fontSize: "calc(12px*var(--app-text-scale,1))", color: "#999" }}>Merchant</span>
@@ -1646,25 +1866,126 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
                   <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
                     {activeOrderShipping.timeline.map((event, index) => {
                       const eventTime = new Date(event.timestamp).getTime();
-                      const completed = !Number.isNaN(eventTime) && eventTime <= nowTick;
-                      const current = event.status === activeOrderShipping.currentStage;
+                      const isPickupEvent = event.status === "pickup_waiting";
+                      const pickup = activeOrderShipping.pickup;
+                      // 「待签收」节点只有在签收后才算完成；签收一落盘就变成已完成
+                      const completed = isPickupEvent
+                        ? pickup.signed
+                        : !Number.isNaN(eventTime) && eventTime <= nowTick && !(pickup.signed && event.status === "pickup_waiting");
+                      const current = isPickupEvent
+                        ? pickup.canPickup
+                        : event.status === activeOrderShipping.currentStage && !pickup.signed;
+                      const isLastEvent = index === activeOrderShipping.timeline.length - 1;
                       return (
-                        <div key={`${event.status}-${event.timestamp}`} style={{ display: "grid", gridTemplateColumns: "18px 1fr", gap: "10px", position: "relative" }}>
+                        <div key={`${event.status}-${event.timestamp}`} style={{ display: "grid", gridTemplateColumns: "18px 1fr", gap: "10px", position: "relative", alignItems: "start" }}>
                           <div style={{ position: "relative", display: "flex", justifyContent: "center" }}>
                             {index < activeOrderShipping.timeline.length - 1 ? (
                               <span style={{ position: "absolute", top: "18px", width: "2px", height: "28px", background: completed ? "rgba(255,107,0,0.26)" : "#ececec" }} />
                             ) : null}
                             <span style={{ width: "10px", height: "10px", marginTop: "3px", borderRadius: "50%", background: completed ? current ? "#ff6b00" : "#16a34a" : "#d8d8d8", boxShadow: current ? "0 0 0 5px rgba(255,107,0,0.12)" : "none", zIndex: 1 }} />
                           </div>
-                          <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", minWidth: 0 }}>
-                            <span style={{ fontSize: "calc(12px*var(--app-text-scale,1))", color: completed ? "#222" : "#999", fontWeight: current ? 700 : 500 }}>{event.label}</span>
-                            <span style={{ fontSize: "calc(11px*var(--app-text-scale,1))", color: completed ? "#666" : "#aaa", whiteSpace: "nowrap" }}>{completed ? event.timeLabel : `预计 ${event.timeLabel}`}</span>
+                          <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: isPickupEvent ? "8px" : "0" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", minWidth: 0, alignItems: "baseline" }}>
+                              <span style={{ display: "inline-flex", alignItems: "baseline", gap: "10px", minWidth: 0, flexWrap: "wrap" }}>
+                                <span style={{ fontSize: "calc(12px*var(--app-text-scale,1))", color: completed || current ? "#222" : "#999", fontWeight: current || isPickupEvent ? 700 : 500 }}>{event.label}</span>
+                                {isPickupEvent ? (
+                                  <span style={{ fontSize: "calc(20px*var(--app-text-scale,1))", fontWeight: 800, color: pickup.signed ? "#16a34a" : "#ff6b00", letterSpacing: "0.09em", lineHeight: 1.1 }}>
+                                    {pickup.pickupCode}
+                                  </span>
+                                ) : null}
+                              </span>
+                              <span style={{ fontSize: "calc(11px*var(--app-text-scale,1))", color: completed ? "#666" : "#aaa", whiteSpace: "nowrap" }}>
+                                {completed ? event.timeLabel : `预计 ${event.timeLabel}`}
+                              </span>
+                            </div>
+                            {/* 待签收：字段下方左对齐「去取件」，右侧纯文字「找人代取」 */}
+                            {isPickupEvent && pickup.canPickup ? (
+                              <div style={{ display: "flex", alignItems: "center", gap: "14px", marginTop: "2px" }}>
+                                <button
+                                  type="button"
+                                  onClick={handlePickupBySelf}
+                                  style={{ border: "none", background: "#ff6b00", color: "#fff", borderRadius: "8px", padding: "9px 18px", fontSize: "calc(13px*var(--app-text-scale,1))", fontWeight: 700, boxShadow: "0 6px 14px rgba(255,107,0,0.24)" }}
+                                >
+                                  去取件
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={openPickupProxySheet}
+                                  style={{ border: "none", background: "transparent", color: "#ff6b00", padding: 0, fontSize: "calc(13px*var(--app-text-scale,1))", fontWeight: 600 }}
+                                >
+                                  找人代取
+                                </button>
+                              </div>
+                            ) : null}
+                            {isPickupEvent && pickup.signed && !pickup.refunded ? (
+                              <span style={{ fontSize: "calc(11px*var(--app-text-scale,1))", color: "#9a9a9a", lineHeight: 1.4 }}>
+                                {pickup.signedBy === "character"
+                                  ? `${pickup.signedByCharacterName || "对方"}已替你取件，快递已签收`
+                                  : "快递已签收，商品已放入背包"}
+                              </span>
+                            ) : null}
+                            {/* 已签收下方：灰色小字说明售后结果 */}
+                            {event.status === "signed" && pickup.refunded ? (
+                              <span style={{ fontSize: "calc(11px*var(--app-text-scale,1))", color: "#9a9a9a", lineHeight: 1.4, marginTop: "2px" }}>商品已退回</span>
+                            ) : null}
+                            {isLastEvent && pickup.refunded && event.status !== "signed" ? (
+                              <span style={{ fontSize: "calc(11px*var(--app-text-scale,1))", color: "#9a9a9a", marginTop: "2px" }}>商品已退回</span>
+                            ) : null}
                           </div>
                         </div>
                       );
                     })}
                   </div>
                 </div>
+              ) : null}
+
+              {/* 卡片外下方右侧：从左到右「申请售后」「确认收货」；已确认收货则把后者换成「再买一单」 */}
+              {activeOrderShipping?.pickup.canAfterSale || activeOrder.confirmedAt ? (
+                <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: "10px", marginTop: "-4px" }}>
+                  {activeOrderShipping?.pickup.refunded ? (
+                    <span style={{ fontSize: "calc(11px*var(--app-text-scale,1))", color: "#9a9a9a" }}>已退款，商品已退回</span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={requestAfterSale}
+                      style={{ border: "1px solid #e5e5e5", background: "#fff", color: "#666", borderRadius: "20px", padding: "9px 18px", fontSize: "calc(13px*var(--app-text-scale,1))", fontWeight: 500 }}
+                    >
+                      申请售后
+                    </button>
+                  )}
+                  {activeOrder.confirmedAt ? (
+                    <button
+                      type="button"
+                      onClick={handleBuyAgain}
+                      style={{ border: "none", background: "#ff6b00", color: "#fff", borderRadius: "20px", padding: "10px 20px", fontSize: "calc(13px*var(--app-text-scale,1))", fontWeight: 700, boxShadow: "0 6px 16px rgba(255,107,0,0.22)" }}
+                    >
+                      再买一单
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={activeOrderShipping?.pickup.canConfirm ? handleConfirmReceipt : () => setPickupHint("需要先取件，才能确认收货。")}
+                      aria-disabled={!activeOrderShipping?.pickup.canConfirm}
+                      style={{
+                        border: activeOrderShipping?.pickup.canConfirm ? "none" : "1px solid #ececec",
+                        background: activeOrderShipping?.pickup.canConfirm ? "#ff6b00" : "#f7f7f7",
+                        color: activeOrderShipping?.pickup.canConfirm ? "#fff" : "#b0b0b0",
+                        borderRadius: "20px",
+                        padding: "10px 20px",
+                        fontSize: "calc(13px*var(--app-text-scale,1))",
+                        fontWeight: 700,
+                        boxShadow: activeOrderShipping?.pickup.canConfirm ? "0 6px 16px rgba(255,107,0,0.22)" : "none",
+                        cursor: "pointer",
+                      }}
+                    >
+                      确认收货
+                    </button>
+                  )}
+                </div>
+              ) : null}
+
+              {pickupHint ? (
+                <div style={{ fontSize: "calc(11.5px*var(--app-text-scale,1))", color: "#16a34a", textAlign: "right", marginTop: "-6px" }}>{pickupHint}</div>
               ) : null}
 
               <h3 style={{ fontSize: "calc(14px*var(--app-text-scale,1))", fontWeight: "bold", color: "#222", margin: "8px 0 0 0" }}>Items</h3>
@@ -1709,6 +2030,96 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
           </div>
         )}
       </div>
+
+      {pickupProxyOpen && (
+        <div className="cp-shopping-translation-overlay" role="presentation" onClick={() => setPickupProxyOpen(false)}>
+          <div className="cp-shopping-translation-sheet" role="dialog" aria-modal="true" aria-label="找人代取" onClick={event => event.stopPropagation()} style={{ maxWidth: "340px" }}>
+            <div className="cp-shopping-translation-head">
+              <span>找人代取</span>
+              <button type="button" onClick={() => setPickupProxyOpen(false)}>Close</button>
+            </div>
+            <p style={{ margin: "4px 0 12px", fontSize: "calc(12px*var(--app-text-scale,1))", color: "#888", lineHeight: 1.6 }}>
+              选一位好友，把取件码发过去，由 TA 帮你去驿站取件。
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px", maxHeight: "46vh", overflowY: "auto" }}>
+              {pickupProxyTargets.map(target => {
+                const active = target.id === pickupProxyTargetId;
+                return (
+                  <button
+                    key={target.id}
+                    type="button"
+                    onClick={() => setPickupProxyTargetId(target.id)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "10px",
+                      border: active ? "1px solid #ff6b00" : "1px solid #eee",
+                      background: active ? "#fff7ed" : "#fff",
+                      borderRadius: "14px",
+                      padding: "10px 12px",
+                      textAlign: "left",
+                    }}
+                  >
+                    <span style={{ width: "34px", height: "34px", borderRadius: "50%", background: "#f2f2f2", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", flexShrink: 0 }}>
+                      {target.avatar
+                        ? <img src={target.avatar} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        : (target.name || "?").slice(0, 1)}
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0, fontSize: "calc(13px*var(--app-text-scale,1))", color: "#222", fontWeight: active ? 700 : 500 }}>{target.name}</span>
+                    {active ? <Check size={15} color="#ff6b00" strokeWidth={3} /> : null}
+                  </button>
+                );
+              })}
+            </div>
+            {pickupProxyError ? (
+              <div style={{ marginTop: "10px", fontSize: "calc(12px*var(--app-text-scale,1))", color: "#e5484d" }}>{pickupProxyError}</div>
+            ) : null}
+            <div style={{ display: "flex", gap: "10px", marginTop: "14px" }}>
+              <button type="button" onClick={() => setPickupProxyOpen(false)} style={{ flex: 1, height: "42px", borderRadius: "12px", border: "1px solid #e5e5e5", background: "#fff", color: "#555", fontSize: "calc(14px*var(--app-text-scale,1))" }}>
+                取消
+              </button>
+              <button type="button" onClick={submitPickupProxy} style={{ flex: 1, height: "42px", borderRadius: "12px", border: "none", background: "#ff6b00", color: "#fff", fontWeight: 700, fontSize: "calc(14px*var(--app-text-scale,1))" }}>
+                发送取件码
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {afterSaleConfirmOrderId && (
+        <div className="cp-shopping-translation-overlay" role="presentation" onClick={() => setAfterSaleConfirmOrderId(null)}>
+          <div className="cp-shopping-translation-sheet" role="dialog" aria-modal="true" aria-label="申请售后" onClick={event => event.stopPropagation()} style={{ maxWidth: "320px" }}>
+            <div className="cp-shopping-translation-head">
+              <span>申请售后</span>
+            </div>
+            <p style={{ margin: "4px 0 16px", fontSize: "calc(13.5px*var(--app-text-scale,1))", lineHeight: 1.8, color: "#555" }}>
+              确认退货退款吗？退款将原路退回，商品直接退回商家，不会放入背包，物流显示「已签收」。
+            </p>
+            <div style={{ display: "flex", gap: "10px" }}>
+              <button type="button" onClick={() => setAfterSaleConfirmOrderId(null)} style={{ flex: 1, height: "40px", borderRadius: "12px", border: "1px solid #e5e5e5", background: "#fff", color: "#555", fontSize: "calc(14px*var(--app-text-scale,1))" }}>
+                取消
+              </button>
+              <button type="button" onClick={confirmAfterSale} style={{ flex: 1, height: "40px", borderRadius: "12px", border: "none", background: "#e5484d", color: "#fff", fontWeight: 600, fontSize: "calc(14px*var(--app-text-scale,1))" }}>
+                确认退货
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {afterSaleResult && (
+        <div className="cp-shopping-translation-overlay" role="presentation" onClick={() => setAfterSaleResult(null)}>
+          <div className="cp-shopping-translation-sheet" role="dialog" aria-modal="true" aria-label="售后结果" onClick={event => event.stopPropagation()} style={{ maxWidth: "300px" }}>
+            <div className="cp-shopping-translation-head">
+              <span>售后已受理</span>
+            </div>
+            <p style={{ margin: "4px 0 16px", fontSize: "calc(13.5px*var(--app-text-scale,1))", lineHeight: 1.8, color: "#555" }}>{afterSaleResult}</p>
+            <button type="button" onClick={() => setAfterSaleResult(null)} style={{ width: "100%", height: "40px", borderRadius: "12px", border: "none", background: "#222", color: "#fff", fontWeight: 600, fontSize: "calc(14px*var(--app-text-scale,1))" }}>
+              知道了
+            </button>
+          </div>
+        </div>
+      )}
 
       {translationPreview && (
         <div className="cp-shopping-translation-overlay" role="presentation" onClick={() => setTranslationPreview(null)}>

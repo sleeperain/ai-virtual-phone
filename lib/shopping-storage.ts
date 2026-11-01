@@ -92,7 +92,14 @@ function normalizeShippingEvent(value: unknown): ShoppingShippingEvent | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
   const status = cleanText(record.status, 40);
-  if (status !== "ordered" && status !== "shipped" && status !== "delivering" && status !== "delivered") return null;
+  if (status !== "ordered"
+    && status !== "shipped"
+    && status !== "delivering"
+    && status !== "delivered"
+    && status !== "pickup_waiting"
+    && status !== "signed") {
+    return null;
+  }
   const timestamp = cleanText(record.timestamp, 80);
   const time = new Date(timestamp);
   if (!timestamp || Number.isNaN(time.getTime())) return null;
@@ -139,7 +146,7 @@ function normalizeOrder(value: unknown): ShoppingState["orders"][number] | null 
     summary,
     note: cleanText(record.note, 800) || summary,
     items,
-    shippingTimeline: normalizeArray(record.shippingTimeline, normalizeShippingEvent).slice(0, 8),
+    shippingTimeline: normalizeArray(record.shippingTimeline, normalizeShippingEvent).slice(0, 12),
     paymentCardId: cleanText(record.paymentCardId, 120) || undefined,
     paymentCardLabel: cleanText(record.paymentCardLabel, 120) || undefined,
     paymentTransactionId: cleanText(record.paymentTransactionId, 120) || undefined,
@@ -151,7 +158,27 @@ function normalizeOrder(value: unknown): ShoppingState["orders"][number] | null 
     paymentRequestedAt: cleanText(record.paymentRequestedAt, 80) || undefined,
     paymentDeclinedAt: cleanText(record.paymentDeclinedAt, 80) || undefined,
     characterPaidAt: cleanText(record.characterPaidAt, 80) || undefined,
+    pickupCode: normalizePickupCode(record.pickupCode),
+    pickupCodeAt: cleanText(record.pickupCodeAt, 80) || undefined,
+    signedAt: cleanText(record.signedAt, 80) || undefined,
+    signedBy: record.signedBy === "character" ? "character" : record.signedBy === "user" ? "user" : undefined,
+    signedByCharacterId: cleanText(record.signedByCharacterId, 120) || undefined,
+    signedByCharacterName: cleanText(record.signedByCharacterName, 120) || undefined,
+    confirmedAt: cleanText(record.confirmedAt, 80) || undefined,
+    refundedAt: cleanText(record.refundedAt, 80) || undefined,
+    refundTransactionId: cleanText(record.refundTransactionId, 120) || undefined,
+    proxySessionId: cleanText(record.proxySessionId, 120) || undefined,
+    proxyCharacterId: cleanText(record.proxyCharacterId, 120) || undefined,
+    proxyCharacterName: cleanText(record.proxyCharacterName, 120) || undefined,
+    unboxedAt: cleanText(record.unboxedAt, 80) || undefined,
+    unboxedBy: cleanText(record.unboxedBy, 120) || undefined,
   };
+}
+
+/** 取件码格式：x-x-xxxx，例如 1-5-0928 / 12-4-0625 */
+function normalizePickupCode(value: unknown): string | undefined {
+  const code = cleanText(value, 24);
+  return /^\d{1,2}-\d{1,2}-\d{4}$/.test(code) ? code : undefined;
 }
 
 function normalizeSearchResult(value: unknown): ShoppingSearchResult | undefined {

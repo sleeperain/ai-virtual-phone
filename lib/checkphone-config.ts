@@ -288,7 +288,7 @@ export type CheckPhoneShoppingOrderItem = {
   tone: CheckPhoneShoppingTone;
 };
 
-export type CheckPhoneShoppingShippingStage = "ordered" | "shipped" | "delivering" | "delivered";
+export type CheckPhoneShoppingShippingStage = "ordered" | "shipped" | "delivering" | "delivered" | "pickup_waiting" | "signed";
 
 export type CheckPhoneShoppingShippingEvent = {
   status: CheckPhoneShoppingShippingStage;
@@ -318,6 +318,30 @@ export type CheckPhoneShoppingOrder = {
   paymentRequestedAt?: string;
   paymentDeclinedAt?: string;
   characterPaidAt?: string;
+  /** 取件码（x-x-xxxx），到货后生成，用于驿站/快递柜取件与角色代取识别 */
+  pickupCode?: string;
+  /** 取件码生成时间（到货时间为准） */
+  pickupCodeAt?: string;
+  /** 签收时间：自己取件或角色代取成功后写入 */
+  signedAt?: string;
+  /** 签收方式：自己取件 / 角色代取 */
+  signedBy?: "user" | "character";
+  /** 角色代取时的角色 ID / 名称 */
+  signedByCharacterId?: string;
+  signedByCharacterName?: string;
+  /** 确认收货时间（签收后按钮变为「再买一单」） */
+  confirmedAt?: string;
+  /** 申请售后（退款退货）时间 */
+  refundedAt?: string;
+  /** 售后退款流水 ID */
+  refundTransactionId?: string;
+  /** 角色代取卡片发送到哪个会话 */
+  proxySessionId?: string;
+  proxyCharacterId?: string;
+  proxyCharacterName?: string;
+  /** 角色拆开快递的时间（拆开前角色不知道里面是什么） */
+  unboxedAt?: string;
+  unboxedBy?: string;
 };
 
 export type CheckPhoneShoppingPayload = {

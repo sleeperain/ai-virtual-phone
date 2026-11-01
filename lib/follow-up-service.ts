@@ -38,6 +38,7 @@ import { loadCharacters } from "./character-storage";
 import { bgSetInterval, bgSetTimeout } from "./bg-timer";
 import { dispatchChatMessageNotice } from "./chat-notification-events";
 import { settleShoppingPaymentRequest } from "./shopping-payment-request";
+import { applyDeliveryMarkers } from "./shopping-pickup";
 import {
     createPendingChatGeneratedImageData,
     generateAndApplyChatGeneratedImage,
@@ -945,7 +946,24 @@ export async function parseAndSaveResponse(
     const sess = sessions.find(s => s.id === sessionId);
     const previousState = sess && !sess.isGroup ? getLatestCharacterStateValues(sess.contactId) : [];
 
-    const { parts, stateValues, freshStateValues, statusPanel, innerMonologue } = parseAIResponse(rawText, previousState);
+    // 快递隐性动作标记：代取成功→签收订单+落代取卡；拆快递→把商品信息补给角色。
+    // 主动消息（追问/定时唤醒）也一样，标记不渲染。
+    const delivery = applyDeliveryMarkers(rawText, sessionId, {
+        characterId: sess?.isGroup ? undefined : sess?.contactId,
+        characterName: resolveFollowUpSenderName(sessionId),
+    });
+    const deliveryMarkersApplied = delivery.text !== rawText;
+    if (delivery.revealText) {
+        // tool_call 气泡在聊天室隐藏但会进入上下文：拆件对用户保持隐蔽
+        pushChatMessage({
+            sessionId,
+            role: "system",
+            content: delivery.revealText,
+            mediaType: "tool_call",
+        });
+    }
+
+    const { parts, stateValues, freshStateValues, statusPanel, innerMonologue } = parseAIResponse(deliveryMarkersApplied ? delivery.text : rawText, previousState);
 
     // 自定义状态栏渲染戳：追发/屏幕速聊/离线回传落库的消息此前从不盖
     // statusRegionMode，custom 模式下 [状态栏] 原文被当 markdown 渲染成一坨
