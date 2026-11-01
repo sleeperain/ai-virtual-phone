@@ -109,7 +109,8 @@ export function resolveOrderPickup(order: ShoppingOrder, nowMs: number): Shoppin
       pickupCode,
       canPickup: false,
       canConfirm: !refunded && !order.confirmedAt,
-      canAfterSale: !refunded,
+      // 售后截止到「确认收货」：签收后仍可申请，确认收货之后不再提供
+      canAfterSale: !refunded && !order.confirmedAt,
       signed: true,
       refunded,
       unboxed: Boolean(order.unboxedAt),
@@ -127,7 +128,7 @@ export function resolveOrderPickup(order: ShoppingOrder, nowMs: number): Shoppin
       pickupCode,
       canPickup: false,
       canConfirm: !order.confirmedAt,
-      canAfterSale: true,
+      canAfterSale: !order.confirmedAt,
       signed: true,
       refunded: false,
       unboxed: Boolean(order.unboxedAt),

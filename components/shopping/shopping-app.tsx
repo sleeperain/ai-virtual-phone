@@ -650,11 +650,21 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
     setPickupHint(null);
   }, [selectedOrderId]);
 
-  // 签收之后「待签收」节点收起，只留「已签收」一条，避免同一件事显示两行
+  // 物流节点按「真的走到了」才显示：
+  // - 待签收 / 取件码：没到货时整个字段不出现，签收后收起，只留「已签收」一条；
+  // - 已签收：要有真实签收记录（或存量订单已过到货时间）才显示。
   const activeOrderTimeline = activeOrderShipping
-    ? activeOrderShipping.timeline.filter(event => !(event.status === "pickup_waiting"
-      && activeOrderShipping.pickup.signed
-      && !activeOrderShipping.pickup.legacy))
+    ? activeOrderShipping.timeline.filter(event => {
+      const eventTime = new Date(event.timestamp).getTime();
+      const reached = !Number.isNaN(eventTime) && eventTime <= nowTick;
+      if (event.status === "pickup_waiting") {
+        return !activeOrderShipping.pickup.signed && reached;
+      }
+      if (event.status === "signed") {
+        return Boolean(activeOrder?.signedAt) || reached;
+      }
+      return true;
+    })
     : [];
   const normalizedCartSearchQuery = normalizeShoppingSearchValue(sectionSearchInputs.cart);
   const normalizedOrderSearchQuery = normalizeShoppingSearchValue(sectionSearchInputs.orders);
@@ -1950,12 +1960,18 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
                 </div>
               ) : null}
 
-              {/* 卡片外下方右侧：从左到右「申请售后」「确认收货」；已确认收货则把后者换成「再买一单」 */}
-              {activeOrderShipping?.pickup.canAfterSale || activeOrder.confirmedAt ? (
+              {/* 卡片外下方右侧：从左到右「申请售后」「确认收货」；已确认收货则换成只剩「再买一单」。
+                  没到待签收状态（已发货/配送中）时整行都不出现。 */}
+              {activeOrderShipping && (
+                activeOrderShipping.pickup.canAfterSale
+                || activeOrderShipping.pickup.canConfirm
+                || activeOrder.confirmedAt
+                || activeOrderShipping.pickup.refunded
+              ) ? (
                 <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: "10px", marginTop: "-4px" }}>
                   {activeOrderShipping?.pickup.refunded ? (
                     <span style={{ fontSize: "calc(11px*var(--app-text-scale,1))", color: "#9a9a9a" }}>已退款，商品已退回</span>
-                  ) : (
+                  ) : !activeOrderShipping?.pickup.canAfterSale ? null : (
                     <button
                       type="button"
                       onClick={requestAfterSale}
@@ -1964,7 +1980,7 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
                       申请售后
                     </button>
                   )}
-                  {activeOrder.confirmedAt ? (
+                  {activeOrder.confirmedAt || activeOrderShipping?.pickup.refunded ? (
                     <button
                       type="button"
                       onClick={handleBuyAgain}
