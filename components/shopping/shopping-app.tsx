@@ -485,6 +485,8 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
   const [pickupProxyError, setPickupProxyError] = useState<string | null>(null);
   const [afterSaleConfirmOrderId, setAfterSaleConfirmOrderId] = useState<string | null>(null);
   const [afterSaleResult, setAfterSaleResult] = useState<string | null>(null);
+  // 退货后可以删除这条订单记录
+  const [deleteOrderConfirmId, setDeleteOrderConfirmId] = useState<string | null>(null);
   const [pickupHint, setPickupHint] = useState<string | null>(null);
   const [confirmCartDeleteItemId, setConfirmCartDeleteItemId] = useState<string | null>(null);
   const [walletState, setWalletState] = useState<WalletState>(() => loadWalletState());
@@ -1166,6 +1168,23 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
       return;
     }
     setAfterSaleConfirmOrderId(activeOrder.id);
+  }
+
+  function requestDeleteOrder() {
+    if (!activeOrder) return;
+    setDeleteOrderConfirmId(activeOrder.id);
+  }
+
+  function confirmDeleteOrder() {
+    if (!deleteOrderConfirmId) return;
+    const orderId = deleteOrderConfirmId;
+    persist(current => ({
+      ...current,
+      orders: current.orders.filter(order => order.id !== orderId),
+    }));
+    setDeleteOrderConfirmId(null);
+    setSelectedOrderId(null);
+    setPickupHint(null);
   }
 
   function confirmAfterSale() {
@@ -1984,9 +2003,16 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
                 || activeOrderShipping.pickup.refunded
               ) ? (
                 <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: "10px", marginTop: "-4px" }}>
+                  {/* 退货之后售后入口换成「删除记录」：点掉即从订单列表移除这一单 */}
                   {activeOrderShipping?.pickup.refunded ? (
-                    <span style={{ fontSize: "calc(11px*var(--app-text-scale,1))", color: "#9a9a9a" }}>已退款，商品已退回</span>
-                  ) : !activeOrderShipping?.pickup.canAfterSale ? null : (
+                    <button
+                      type="button"
+                      onClick={requestDeleteOrder}
+                      style={{ border: "1px solid #dcdfe3", background: "#fff", color: "#8a8f96", borderRadius: "8px", padding: "6px 14px", fontSize: "calc(12px*var(--app-text-scale,1))", fontWeight: 500 }}
+                    >
+                      删除记录
+                    </button>
+                  ) : activeOrderShipping?.pickup.canAfterSale ? (
                     <button
                       type="button"
                       onClick={requestAfterSale}
@@ -1994,7 +2020,7 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
                     >
                       申请售后
                     </button>
-                  )}
+                  ) : null}
                   {activeOrder.confirmedAt || activeOrderShipping?.pickup.refunded ? (
                     <button
                       type="button"
@@ -2142,6 +2168,27 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
               </button>
               <button type="button" onClick={confirmAfterSale} style={{ flex: 1, height: "40px", borderRadius: "12px", border: "none", background: "#e5484d", color: "#fff", fontWeight: 600, fontSize: "calc(14px*var(--app-text-scale,1))" }}>
                 确认退货
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteOrderConfirmId && (
+        <div className="cp-shopping-translation-overlay" role="presentation" onClick={() => setDeleteOrderConfirmId(null)}>
+          <div className="cp-shopping-translation-sheet" role="dialog" aria-modal="true" aria-label="删除订单记录" onClick={event => event.stopPropagation()} style={{ maxWidth: "320px" }}>
+            <div className="cp-shopping-translation-head">
+              <span>删除记录</span>
+            </div>
+            <p style={{ margin: "4px 0 16px", fontSize: "calc(13.5px*var(--app-text-scale,1))", lineHeight: 1.8, color: "#555" }}>
+              这条退货记录将被删除，无法恢复。退款已经到账，商品也已经退回。
+            </p>
+            <div style={{ display: "flex", gap: "10px" }}>
+              <button type="button" onClick={() => setDeleteOrderConfirmId(null)} style={{ flex: 1, height: "40px", borderRadius: "12px", border: "1px solid #e5e5e5", background: "#fff", color: "#555", fontSize: "calc(14px*var(--app-text-scale,1))" }}>
+                取消
+              </button>
+              <button type="button" onClick={confirmDeleteOrder} style={{ flex: 1, height: "40px", borderRadius: "12px", border: "none", background: "#e5484d", color: "#fff", fontWeight: 600, fontSize: "calc(14px*var(--app-text-scale,1))" }}>
+                删除
               </button>
             </div>
           </div>
