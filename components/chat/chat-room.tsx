@@ -6721,7 +6721,6 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     currentCharacterId={session.isGroup ? undefined : session.contactId}
                     onDeliver={(request) => deliverBackpackItem(request)}
                     onClose={() => setShowBackpack(false)}
-                    toast={showChatToast}
                 />
             )}
             {richModal === "red_packet" && (

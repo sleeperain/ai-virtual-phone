@@ -27,9 +27,15 @@ const RE_ADD = /\[新增物品\s*[:：][\s\S]*?\]/g;
 const RE_EDIT = /\[修改物品\s*[:：][\s\S]*?\]/g;
 const RE_DROP = /\[丢弃\s*[:：][\s\S]*?\]/g;
 
-/** 文本里是否可能出现背包标记（廉价预检，避免每段文本都跑正则替换） */
+/**
+ * 文本里是否可能出现背包标记。
+ * 先做 indexOf 预检：没有 "[" 的文本连正则都不用跑。
+ * 这个函数在每条消息落库前都会被调用，是最热的路径之一。
+ */
 export function hasBackpackMarker(text: string): boolean {
-    return typeof text === "string" && RE_ANY.test(text);
+    if (typeof text !== "string" || text.length === 0) return false;
+    if (text.indexOf("[") < 0) return false;
+    return RE_ANY.test(text);
 }
 
 /** 只抹除标记，不执行任何动作（用户自己发的文本走这里，防止手写标记改背包） */

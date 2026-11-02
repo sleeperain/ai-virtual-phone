@@ -17,6 +17,7 @@ import {
     updateBackpackItem,
 } from "@/lib/backpack-storage";
 import type { BackpackItem } from "@/lib/backpack-types";
+import { appToastId, showAppToast } from "@/lib/app-toast";
 
 type BackpackItemEditorProps = {
     item: BackpackItem | null;
@@ -27,13 +28,17 @@ type BackpackItemEditorProps = {
     onClose: () => void;
     onSaved: () => void;
     onTransfer: (item: BackpackItem) => void;
-    toast?: (text: string) => void;
 };
 
 const MAX_IMAGE_LEN = 250 * 1024;
 const ALLOWED_DATA_IMAGE = /^data:image\/(png|jpe?g|gif|webp|bmp|avif|apng);/i;
 
 const TS = (px: number) => `calc(${px}px * var(--app-text-scale, 1))`;
+
+/** 与 backpack-modal 一致：走 app 级 toast，弹窗打开时也看得见 */
+function toast(text: string): void {
+    showAppToast({ id: appToastId("backpack"), text });
+}
 
 /** 图标：尺寸照搬插件 ICONS */
 const IconClose = () => (
@@ -129,7 +134,6 @@ export function BackpackItemEditor({
     onClose,
     onSaved,
     onTransfer,
-    toast,
 }: BackpackItemEditorProps) {
     const shoppingLock = item?.shopping ?? null;
     const canEditTitle = isNew || !item || item.isManual || item.isRoleAdded;
@@ -164,16 +168,16 @@ export function BackpackItemEditor({
 
     const handlePickFile = async (file: File) => {
         try {
-            toast?.("正在处理图片...");
+            toast("正在处理图片...");
             const compressed = await compressImageFile(file);
             if (compressed.length > MAX_IMAGE_LEN) {
                 toast?.("图片过大，请换一张");
                 return;
             }
             setCustomImage(compressed);
-            toast?.("预览已更新，点击保存即可生效");
+            toast("预览已更新，点击保存即可生效");
         } catch {
-            toast?.("图片读取失败");
+            toast("图片读取失败");
         }
     };
 
@@ -181,7 +185,7 @@ export function BackpackItemEditor({
         if (saving) return;
         const finalTitle = (canEditTitle ? title : item?.title ?? "").trim();
         if (!finalTitle) {
-            toast?.("请输入物品名称");
+            toast("请输入物品名称");
             return;
         }
         let finalImage = customImage;
@@ -200,7 +204,7 @@ export function BackpackItemEditor({
                     recipient: isUserTarget ? "user" : "character",
                     characterId: isUserTarget ? "" : targetId,
                 });
-                toast?.("已添加物品到背包");
+                toast("已添加物品到背包");
             } else if (item) {
                 const patch: Partial<BackpackItem> = {
                     value: value || "--",
@@ -218,7 +222,7 @@ export function BackpackItemEditor({
                 }
                 if (item.recipient === "user") patch.visibleTo = visibleTo.slice();
                 updateBackpackItem(item.id, patch);
-                toast?.("已保存物品修改");
+                toast("已保存物品修改");
             }
             onSaved();
         } finally {
@@ -232,7 +236,7 @@ export function BackpackItemEditor({
         if (item && !isNew) {
             updateBackpackItem(item.id, { visibleTo: ids, userEdited: true });
         }
-        toast?.(ids.length > 0 ? `已让 ${ids.length} 个角色知道这件物品` : "已设为仅自己知道");
+        toast(ids.length > 0 ? `已让 ${ids.length} 个角色知道这件物品` : "已设为仅自己知道");
         setVisibleOpen(false);
     };
 
@@ -453,15 +457,15 @@ export function BackpackItemEditor({
                                     type="button"
                                     onClick={() => {
                                         if (!urlDraft.trim()) {
-                                            toast?.("请输入有效的图片 URL");
+                                            toast("请输入有效的图片 URL");
                                             return;
                                         }
                                         if (!isValidImageUrl(urlDraft.trim())) {
-                                            toast?.("图片链接无效或过大，仅支持 http/https/data:image");
+                                            toast("图片链接无效或过大，仅支持 http/https/data:image");
                                             return;
                                         }
                                         setCustomImage(urlDraft.trim());
-                                        toast?.("预览已更新，点击保存即可生效");
+                                        toast("预览已更新，点击保存即可生效");
                                     }}
                                     style={{
                                         border: "none",

@@ -20,6 +20,7 @@ import {
     removeBackpackItems,
 } from "@/lib/backpack-storage";
 import { rescanShoppingOrders } from "@/lib/backpack-legacy";
+import { appToastId, showAppToast } from "@/lib/app-toast";
 import { BACKPACK_CHANGED_EVENT, type BackpackItem, type BackpackTarget } from "@/lib/backpack-types";
 import { BackpackItemEditor } from "./backpack-item-editor";
 import { BackpackTransferPicker } from "./backpack-transfer-picker";
@@ -35,8 +36,16 @@ type BackpackModalProps = {
     currentCharacterId?: string;
     onClose: () => void;
     onDeliver?: (request: BackpackDeliverRequest) => boolean;
-    toast?: (text: string) => void;
 };
+
+/**
+ * 背包内部提示一律走 app 级 toast（桌面壳根部，z-index 高于弹窗）。
+ * 不能用聊天室的 showChatToast：它渲染在聊天室 DOM 里，层级低于
+ * .modal-overlay(9999)，弹窗打开时提示会被整个盖住，看起来像没反应。
+ */
+function toast(text: string): void {
+    showAppToast({ id: appToastId("backpack"), text });
+}
 
 /* ── 图标：尺寸与 stroke 照搬插件 ICONS ── */
 const IconMenu = () => (
@@ -131,7 +140,6 @@ export function BackpackModal({
     currentCharacterId,
     onClose,
     onDeliver,
-    toast,
 }: BackpackModalProps) {
     const [targets, setTargets] = useState<BackpackTarget[]>([]);
     const [items, setItems] = useState<BackpackItem[]>([]);
@@ -145,9 +153,10 @@ export function BackpackModal({
     const [transferItem, setTransferItem] = useState<BackpackItem | null>(null);
     const [deliverItem, setDeliverItem] = useState<BackpackItem | null>(null);
 
+    // 只刷物品：目标列表由 loadBackpackTargets 内部缓存，
+    // 每次操作都重建一次数组没有必要。
     const refresh = useCallback(() => {
         setItems(loadBackpackItems());
-        setTargets(loadBackpackTargets());
     }, []);
 
     useEffect(() => {
@@ -200,18 +209,21 @@ export function BackpackModal({
 
     const allSelected = visibleItems.length > 0 && selected.size === visibleItems.length;
 
+    // 说明：所有写操作后不再手动 refresh()——storage 写完会广播
+    // BACKPACK_CHANGED_EVENT，上面的监听已负责刷新；重复刷新等于渲染两遍。
+
     const handleRescan = () => {
         setMenuOpen(false);
         const added = rescanShoppingOrders();
-        refresh();
-        toast?.(added > 0 ? `扫描收录了 ${added} 件新物品` : "已同步全部背包物品");
+        toast(added > 0 ? `扫描收录了 ${added} 件新物品` : "已同步全部背包物品");
     };
 
     const handleBatchInject = (inject: boolean) => {
         if (selected.size === 0) {
-            toast?.("未勾选任何物品");
+            toast("未勾选任何物品");
             return;
         }
+        const count = selected.size;
         mutateBackpackItems(list => {
             for (const item of list) {
                 if (!selected.has(item.id)) continue;
@@ -219,21 +231,23 @@ export function BackpackModal({
                 item.injected = inject;
             }
         });
-        toast?.(inject
-            ? `已将选中的 ${selected.size} 件物品注入角色背包记忆`
-            : `已取消选中的 ${selected.size} 件物品记忆`);
-        refresh();
+        toast(inject
+            ? `已将选中的 ${count} 件物品注入角色背包记忆`
+            : `已取消选中的 ${count} 件物品记忆`);
     };
 
     const handleBatchDelete = () => {
         if (selected.size === 0) {
-            toast?.("未勾选任何物品");
+            toast("未勾选任何物品");
             return;
         }
+        const count = selected.size;
         removeBackpackItems([...selected]);
-        toast?.(`已从背包中移除 ${selected.size} 件物品`);
+        toast(`已从背包中移除 ${count} 件物品`);
+        // 删完自动退出批量管理：留在一个空的管理态里没有意义，
+        // 用户下一步多半是想看着列表。
         setSelected(new Set());
-        refresh();
+        setManageMode(false);
     };
 
     const emptyHint = query.trim()
@@ -541,7 +555,7 @@ export function BackpackModal({
                                 type="button"
                                 className="backpack-batch-btn"
                                 style={{ background: "rgba(59,130,246,0.12)", color: "#3b82f6" }}
-                                onClick={() => toast?.("可见范围请在物品详情里逐件调整")}
+                                onClick={() => toast("可见范围请在物品详情里逐件调整")}
                             >
                                 <IconEye />
                                 <span>可见角色</span>
@@ -567,10 +581,7 @@ export function BackpackModal({
                         targetName={currentTarget?.rawName ?? ""}
                         isUserTarget={viewingUser}
                         onClose={() => setEditorState(null)}
-                        onSaved={() => {
-                            setEditorState(null);
-                            refresh();
-                        }}
+                        onSaved={() => setEditorState(null)}
                         onTransfer={item => {
                             // 先收起详情弹窗再开目标列表：详情是 fixed 全屏遮罩，
                             // 两层叠着即使列表在上层，操作完详情也已经过期了。
@@ -578,7 +589,6 @@ export function BackpackModal({
                             if (item.recipient === "user") setDeliverItem(item);
                             else setTransferItem(item);
                         }}
-                        toast={toast}
                     />
                 )}
 
@@ -586,11 +596,7 @@ export function BackpackModal({
                     <BackpackTransferPicker
                         item={transferItem}
                         onClose={() => setTransferItem(null)}
-                        onDone={() => {
-                            setTransferItem(null);
-                            refresh();
-                        }}
-                        toast={toast}
+                        onDone={() => setTransferItem(null)}
                     />
                 )}
 
@@ -610,9 +616,7 @@ export function BackpackModal({
                                 targetName: target.rawName,
                             });
                             if (ok) setDeliverItem(null);
-                            refresh();
                         }}
-                        toast={toast}
                     />
                 )}
 

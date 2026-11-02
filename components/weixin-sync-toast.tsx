@@ -67,7 +67,9 @@ export function WeixinSyncToast() {
                 left: "50%",
                 top: "calc(env(safe-area-inset-top, 0px) + 44px)",
                 transform: "translateX(-50%)",
-                zIndex: 3000,
+                // 必须高于 .modal-overlay（9999）：toast 要在弹窗上面看得见，
+                // 否则任何在弹窗内触发的提示（背包删除、转送等）都会被遮住。
+                zIndex: 10001,
                 display: "flex",
                 flexDirection: "column",
                 alignItems: "center",

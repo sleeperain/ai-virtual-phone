@@ -45,11 +45,6 @@ export type BackpackMigrationState = {
     at: string;
 };
 
-function emitChanged() {
-    if (typeof window === "undefined") return;
-    window.dispatchEvent(new CustomEvent(BACKPACK_CHANGED_EVENT));
-}
-
 // ── 基础读写 ───────────────────────────────────────────────
 
 let itemsCache: BackpackItem[] | null = null;
@@ -98,6 +93,9 @@ function readItemsRaw(): BackpackItem[] {
     if (itemsCache) return itemsCache;
     const raw = kvGet(ITEMS_KEY);
     if (!raw) {
+        // kv 还没水合完时读到的是「空」，此时不能把空数组固化成缓存——
+        // 否则水合完成后仍会一直读到空列表。未水合就返回临时空数组，不写缓存。
+        if (!isKvHydrated()) return [];
         itemsCache = [];
         return itemsCache;
     }
@@ -121,11 +119,66 @@ function dedupeById(items: BackpackItem[]): BackpackItem[] {
     return [...map.values()];
 }
 
+/**
+ * 变更广播合并：一次用户操作可能连着改几处（删物品 + 存白名单），
+ * 多个事件合成一个微任务再发，避免界面被重复刷新。
+ */
+let emitScheduled = false;
+
+function emitChanged() {
+    if (emitScheduled) return;
+    emitScheduled = true;
+    const fire = () => {
+        emitScheduled = false;
+        if (typeof window === "undefined") return;
+        window.dispatchEvent(new CustomEvent(BACKPACK_CHANGED_EVENT));
+    };
+    if (typeof queueMicrotask === "function") queueMicrotask(fire);
+    else setTimeout(fire, 0);
+}
+
+/**
+ * 持久化合并。
+ * 物品里可能带自定义图标的 data URL（单张上限 250KB，总量 3MB），
+ * 每次改动都全量 JSON.stringify + 写 IndexedDB 会明显卡顿——
+ * 批量删除/注入时尤其明显。这里合并成一次写，内存缓存始终是最新的，
+ * 读路径不受影响；页面隐藏/卸载时立即落盘。
+ */
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingPersist = false;
+
+function flushPersist(): void {
+    if (persistTimer) {
+        clearTimeout(persistTimer);
+        persistTimer = null;
+    }
+    if (!pendingPersist || !itemsCache) return;
+    pendingPersist = false;
+    kvSet(ITEMS_KEY, JSON.stringify(itemsCache));
+}
+
+function schedulePersist(): void {
+    pendingPersist = true;
+    if (persistTimer) return;
+    persistTimer = setTimeout(() => {
+        persistTimer = null;
+        flushPersist();
+    }, 250);
+}
+
 function writeItems(items: BackpackItem[]) {
     const deduped = dedupeById(items).sort((a, b) => b.timestamp - a.timestamp);
     itemsCache = deduped;
-    kvSet(ITEMS_KEY, JSON.stringify(deduped));
+    schedulePersist();
     emitChanged();
+}
+
+if (typeof window !== "undefined") {
+    // 离开页面/切后台时把待写的数据落盘，避免防抖窗口内丢改动
+    window.addEventListener("pagehide", flushPersist);
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden") flushPersist();
+    });
 }
 
 /** 读取全部物品（首次调用会尝试跑一遍迁移） */
@@ -275,7 +328,21 @@ export function resolveCharacterIdByName(name: string): string | null {
 
 // ── 背包目标（我的背包 + 每个角色一个，不含群聊） ──────────
 
+/**
+ * 目标列表缓存。
+ * loadBackpackTargets() 每次都要遍历角色并构造对象数组，而界面（弹窗刷新、
+ * 每次背包变化）会频繁调用它。角色表本身是按 key 整体读写的，背包操作
+ * 不会改角色，所以缓存到下一次角色写入为止。
+ */
+let targetsListCache: BackpackTarget[] | null = null;
+
+/** 角色表变动后由 UI / 存储层调用（角色增删时） */
+export function invalidateBackpackTargetsCache(): void {
+    targetsListCache = null;
+}
+
 export function loadBackpackTargets(): BackpackTarget[] {
+    if (targetsListCache) return targetsListCache;
     const targets: BackpackTarget[] = [{
         id: "user",
         name: "我的背包",
@@ -297,6 +364,7 @@ export function loadBackpackTargets(): BackpackTarget[] {
     } catch {
         /* 角色读不出来就只留我的背包 */
     }
+    targetsListCache = targets;
     return targets;
 }
 

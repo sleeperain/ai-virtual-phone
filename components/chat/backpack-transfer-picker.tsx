@@ -16,23 +16,27 @@ import {
     saveTransferTargets,
 } from "@/lib/backpack-storage";
 import type { BackpackItem, BackpackTarget } from "@/lib/backpack-types";
+import { appToastId, showAppToast } from "@/lib/app-toast";
 
 type BackpackTransferPickerProps = {
     item: BackpackItem;
     mode?: "transfer" | "deliver";
     onClose: () => void;
     onDone: (target?: BackpackTarget | null) => void;
-    toast?: (text: string) => void;
 };
 
 const TS = (px: number) => `calc(${px}px * var(--app-text-scale, 1))`;
+
+/** 与 backpack-modal 一致：走 app 级 toast，弹窗打开时也看得见 */
+function toast(text: string): void {
+    showAppToast({ id: appToastId("backpack"), text });
+}
 
 export function BackpackTransferPicker({
     item,
     mode = "transfer",
     onClose,
     onDone,
-    toast,
 }: BackpackTransferPickerProps) {
     const sourceCharacterId = item.recipient === "character" ? item.characterId : "";
 
@@ -49,7 +53,7 @@ export function BackpackTransferPicker({
         }
         const moved = moveBackpackItem(item.id, target.id);
         if (!moved) {
-            toast?.("放入失败");
+            toast("放入失败");
             return;
         }
         // 顺手把目标记进该来源的白名单，下次列表里还能看到它
@@ -63,7 +67,7 @@ export function BackpackTransferPicker({
         } catch {
             /* 白名单写失败不影响这次转送本身 */
         }
-        toast?.(target.isUser ? "已放入到我的背包" : `已放入到${target.name}`);
+        toast(target.isUser ? "已放入到我的背包" : `已放入到${target.name}`);
         onDone(null);
     };
 
