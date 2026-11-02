@@ -11,6 +11,7 @@ import { resolveUserIdentity } from "./settings-storage";
 import { loadCharacters } from "./character-storage";
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 import { emitChatPluginEvent, runChatPluginTransformSync } from "./chat-plugin-hooks";
+import { applyBackpackMarkers, hasBackpackMarker, stripBackpackMarkers } from "./backpack-markers";
 import { parseAIResponse } from "./rich-message-parser";
 import { formatRichMediaForHistory } from "./llm-prompt-assembler";
 import { extractTextToolDirectiveText } from "./text-tool-protocol";
@@ -166,6 +167,7 @@ export type ChatMessage = {
         giftTone?: "ivory" | "mist" | "blush" | "graphite";
         giftDeliveredAt?: string;// 到货时间
         giftSentAt?: string;     // 送出时间
+        giftReceiverName?: string; // 收礼人显示名（背包送出时记录）
         paymentRequestId?: string; // 代付请求 ID
         shoppingOrderId?: string;  // 代付关联购物订单 ID
         paymentRequestAmountLabel?: string; // 代付金额展示
@@ -1172,6 +1174,17 @@ export function pushChatMessage(msg: Omit<ChatMessage, "id" | "createdAt" | "sta
     status?: ChatMessageStatus;
     createdAt?: string;
 }): ChatMessage {
+    // 背包标记：角色回复里的 [给予用户:…] 这类标记就地执行并抹掉，
+    // 用户自己打的标记只抹除不执行（防止手写标记改背包）。
+    if (typeof msg.content === "string" && hasBackpackMarker(msg.content)) {
+        msg = {
+            ...msg,
+            content: msg.role === "assistant"
+                ? applyBackpackMarkers(msg.content, msg.sessionId)
+                : stripBackpackMarkers(msg.content),
+        };
+    }
+
     let newMsg: ChatMessage = {
         ...msg,
         id: createMessageId(),

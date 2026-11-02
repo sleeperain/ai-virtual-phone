@@ -1,4 +1,5 @@
 import { loadChatMessages, loadChatSessions } from "./chat-storage";
+import { loadBackpackItems } from "./backpack-storage";
 import { loadShoppingState } from "./shopping-storage";
 import type { ShoppingOrder } from "./shopping-types";
 import type { CheckPhoneShoppingTone } from "./checkphone-config";
@@ -66,6 +67,13 @@ function isOrderGiftable(order: ShoppingOrder, nowMs: number): boolean {
   return isOrderDelivered(order, nowMs);
 }
 
+/**
+ * 已送出的礼物 id 集合。
+ *
+ * 两个来源：老礼物卡片（消息上的 shoppingGiftId）与背包（物品已经不在「我的背包」里）。
+ * 背包这一路是关键：物品归属是独立数据，清空聊天记录删掉卡片之后，
+ * 这件东西依然算「已送出」，不会再回到可送列表。
+ */
 export function loadSentShoppingGiftIds(): Set<string> {
   const sentIds = new Set<string>();
   for (const session of loadChatSessions()) {
@@ -76,6 +84,12 @@ export function loadSentShoppingGiftIds(): Set<string> {
       const giftId = message.mediaData?.shoppingGiftId;
       if (giftId) sentIds.add(giftId);
     }
+  }
+  for (const item of loadBackpackItems()) {
+    if (item.recipient === "user") continue;
+    const origin = item.shopping;
+    if (!origin) continue;
+    sentIds.add(`${origin.orderId}::${origin.itemId}::${origin.unitIndex}`);
   }
   return sentIds;
 }
@@ -90,6 +104,11 @@ export function countSentGiftsForOrder(orderId: string): number {
       if (message.mediaData?.giftReturnedAt) continue;
       count += 1;
     }
+  }
+  // 背包里的同一件商品已经转到角色那里，也算送出
+  for (const item of loadBackpackItems()) {
+    if (item.recipient === "user") continue;
+    if (item.shopping?.orderId === orderId) count += 1;
   }
   return count;
 }

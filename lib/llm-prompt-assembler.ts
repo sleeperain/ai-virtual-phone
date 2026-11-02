@@ -17,6 +17,7 @@ import { formatCharacterRelationsForPrompt } from "./character-world-storage";
 import { buildCharacterTimeContext, buildGroupTimeContext, type CharacterTimeContext } from "./character-time";
 import { formatShoppingPaymentRequestHistory } from "./shopping-payment-request";
 import { buildGroupAdminBracketText } from "./group-admin";
+import { buildBackpackPromptForSession } from "./backpack-prompt";
 
 export type LLMMessageRole = "system" | "user" | "assistant" | "tool";
 export type LLMToolCallPayload = { id: string; name: string; args: Record<string, unknown>; thoughtSignature?: string };
@@ -140,6 +141,10 @@ export interface AssemblerInput {
     cocreateChapterIndex?: string;
     cocreateArchivedChapterContext?: string;
     cocreateWriterNotebook?: string;
+    /** 随身背包物品清单 + 角色可写入的操作标记（不传则按会话自动生成） */
+    backpackContext?: string;
+    /** 会话 id：用于自动装配背包上下文（不传时从 history 推断） */
+    sessionId?: string;
 }
 
 type PromptBlock = {
@@ -958,6 +963,28 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
             depth: 0,
             order: 5,
             marker: "musicLive",
+        });
+    }
+
+    // --- 随身背包（物品清单 + 角色可写入的操作标记）---
+    // 不绑定预设条目：物品是会话状态，预设里没有对应宏也该让角色知道。
+    // 调用方不传 sessionId 时从历史推断——历史为空的新会话本来也没有背包内容可注入。
+    let backpackContext = input.backpackContext;
+    if (backpackContext === undefined) {
+        const resolvedSessionId = input.sessionId ?? history[0]?.sessionId ?? "";
+        try {
+            backpackContext = resolvedSessionId ? buildBackpackPromptForSession(resolvedSessionId) : "";
+        } catch {
+            backpackContext = "";
+        }
+    }
+    if (backpackContext && backpackContext.trim()) {
+        blocks.push({
+            text: backpackContext.trim(),
+            role: "system",
+            depth: 0,
+            order: 6,
+            marker: "backpack",
         });
     }
 

@@ -9,6 +9,8 @@ import { parseAIResponse, type ParsedMessagePart } from "@/lib/rich-message-pars
 import { isKnownStickerLabel } from "@/lib/sticker-data";
 import { translateReasoningText } from "@/lib/reasoning-translate";
 import { MessageBubble, MediaDetailModal, prewarmStickerCache, BilingualTextBlock, isStandaloneHtmlPreviewContent, normalizeTextBubbleContent } from "./message-bubble";
+import { BackpackModal, type BackpackDeliverRequest } from "./backpack-modal";
+import { deliverBackpackItemToCharacter } from "@/lib/backpack-delivery";
 import { GeneratedImageErrorDialog } from "./generated-image-error-dialog";
 import { PhotoInputModal, TextPhotoModal, VoiceRecordModal, RedPacketModal, LocationInputModal, SystemInstructionModal } from "./rich-input-modals";
 import { EmojiPanel, StickerPanel } from "./emoji-panel";
@@ -40,7 +42,6 @@ import { VoiceCallScreen } from "./voice-call-screen";
 import { VideoCallScreen } from "./video-call-screen";
 import { GroupCallScreen } from "./group-call-screen";
 import { TransferTargetModal } from "./transfer-target-modal";
-import { GiftPickerModal } from "./gift-picker-modal";
 import { ConfirmDialog, ContentDialog } from "@/components/ui/modal";
 import { downloadFile } from "@/lib/download-utils";
 import { addChatMoment, type MomentChatLineDraft } from "@/lib/moment-storage";
@@ -54,7 +55,7 @@ import { useKeyboardDismissAutoSend } from "@/components/chat/use-keyboard-dismi
 import { cancelBailoutKey } from "@/lib/push-bailout-client";
 import { PENDING_REPLY_PREFIX } from "@/lib/friend-request-engine";
 import type { UserIdentity } from "@/components/settings/user-identity";
-import { AlertCircle, Blocks, Bookmark, Check, Trash2, User, ChevronLeft, ChevronRight, Clapperboard, Clock, Gift, ImageDown, Languages, Loader2, MoreHorizontal, X } from "lucide-react";
+import { AlertCircle, Backpack, Blocks, Bookmark, Check, Trash2, User, ChevronLeft, ChevronRight, Clapperboard, Clock, Gift, ImageDown, Languages, Loader2, MoreHorizontal, X } from "lucide-react";
 import { setDebugChatState } from "@/lib/debug-store";
 import { SessionCustomCSS } from "@/components/ui/session-custom-css";
 import { nightSlotKeys, resolveNightRegexes, resolveNightStatusRender, useNightRevision, useNightText } from "@/lib/night-mode";
@@ -633,6 +634,7 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
     onToggleTheaterMode: () => void;
     onCloseTheaterMode: () => void;
     onOpenRichModal: (modal: RichModalKind) => void;
+    onOpenBackpack: () => void;
     onOpenCustomPlusAction: (action: RegisteredCustomAppChatPlusAction) => void;
     onStartVideoCall: () => void;
     onStartVoiceCall: () => void;
@@ -664,6 +666,7 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
     onToggleTheaterMode,
     onCloseTheaterMode,
     onOpenRichModal,
+    onOpenBackpack,
     onOpenCustomPlusAction,
     onStartVideoCall,
     onStartVoiceCall,
@@ -738,7 +741,7 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
         { icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--c-text)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><line x1="12" y1="19" x2="12" y2="22" /></svg>, label: "语音通话", onClick: onStartVoiceCall },
         { icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--c-text)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="5" width="20" height="14" rx="2" /><line x1="2" y1="10" x2="22" y2="10" /></svg>, label: "红包", onClick: () => onOpenRichModal("red_packet") },
         { icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--c-text)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><text x="12" y="16" textAnchor="middle" fontSize="12" fill="var(--c-text)" stroke="none">¥</text></svg>, label: "转账", onClick: () => onOpenRichModal(isGroup ? "transfer_target" : "transfer") },
-        { icon: <Gift size={22} strokeWidth={1.5} color="var(--c-text)" />, label: "礼物", onClick: () => onOpenRichModal("gift") },
+        { icon: <Backpack size={22} strokeWidth={1.5} color="var(--c-text)" />, label: "背包", onClick: () => { onClosePanels(); onOpenBackpack(); } },
         { icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--c-text)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" /><circle cx="12" cy="10" r="3" /></svg>, label: "位置", onClick: () => onOpenRichModal("location") },
         { icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--c-text)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><line x1="12" y1="19" x2="12" y2="22" /><line x1="8" y1="22" x2="16" y2="22" /></svg>, label: "语音条", onClick: () => onOpenRichModal("voice_msg") },
         ...customPlusActions.map(action => ({
@@ -1101,6 +1104,28 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     const [isGenerating, setIsGenerating] = useState(false);
     const [offlineMode, setOfflineMode] = useState(false);
     const [theaterMode, setTheaterMode] = useState(() => kvGet(CHAT_THEATER_MODE_PREFIX + session.id) === "1");
+    const [showBackpack, setShowBackpack] = useState(false);
+    /** 背包「送给…」：物品转到对方背包，并在本会话留一张礼物卡片 */
+    const deliverBackpackItem = (request: BackpackDeliverRequest): boolean => {
+        const messageId = deliverBackpackItemToCharacter({
+            item: request.item,
+            targetSessionId: session.id,
+            targetName: request.targetName,
+            senderName: "你",
+        });
+        if (!messageId) {
+            showChatToast("送出失败，请重试");
+            return false;
+        }
+        // 立刻把新卡片并进本地消息列表，不用等下一次整表同步
+        setMessages(prev => {
+            const latest = loadChatMessages(session.id);
+            const added = latest.filter(m => !prev.some(p => p.id === m.id));
+            return added.length > 0 ? [...prev, ...added] : prev;
+        });
+        showChatToast(`已送给 ${request.targetName}`);
+        return true;
+    };
     const [offlineTurns, setOfflineTurns] = useState<ChatOfflineTurn[]>([]);
     const [offlineVisibleCount, setOfflineVisibleCount] = useState(OFFLINE_INITIAL_LOAD);
     const [pendingOfflineUserText, setPendingOfflineUserText] = useState("");
@@ -6518,6 +6543,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
 	                onToggleTheaterMode={toggleTheaterMode}
 	                onCloseTheaterMode={closeTheaterMode}
 	                onOpenRichModal={(modal) => { setShowPlusMenu(false); setRichModal(modal); }}
+                onOpenBackpack={() => { setShowPlusMenu(false); setShowBackpack(true); }}
                 onOpenCustomPlusAction={handleOpenCustomPlusAction}
                 onStartVideoCall={() => { cancelFollowUp(session.id); setShowPlusMenu(false); setCallInitiator("user"); setShowVideoCall(true); }}
                 onStartVoiceCall={() => { cancelFollowUp(session.id); setShowPlusMenu(false); setCallInitiator("user"); setShowVoiceCall(true); }}
@@ -6687,16 +6713,17 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     onClose={() => setRichModal(null)}
                 />
             )}
-            {richModal === "gift" && (
-                <GiftPickerModal
-                    gifts={availableShoppingGifts}
-                    isGroup={session.isGroup}
-                    recipients={groupCharacters}
-                    onSend={(gift, recipient) => {
-                        const sent = sendShoppingGiftMessage(gift, recipient);
-                        if (sent) setRichModal(null);
+            {/* 背包取代了原来的「礼物」入口：物品归属是独立数据，
+                清空聊天记录不会再让已送出的礼物重新出现 */}
+            {showBackpack && (
+                <BackpackModal
+                    sessionId={session.id}
+                    onDeliver={(request) => {
+                        const sent = deliverBackpackItem(request);
+                        if (sent) setShowBackpack(false);
                     }}
-                    onClose={() => setRichModal(null)}
+                    onClose={() => setShowBackpack(false)}
+                    toast={showChatToast}
                 />
             )}
             {richModal === "red_packet" && (
