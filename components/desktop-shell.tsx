@@ -3,6 +3,7 @@
 import { Component, memo, useCallback, useEffect, useInsertionEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ErrorInfo, type ReactNode } from "react";
 
 import { updateStatusBarTone } from "@/lib/bg-tone";
+import { registerBackLayer, setBackBaseHandler } from "@/lib/back-navigation";
 import { startDiaryEntryTimerService, stopDiaryEntryTimerService } from "@/lib/diary-entry-timer-service";
 import { startDiaryReplyService, stopDiaryReplyService } from "@/lib/diary-reply-service";
 import { startCalendarChatService, stopCalendarChatService } from "@/lib/calendar-chat-service";
@@ -1381,6 +1382,25 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
       setDiyTemplates(loadDIYTemplates());
     }
   }, [showWidgetPicker]);
+
+  // ── 系统返回手势（浏览器 / 系统后退）→ 应用内逐级返回 ──
+  // 最底一层是「当前打开的 APP」：退掉它回桌面。页面内更深的层级由 PageShell
+  // 和各 APP 自己注册（见 lib/back-navigation），桌面上还开着的文件夹、编辑模式
+  // 也各算一层。
+  useEffect(() => {
+    if (!activeApp) return;
+    return setBackBaseHandler(() => setActiveApp(null));
+  }, [activeApp]);
+
+  useEffect(() => {
+    if (!openFolderId) return;
+    return registerBackLayer(() => setOpenFolderId(null));
+  }, [openFolderId]);
+
+  useEffect(() => {
+    if (!editMode) return;
+    return registerBackLayer(() => setEditMode(false));
+  }, [editMode]);
 
   const mergedCatalog = useMemo(() => {
     const diyEntries = diyTemplates.map(t => ({

@@ -1,7 +1,31 @@
 "use client";
 
-import type { ReactNode, Ref } from "react";
+import { useEffect, useRef, type ReactNode, type Ref } from "react";
 import { ChevronLeft } from "lucide-react";
+
+import { registerBackLayer } from "@/lib/back-navigation";
+
+/**
+ * 把本页的返回动作接进全局返回栈：系统返回手势 / 浏览器后退会先退这一层，
+ * 走的是和点左上角返回箭头完全相同的逻辑。
+ */
+function usePageBackLayer(onBack: (() => void) | undefined): void {
+  const onBackRef = useRef(onBack);
+
+  useEffect(() => {
+    onBackRef.current = onBack;
+  }, [onBack]);
+
+  // 只在「有没有返回动作」真正变化时注册/注销，页面间切换不会把栈越堆越深
+  const enabled = typeof onBack === "function";
+
+  useEffect(() => {
+    if (!enabled) return;
+    return registerBackLayer(() => {
+      onBackRef.current?.();
+    });
+  }, [enabled]);
+}
 
 type PageShellProps = {
   title?: ReactNode;
@@ -15,6 +39,8 @@ type PageShellProps = {
 };
 
 export function PageShell({ title = "", onBack, leftAction, rightAction, children, footer, className, bodyRef }: PageShellProps) {
+  usePageBackLayer(onBack);
+
   return (
     <div className={`page-shell ${className ?? ""}`}>
       <header className="page-header" data-ui="header">
@@ -54,6 +80,8 @@ type PageOverlayHeaderProps = {
 };
 
 export function PageOverlayHeader({ title, onBack, rightAction, className }: PageOverlayHeaderProps) {
+  usePageBackLayer(onBack);
+
   return (
     <header className={`page-header pointer-events-none absolute top-0 left-0 right-0 z-10 ${className ?? ""}`}>
       <div className="page-header-safe-area" />

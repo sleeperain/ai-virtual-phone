@@ -18,6 +18,7 @@ import { formatXiaohongshuShareForPrompt, type ChatSharePayload } from "@/lib/ch
 import { CHAT_OPEN_SESSION_EVENT, CHAT_OPEN_ADD_CONTACT_EVENT } from "@/lib/chat-notification-events";
 import { CHAT_SESSIONS_MERGED_EVENT, type ChatSessionsMergedDetail } from "@/lib/chat-session-merge";
 import { getMascotSettingsSnapshot } from "@/lib/mascot-settings";
+import { registerBackLayer } from "@/lib/back-navigation";
 
 type TabKey = "messages" | "contacts" | "feeds" | "me";
 
@@ -231,6 +232,17 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
         window.addEventListener("chat-hide-tabbar", onHide);
         return () => window.removeEventListener("chat-hide-tabbar", onHide);
     }, []);
+
+    // 系统返回手势：打开的会话房间算一层，退它回会话列表（再退一层由桌面负责关掉微信）
+    useEffect(() => {
+        if (!activeSession && !activeMascot) return;
+        return registerBackLayer(() => {
+            setActiveSession(null);
+            setActiveMascot(false);
+        });
+        // activeSession 对象每次加载都可能是新引用，按 id 判断即可
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeSession?.id, activeMascot]);
 
     // Wait for IndexedDB hydration before rendering
     if (!dbReady) return null;
