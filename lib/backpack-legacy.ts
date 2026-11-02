@@ -12,6 +12,8 @@
 
 import { hydrateChatStorage, loadChatSessions } from "./chat-storage";
 import { loadDeliveredShoppingGifts } from "./shopping-gift-utils";
+import { loadShoppingState } from "./shopping-storage";
+import { loadConsumedUnits } from "./backpack-consumed";
 import { hydrateKvDb, kvGet } from "./kv-db";
 import {
     ensureBackpackMigrated,
@@ -131,8 +133,13 @@ function importShoppingOrders(items: BackpackItem[]): number {
     }
     if (!Array.isArray(candidates) || candidates.length === 0) return 0;
 
+    // 只对「没有订单来源」的物品做名称去重：那些是从老插件的礼物卡片里扫出来的，
+    // 没有 orderId 可用，只能靠名称+店铺认。带 shopping 的物品一律按
+    // 订单+商品+件号判断，否则再买一次同款商品会被当成重复而进不了背包。
     const userSignatures = new Set(
-        items.filter(it => it.recipient === "user").map(it => `${it.title}::${it.source}`),
+        items
+            .filter(it => it.recipient === "user" && !it.shopping)
+            .map(it => `${it.title}::${it.source}`),
     );
     const originKeys = new Set(
         items
@@ -140,15 +147,25 @@ function importShoppingOrders(items: BackpackItem[]): number {
             .filter((s): s is BackpackShoppingOrigin => !!s)
             .map(s => `${s.orderId}::${s.itemId}::${s.unitIndex}`),
     );
-    // 已经在角色手里的同一件商品，不该再进「我的背包」变成重复的一份
+    // 老插件扫出来的、已经在角色手里且没有订单来源的同一件商品，
+    // 不该再进「我的背包」变成重复的一份
     const ownedByCharacter = new Set(
-        items.filter(it => it.recipient === "character").map(it => `${it.title}::${it.source}`),
+        items
+            .filter(it => it.recipient === "character" && !it.shopping)
+            .map(it => `${it.title}::${it.source}`),
     );
+    // 已处置的（送出后被删掉的）不能因为「重新扫描」又被当成新到货导回来
+    const consumedByOrder = new Map<string, Set<string>>();
+    for (const order of loadShoppingState().orders) {
+        const units = loadConsumedUnits(order.id);
+        if (units.size > 0) consumedByOrder.set(order.id, units);
+    }
 
     let imported = 0;
     for (const candidate of candidates) {
         const originKey = `${candidate.orderId}::${candidate.itemId}::${candidate.unitIndex}`;
         if (originKeys.has(originKey)) continue;
+        if (consumedByOrder.get(candidate.orderId)?.has(`${candidate.itemId}::${candidate.unitIndex}`)) continue;
         const signature = `${candidate.productName}::${candidate.merchantLabel}`;
         if (userSignatures.has(signature) || ownedByCharacter.has(signature)) continue;
 

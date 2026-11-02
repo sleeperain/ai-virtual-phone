@@ -12,6 +12,7 @@
 
 import { isKvHydrated, kvGet, kvSet, registerKvMigration } from "./kv-db";
 import { loadCharacters } from "./character-storage";
+import { recordConsumedUnit } from "./backpack-consumed";
 import {
     BACKPACK_CHANGED_EVENT,
     type BackpackItem,
@@ -210,10 +211,22 @@ export function updateBackpackItem(id: string, patch: Partial<BackpackItem>): vo
     });
 }
 
+/**
+ * 删除背包物品。
+ *
+ * 购物来源的物品被删掉时要记进处置台账：东西已经不在手上了，
+ * 那笔订单就不该再允许申请售后。没有这条记录的话，用户「送出→删掉」
+ * 之后还能原价退款，等于钱货两空。
+ */
 export function removeBackpackItems(ids: string[]): void {
     const set = new Set(ids);
     if (set.size === 0) return;
-    mutateBackpackItems(items => items.filter(it => !set.has(it.id)));
+    let removed: BackpackItem[] = [];
+    mutateBackpackItems(items => {
+        removed = items.filter(it => set.has(it.id));
+        return items.filter(it => !set.has(it.id));
+    });
+    for (const item of removed) recordConsumedUnit(item.shopping);
 }
 
 export function createManualBackpackItem(input: {
@@ -434,6 +447,30 @@ export function getEnabledTargetIdsForSource(sourceId: string): Set<string> {
 // ── 移动 ───────────────────────────────────────────────────
 
 /**
+ * 按订单清掉背包里属于该订单的物品（退款时用）。
+ * 只清「我的背包」里的：角色手上那部分退款本来就会被拦下，
+ * 真清到角色背包反而会凭空少东西。
+ * 返回清掉的件数。
+ */
+export function removeBackpackItemsByOrder(orderId: string): number {
+    if (!orderId) return 0;
+    let removedCount = 0;
+    mutateBackpackItems(items => {
+        const remain: BackpackItem[] = [];
+        for (const item of items) {
+            const belongsToOrder = item.shopping?.orderId === orderId;
+            if (belongsToOrder && item.recipient === "user") {
+                removedCount += 1;
+                continue;
+            }
+            remain.push(item);
+        }
+        return removedCount > 0 ? remain : undefined;
+    });
+    return removedCount;
+}
+
+/**
  * 把物品放到另一个目标：targetId 为 "user" 或角色 id。
  * 返回更新后的物品；目标不存在返回 null。
  */
@@ -457,6 +494,10 @@ export function moveBackpackItem(itemId: string, targetId: string): BackpackItem
         };
         items[idx] = next;
         updated = next;
+        // 从「我的背包」转给角色 = 这件商品已经送出去了，记账
+        if (prev.recipient === "user" && !isUserTarget) {
+            recordConsumedUnit(prev.shopping);
+        }
     });
     return updated;
 }

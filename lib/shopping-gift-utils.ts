@@ -1,5 +1,6 @@
 import { loadChatMessages, loadChatSessions } from "./chat-storage";
 import { kvGet } from "./kv-db";
+import { loadConsumedUnits } from "./backpack-consumed";
 import { loadShoppingState } from "./shopping-storage";
 import type { ShoppingOrder } from "./shopping-types";
 import type { CheckPhoneShoppingTone } from "./checkphone-config";
@@ -133,26 +134,43 @@ export function loadSentShoppingGiftIds(): Set<string> {
     if (!entry.orderId) continue;
     sentIds.add(`${entry.orderId}::${entry.itemId ?? ""}::${entry.unitIndex ?? 1}`);
   }
+  // 已处置（送出后又被删掉）的商品同样不该再出现在可送列表
+  for (const state of loadShoppingState().orders) {
+    for (const unitKey of loadConsumedUnits(state.id)) {
+      sentIds.add(`${state.id}::${unitKey}`);
+    }
+  }
   return sentIds;
 }
 
-/** 该订单里已经被送出、且没有被退回的礼物件数（用于判断还能不能售后） */
+/**
+ * 该订单里已经被处置的件数（用于判断还能不能售后）。
+ *
+ * 「处置」= 送出给角色，或被用户从背包里删掉——两种情况下实物都不在自己手上。
+ * 必须把处置台账算进来：只看礼物卡片和背包现状的话，用户「送出→删掉」之后
+ * 统计会归零，那笔订单就还能原价退款，等于钱货两空。
+ */
 export function countSentGiftsForOrder(orderId: string): number {
-  let count = 0;
+  let legacyCount = 0;
   for (const session of loadChatSessions()) {
     for (const message of loadChatMessages(session.id)) {
       if (message.mediaType !== "gift") continue;
       if (message.mediaData?.giftOrderId !== orderId) continue;
       if (message.mediaData?.giftReturnedAt) continue;
-      count += 1;
+      legacyCount += 1;
     }
   }
-  // 背包里的同一件商品已经转到角色那里，也算送出
+
+  // 背包现状与台账都按「商品单位」记账，合并去重避免同一件被数两次
+  const unitKeys = new Set<string>();
   for (const entry of readBackpackItemsForSentCheck()) {
     if (entry.recipient === "user") continue;
-    if (entry.orderId === orderId) count += 1;
+    if (entry.orderId !== orderId) continue;
+    unitKeys.add(`${entry.itemId ?? ""}::${entry.unitIndex ?? 1}`);
   }
-  return count;
+  for (const unitKey of loadConsumedUnits(orderId)) unitKeys.add(unitKey);
+
+  return legacyCount + unitKeys.size;
 }
 
 export function loadDeliveredShoppingGifts(options: LoadShoppingGiftOptions = {}): ShoppingGiftCandidate[] {

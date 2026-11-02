@@ -12,6 +12,8 @@
 
 import { loadShoppingState, saveShoppingState } from "./shopping-storage";
 import { countSentGiftsForOrder } from "./shopping-gift-utils";
+import { clearConsumedUnits } from "./backpack-consumed";
+import { removeBackpackItemsByOrder } from "./backpack-storage";
 import { createOrGetSession, loadChatMessages, loadChatSessions, pushChatMessage, updateMessageMediaData } from "./chat-storage";
 import { adjustWalletCardAccount, creditWalletBalance } from "./wallet-storage";
 import type { ShoppingOrder, ShoppingShippingEvent } from "./shopping-types";
@@ -290,9 +292,11 @@ export function refundShoppingOrder(orderId: string): RefundOrderResult {
   const order = state.orders.find(item => item.id === orderId);
   if (!order) return { ok: false, amount: 0, error: "未找到该订单。" };
   if (order.refundedAt) return { ok: false, amount: 0, error: "该订单已申请过售后。" };
-  // 商品已经送给角色了就不能退：钱货两清的前提是东西还在自己手上
+  // 商品已经不在自己手上（送给角色、或从背包里删掉）就不能退：
+  // 钱货两清的前提是东西还在。只看「礼物卡片 + 背包现状」不够——
+  // 那两者都能被删掉，删完统计归零就又能退款了，所以还要读处置台账。
   if (countSentGiftsForOrder(order.id) > 0) {
-    return { ok: false, amount: 0, error: "该订单的商品已赠送给对方，无法申请售后。" };
+    return { ok: false, amount: 0, error: "该订单的商品已送出或已从背包移除，无法申请售后。" };
   }
   if (order.confirmedAt) {
     return { ok: false, amount: 0, error: "该订单已确认收货，无法申请售后。" };
@@ -324,6 +328,12 @@ export function refundShoppingOrder(orderId: string): RefundOrderResult {
     signedBy: current.signedBy || "user",
     shippingTimeline: appendSignedEvent(current, now),
   }));
+
+  // 商品退回商家：背包里这单剩下的东西一并清掉，不能退完款还留在背包里。
+  // 已经在角色手上的那部分走不到这里（上面已经拦下），所以只会清到用户自己的。
+  removeBackpackItemsByOrder(orderId);
+  // 订单已退款，台账不再参与判断，清掉免得占存储
+  clearConsumedUnits(orderId);
 
   return { ok: true, order: updated ?? undefined, amount };
 }
