@@ -18,6 +18,7 @@ import {
     loadBackpackTargets,
     mutateBackpackItems,
     removeBackpackItems,
+    resolveCharacterName,
 } from "@/lib/backpack-storage";
 import { rescanShoppingOrders } from "@/lib/backpack-legacy";
 import { appToastId, showAppToast } from "@/lib/app-toast";
@@ -33,9 +34,11 @@ export type BackpackDeliverRequest = {
 
 type BackpackModalProps = {
     sessionId?: string;
+    /** 私聊时为当前聊天角色 id；群聊为 undefined（群里需要选具体送给谁） */
     currentCharacterId?: string;
     onClose: () => void;
-    onDeliver?: (request: BackpackDeliverRequest) => boolean;
+    /** 送出物品并发送礼物卡片；失败时带上原因供背包提示 */
+    onDeliver?: (request: BackpackDeliverRequest) => { ok: boolean; error?: string };
 };
 
 /**
@@ -248,6 +251,26 @@ export function BackpackModal({
         // 用户下一步多半是想看着列表。
         setSelected(new Set());
         setManageMode(false);
+    };
+
+    /**
+     * 送出物品。
+     * 私聊：能送的对象只有当前聊天角色，直接送出，不弹选择列表。
+     * 群聊：群里有多个人，需要选择具体送给谁。
+     */
+    const startDeliver = (item: BackpackItem) => {
+        if (!onDeliver) return;
+        if (currentCharacterId) {
+            const targetName = resolveCharacterName(currentCharacterId) || "对方";
+            const result = onDeliver({ item, targetCharacterId: currentCharacterId, targetName });
+            if (!result.ok) {
+                toast(result.error || "送出失败，请重试");
+                return;
+            }
+            toast(result.error ? result.error : `已送给 ${targetName}`);
+            return;
+        }
+        setDeliverItem(item);
     };
 
     const emptyHint = query.trim()
@@ -586,7 +609,7 @@ export function BackpackModal({
                             // 先收起详情弹窗再开目标列表：详情是 fixed 全屏遮罩，
                             // 两层叠着即使列表在上层，操作完详情也已经过期了。
                             setEditorState(null);
-                            if (item.recipient === "user") setDeliverItem(item);
+                            if (item.recipient === "user") startDeliver(item);
                             else setTransferItem(item);
                         }}
                     />
@@ -610,12 +633,18 @@ export function BackpackModal({
                                 setDeliverItem(null);
                                 return;
                             }
-                            const ok = onDeliver?.({
+                            const result = onDeliver?.({
                                 item: deliverItem,
                                 targetCharacterId: target.id,
                                 targetName: target.rawName,
                             });
-                            if (ok) setDeliverItem(null);
+                            if (!result) return;
+                            if (!result.ok) {
+                                toast(result.error || "送出失败，请重试");
+                                return;
+                            }
+                            toast(result.error ? result.error : `已送给 ${target.rawName}`);
+                            setDeliverItem(null);
                         }}
                     />
                 )}

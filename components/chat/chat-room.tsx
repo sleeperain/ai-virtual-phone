@@ -1105,26 +1105,27 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     const [offlineMode, setOfflineMode] = useState(false);
     const [theaterMode, setTheaterMode] = useState(() => kvGet(CHAT_THEATER_MODE_PREFIX + session.id) === "1");
     const [showBackpack, setShowBackpack] = useState(false);
-    /** 背包「送给…」：物品转到对方背包，并在本会话留一张礼物卡片 */
-    const deliverBackpackItem = (request: BackpackDeliverRequest): boolean => {
+    /**
+     * 背包「送给…」：物品转到对方背包，并在本会话留一张礼物卡片。
+     * 这里不弹 toast —— 调用发生在背包弹窗内，聊天室 toast 层级低于弹窗会被遮住，
+     * 提示由背包自己用 app 级 toast 发出。
+     */
+    const deliverBackpackItem = (request: BackpackDeliverRequest): { ok: boolean; error?: string } => {
         const result = deliverBackpackItemToCharacter({
             item: request.item,
             targetCharacterId: request.targetCharacterId,
             targetName: request.targetName,
             sessionId: session.id,
         });
-        if (!result.ok) {
-            showChatToast(result.error || "送出失败，请重试");
-            return false;
-        }
+        if (!result.ok) return { ok: false, error: result.error || "送出失败，请重试" };
+
         // 立刻把新卡片并进本地消息列表，不用等下一次整表同步
         setMessages(prev => {
             const latest = loadChatMessages(session.id);
             const added = latest.filter(m => !prev.some(p => p.id === m.id));
             return added.length > 0 ? [...prev, ...added] : prev;
         });
-        showChatToast(result.error ? result.error : `已送给 ${request.targetName}`);
-        return true;
+        return { ok: true, error: result.error };
     };
     const [offlineTurns, setOfflineTurns] = useState<ChatOfflineTurn[]>([]);
     const [offlineVisibleCount, setOfflineVisibleCount] = useState(OFFLINE_INITIAL_LOAD);
