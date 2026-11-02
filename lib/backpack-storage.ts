@@ -10,7 +10,7 @@
 // 需要读会话/订单的一次性迁移放在 lib/backpack-legacy.ts，由它在启动时注册，
 // 本模块只负责调用注册进来的 runner。
 
-import { kvGet, kvSet, registerKvMigration } from "./kv-db";
+import { isKvHydrated, kvGet, kvSet, registerKvMigration } from "./kv-db";
 import { loadCharacters } from "./character-storage";
 import {
     BACKPACK_CHANGED_EVENT,
@@ -29,8 +29,14 @@ registerKvMigration(ITEMS_KEY);
 registerKvMigration(TARGETS_KEY);
 registerKvMigration(MIGRATION_KEY);
 
-/** 当前迁移脚本版本；加新迁移时 +1 并同步 lib/backpack-legacy.ts */
-export const BACKPACK_MIGRATION_VERSION = 3;
+/**
+ * 当前迁移脚本版本；加新迁移时 +1 并同步 lib/backpack-legacy.ts。
+ *
+ * v4：修复 v3 的致命时序 bug —— 迁移曾在 kv 水合完成前就跑，读到空数据
+ * 却把版本记成 3，导致老插件数据永远搬不过来。升版本号让受影响用户重跑，
+ * 各步骤本身都有去重、可重复执行。
+ */
+export const BACKPACK_MIGRATION_VERSION = 4;
 
 export type BackpackMigrationState = {
     version: number;
@@ -428,6 +434,13 @@ export function writeBackpackMigrationState(state: BackpackMigrationState): void
  */
 export function ensureBackpackMigrated(): void {
     if (migrated) return;
+
+    // 关键：kv 还没从 IndexedDB 水合完时，所有 kvGet 都返回 null。
+    // 这时跑迁移会「读到空数据 → 什么都没搬 → 却把版本写成最新」，
+    // 等于把迁移永久标记成已完成，老数据再也进不来。
+    // 所以未水合时直接返回，且绝不写版本标记。
+    if (!isKvHydrated()) return;
+
     const state = readBackpackMigrationState();
     if (state.version >= BACKPACK_MIGRATION_VERSION) {
         migrated = true;

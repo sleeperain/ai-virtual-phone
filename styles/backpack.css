@@ -1,16 +1,24 @@
 /* ══════════════════════════════════════════
    Backpack (.bp-*) — 原生背包
-   字号规则：一律 calc(Npx * var(--app-text-scale, 1))，
-   与 styles/base.css 的 ts-* 工具类同源，跟随设置里的字号缩放。
-   禁止在此文件出现裸 font-size: 12px。
+   视觉对齐原「背包」插件 3.25.0：
+     - 容器底色 var(--c-page-body-bg)、圆角 16、阴影一致
+     - 卡片 rgba(128,128,128,0.04) + 0.09 边框 + 圆角 12
+     - 图标 40px / 圆角 10，徽章 14px 贴右下角
+   字号规则：font-size 一律 calc(Npx * var(--app-text-scale, 1))，
+   跟随设置里的字号缩放；宽高/内距/圆角保持与原版一致的数值。
+   禁止在此文件出现裸 font-size。
    ══════════════════════════════════════════ */
 
 .bp-modal {
+  --bp-accent: #34C759;
+  --bp-accent-light: rgba(52, 199, 89, 0.14);
+
+  position: relative;
   display: flex;
   flex-direction: column;
   width: min(92vw, 450px);
   max-height: 84vh;
-  background: var(--c-panel);
+  background: var(--c-page-body-bg, #ffffff);
   color: var(--c-text);
   border-radius: 16px;
   overflow: hidden;
@@ -18,19 +26,19 @@
   font-family: inherit;
 }
 
-/* ── 顶部标题栏 ── */
+/* ── 顶部标题栏（与原版一致：1fr auto 1fr） ── */
 .bp-header {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   padding: 14px 18px;
-  border-bottom: 0.5px solid var(--c-panel-border);
+  border-bottom: 1px solid rgba(128, 128, 128, 0.12);
 }
 
 .bp-header-title {
-  font-size: calc(14.4px * var(--app-text-scale, 1));
+  font-size: calc(15px * var(--app-text-scale, 1));
   font-weight: 600;
-  color: var(--c-text-title);
+  color: var(--c-text);
   text-align: center;
   white-space: nowrap;
 }
@@ -41,11 +49,15 @@
   justify-content: center;
   padding: 4px;
   border: none;
-  border-radius: 6px;
+  border-radius: 4px;
   background: transparent;
   color: var(--c-text);
   cursor: pointer;
   opacity: 0.75;
+}
+
+.bp-icon-btn:hover {
+  opacity: 1;
 }
 
 .bp-icon-btn:active {
@@ -61,24 +73,55 @@
 }
 
 .bp-icon-btn svg {
-  width: calc(16.2px * var(--app-text-scale, 1));
-  height: calc(16.2px * var(--app-text-scale, 1));
+  width: 18px;
+  height: 18px;
 }
 
-/* ── 下拉菜单 ── */
+/* 标题即归属选择器：外观仍是原版标题，只是可点 */
+.bp-title-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--c-text);
+  cursor: pointer;
+}
+
+.bp-title-btn:hover {
+  background: rgba(128, 128, 128, 0.08);
+}
+
+.bp-title-btn svg {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  opacity: 0.55;
+}
+
+.bp-title-btn .bp-header-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── 下拉菜单（原版 .backpack-dropdown-menu） ── */
 .bp-dropdown {
   position: absolute;
   top: 52px;
   left: 16px;
-  z-index: 30;
+  z-index: 100;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  min-width: 140px;
+  min-width: 135px;
   padding: 6px;
-  border: 0.5px solid var(--c-panel-border);
+  border: 1px solid rgba(128, 128, 128, 0.16);
   border-radius: 10px;
-  background: var(--c-panel);
+  background: var(--c-page-body-bg, #fff);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
 }
 
@@ -91,180 +134,43 @@
   border-radius: 6px;
   background: transparent;
   color: var(--c-text);
-  font-size: calc(10.8px * var(--app-text-scale, 1));
+  font-size: calc(12px * var(--app-text-scale, 1));
   font-family: inherit;
   text-align: left;
   cursor: pointer;
 }
 
-.bp-dropdown-item:active {
-  background: var(--c-input);
+.bp-dropdown-item:hover {
+  background: rgba(128, 128, 128, 0.08);
+}
+
+.bp-dropdown-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .bp-dropdown-item svg {
-  width: calc(12.6px * var(--app-text-scale, 1));
-  height: calc(12.6px * var(--app-text-scale, 1));
+  width: 14px;
+  height: 14px;
   flex-shrink: 0;
 }
 
-/* ── 目标选择条 ── */
-.bp-select-bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 16px;
-}
-
-.bp-select-label {
-  font-size: calc(10.8px * var(--app-text-scale, 1));
-  color: var(--c-icon);
-  white-space: nowrap;
-}
-
-.bp-select {
-  flex: 1;
-  min-width: 0;
-  padding: 7px 10px;
-  border: 0.5px solid var(--c-panel-border);
-  border-radius: 8px;
-  background: var(--c-input);
-  color: var(--c-text);
-  font-size: calc(11.7px * var(--app-text-scale, 1));
-  font-family: inherit;
-  outline: none;
-  cursor: pointer;
-}
-
-/* ── 列表 ── */
-.bp-list {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  overflow-y: auto;
-  padding: 14px;
-}
-
-.bp-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-  border: 0.5px solid var(--c-panel-border);
-  border-radius: 12px;
-  background: var(--c-card);
-  cursor: pointer;
-  user-select: none;
-  transition: border-color 0.15s, background 0.15s;
-}
-
-.bp-item:active {
-  background: var(--c-input);
-}
-
-.bp-item[data-selected="true"] {
-  border-color: var(--c-success);
-  background: color-mix(in srgb, var(--c-success) 12%, var(--c-card));
-}
-
-.bp-item-check {
-  width: calc(14.4px * var(--app-text-scale, 1));
-  height: calc(14.4px * var(--app-text-scale, 1));
-  accent-color: var(--c-success);
-  flex-shrink: 0;
-  cursor: pointer;
-}
-
-.bp-item-icon {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: calc(32.4px * var(--app-text-scale, 1));
-  height: calc(32.4px * var(--app-text-scale, 1));
-  border-radius: 10px;
-  background: var(--c-input);
-  color: var(--c-icon);
-  font-size: calc(18px * var(--app-text-scale, 1));
-  overflow: visible;
-}
-
-.bp-item-icon-img {
-  width: 100%;
-  height: 100%;
-  border-radius: inherit;
-  object-fit: cover;
-  display: block;
-}
-
-.bp-item-badge {
-  position: absolute;
-  right: -3px;
-  bottom: -3px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: calc(12.6px * var(--app-text-scale, 1));
-  height: calc(12.6px * var(--app-text-scale, 1));
-  padding: 0 2px;
-  border: 1.5px solid var(--c-panel);
-  border-radius: 999px;
-  background: var(--c-success);
-  color: #fff;
-  font-size: calc(8.1px * var(--app-text-scale, 1));
-  font-weight: 700;
-  line-height: 1;
-  z-index: 2;
-}
-
-/* 标题即归属选择器 */
-.bp-title-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  justify-self: center;
-  max-width: 100%;
-  padding: 4px 8px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--c-text-title);
-  cursor: pointer;
-}
-
-.bp-title-btn:active {
-  background: var(--c-input);
-}
-
-.bp-title-btn svg {
-  flex-shrink: 0;
-  opacity: 0.55;
-}
-
-.bp-title-btn .bp-header-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 搜索框 */
+/* ── 搜索框（取代原版「正在查看」那一行） ── */
 .bp-search-bar {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 0 16px 4px;
+  margin: 10px 16px;
   padding: 7px 10px;
+  border: 1px solid rgba(128, 128, 128, 0.18);
   border-radius: 8px;
-  background: var(--c-input);
-  border: 0.5px solid var(--c-panel-border);
+  background: var(--c-page-body-bg, #fff);
 }
 
 .bp-search-icon {
   flex-shrink: 0;
-  width: calc(12.6px * var(--app-text-scale, 1));
-  height: calc(12.6px * var(--app-text-scale, 1));
+  width: 14px;
+  height: 14px;
   color: var(--c-icon);
 }
 
@@ -274,7 +180,7 @@
   border: none;
   background: transparent;
   color: var(--c-text);
-  font-size: calc(11.7px * var(--app-text-scale, 1));
+  font-size: calc(13px * var(--app-text-scale, 1));
   font-family: inherit;
   outline: none;
 }
@@ -296,15 +202,99 @@
 }
 
 .bp-search-clear svg {
-  width: calc(11.7px * var(--app-text-scale, 1));
-  height: calc(11.7px * var(--app-text-scale, 1));
+  width: 13px;
+  height: 13px;
 }
 
-.bp-pick-check-mark {
+/* ── 列表 ── */
+.bp-list {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  padding: 0 14px 14px;
+}
+
+/* 卡片：与原版 .backpack-card-item 完全一致 */
+.bp-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid rgba(128, 128, 128, 0.09);
+  border-radius: 12px;
+  background: rgba(128, 128, 128, 0.04);
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.15s;
+}
+
+.bp-item:hover {
+  background: rgba(128, 128, 128, 0.07);
+}
+
+.bp-item[data-selected="true"] {
+  border-color: var(--bp-accent);
+  background: var(--bp-accent-light);
+}
+
+.bp-item-check {
+  width: 16px;
+  height: 16px;
+  margin-right: 2px;
+  accent-color: var(--bp-accent);
   flex-shrink: 0;
-  color: var(--c-success);
-  width: calc(12.6px * var(--app-text-scale, 1));
-  height: calc(12.6px * var(--app-text-scale, 1));
+  cursor: pointer;
+}
+
+/* 图标：与原版 .backpack-icon-wrap 一致 */
+.bp-item-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: rgba(128, 128, 128, 0.08);
+  color: var(--c-icon);
+  font-size: calc(18px * var(--app-text-scale, 1));
+  overflow: visible;
+  transition: all 0.25s;
+}
+
+.bp-item-icon-img {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+  display: block;
+}
+
+/* 徽章：与原版 .backpack-icon-sparkle-badge 一致 */
+.bp-item-badge {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--c-page-body-bg, #fff);
+  border-radius: 50%;
+  background: var(--bp-accent);
+  color: #fff;
+  font-size: calc(9px * var(--app-text-scale, 1));
+  font-weight: 700;
+  line-height: 1;
+}
+
+.bp-item-badge[data-kind="eye"] {
+  background: #3b82f6;
 }
 
 .bp-item-body {
@@ -316,22 +306,23 @@
 }
 
 .bp-item-title {
-  font-size: calc(12.6px * var(--app-text-scale, 1));
+  font-size: calc(14px * var(--app-text-scale, 1));
   font-weight: 600;
-  color: var(--c-text-title);
+  color: var(--c-text);
   line-height: 1.3;
   word-break: break-word;
 }
 
 .bp-item-sub {
   margin-top: 2px;
-  font-size: calc(9.9px * var(--app-text-scale, 1));
+  font-size: calc(11px * var(--app-text-scale, 1));
   color: var(--c-icon);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* 空状态：与原版一致 */
 .bp-empty {
   display: flex;
   flex-direction: column;
@@ -342,22 +333,26 @@
   opacity: 0.6;
 }
 
+.bp-empty svg {
+  color: var(--c-icon);
+}
+
 .bp-empty-hint {
   max-width: 280px;
-  font-size: calc(10.8px * var(--app-text-scale, 1));
+  font-size: calc(12px * var(--app-text-scale, 1));
   color: var(--c-text);
   text-align: center;
   line-height: 1.5;
 }
 
-/* ── 批量管理条 ── */
+/* ── 批量管理条（原版 .backpack-batch-bar） ── */
 .bp-batch-bar {
   display: flex;
   flex-direction: column;
   gap: 10px;
   padding: 12px 16px;
-  background: var(--c-input);
-  border-top: 0.5px solid var(--c-panel-border);
+  background: rgba(128, 128, 128, 0.05);
+  border-top: 1px solid rgba(128, 128, 128, 0.12);
 }
 
 .bp-batch-top {
@@ -376,8 +371,8 @@
   padding: 0;
   border: none;
   background: transparent;
-  color: var(--c-success);
-  font-size: calc(10.8px * var(--app-text-scale, 1));
+  color: var(--bp-accent);
+  font-size: calc(12px * var(--app-text-scale, 1));
   font-family: inherit;
   font-weight: 500;
   cursor: pointer;
@@ -390,7 +385,7 @@
 }
 
 .bp-batch-count {
-  font-size: calc(10.8px * var(--app-text-scale, 1));
+  font-size: calc(12px * var(--app-text-scale, 1));
   color: var(--c-text);
   opacity: 0.8;
 }
@@ -400,6 +395,7 @@
   gap: 8px;
 }
 
+/* 批量按钮：原版 .backpack-batch-btn */
 .bp-batch-op {
   display: flex;
   align-items: center;
@@ -408,7 +404,7 @@
   padding: 7px 10px;
   border: none;
   border-radius: 7px;
-  font-size: calc(9.9px * var(--app-text-scale, 1));
+  font-size: calc(11px * var(--app-text-scale, 1));
   font-family: inherit;
   font-weight: 500;
   cursor: pointer;
@@ -420,11 +416,26 @@
 }
 
 .bp-batch-op svg {
-  width: calc(11.7px * var(--app-text-scale, 1));
-  height: calc(11.7px * var(--app-text-scale, 1));
+  width: 13px;
+  height: 13px;
 }
 
-/* ── 通用表单 ── */
+.bp-batch-op[data-variant="accent"] {
+  background: var(--bp-accent-light);
+  color: var(--bp-accent);
+}
+
+.bp-batch-op[data-variant="ghost"] {
+  background: rgba(128, 128, 128, 0.12);
+  color: var(--c-text);
+}
+
+.bp-batch-op[data-variant="danger"] {
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+}
+
+/* ── 表单（原版 .bp-input-field） ── */
 .bp-field {
   display: flex;
   flex-direction: column;
@@ -432,7 +443,7 @@
 }
 
 .bp-field-label {
-  font-size: calc(9.9px * var(--app-text-scale, 1));
+  font-size: calc(11px * var(--app-text-scale, 1));
   color: var(--c-icon);
 }
 
@@ -440,77 +451,81 @@
 .bp-textarea {
   width: 100%;
   padding: 7px 10px;
-  border: 0.5px solid var(--c-panel-border);
+  border: 1px solid rgba(128, 128, 128, 0.2);
   border-radius: 8px;
-  background: var(--c-input);
+  background: var(--c-page-body-bg, #fff);
   color: var(--c-text);
-  font-size: calc(10.8px * var(--app-text-scale, 1));
+  font-size: calc(12px * var(--app-text-scale, 1));
   font-family: inherit;
   outline: none;
   box-sizing: border-box;
+  transition: border-color 0.2s;
 }
 
 .bp-input:focus,
 .bp-textarea:focus {
-  border-color: var(--c-success);
+  border-color: var(--bp-accent);
 }
 
 .bp-textarea {
-  height: calc(70px * var(--app-text-scale, 1));
+  height: 78px;
   resize: none;
   line-height: 1.5;
 }
 
+/* 只读值：原版 .bp-readonly-value */
 .bp-readonly {
   padding: 7px 10px;
-  border: 0.5px solid var(--c-panel-border);
+  border: 1px solid rgba(128, 128, 128, 0.12);
   border-radius: 8px;
-  background: var(--c-input);
+  background: rgba(128, 128, 128, 0.06);
   color: var(--c-text);
-  font-size: calc(11.7px * var(--app-text-scale, 1));
+  font-size: calc(13px * var(--app-text-scale, 1));
   font-weight: 600;
   line-height: 1.3;
   word-break: break-word;
   user-select: text;
 }
 
+/* 提示：原版 .bp-readonly-hint */
 .bp-readonly-hint {
-  font-size: calc(9px * var(--app-text-scale, 1));
+  font-size: calc(10px * var(--app-text-scale, 1));
   color: var(--c-icon);
   opacity: 0.75;
   line-height: 1.4;
 }
 
+/* 订单锁定标记 */
 .bp-lock-tag {
   display: inline-flex;
   align-items: center;
   gap: 3px;
   padding: 1px 6px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--c-icon) 14%, transparent);
+  background: rgba(128, 128, 128, 0.12);
   color: var(--c-icon);
-  font-size: calc(8.1px * var(--app-text-scale, 1));
+  font-size: calc(9px * var(--app-text-scale, 1));
   font-weight: 500;
 }
 
 .bp-lock-tag svg {
-  width: calc(8.1px * var(--app-text-scale, 1));
-  height: calc(8.1px * var(--app-text-scale, 1));
+  width: 9px;
+  height: 9px;
 }
 
-/* ── 物品详情弹窗 ── */
+/* ── 物品详情弹窗（与原版同尺寸/底色/阴影） ── */
 .bp-sheet {
+  position: relative;
   display: flex;
   flex-direction: column;
   width: min(92vw, 450px);
-  max-height: 88vh;
+  max-height: 84vh;
   border-radius: 16px;
   overflow: hidden;
-  background: var(--c-panel);
+  background: var(--c-page-body-bg, #fff);
   color: var(--c-text);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.22);
   font-family: inherit;
-  position: relative;
 }
 
 .bp-sheet-head {
@@ -518,13 +533,13 @@
   align-items: center;
   justify-content: space-between;
   padding: 14px 18px;
-  border-bottom: 0.5px solid var(--c-panel-border);
+  border-bottom: 1px solid rgba(128, 128, 128, 0.12);
 }
 
 .bp-sheet-title {
-  font-size: calc(12.6px * var(--app-text-scale, 1));
+  font-size: calc(14px * var(--app-text-scale, 1));
   font-weight: 600;
-  color: var(--c-text-title);
+  color: var(--c-text);
 }
 
 .bp-sheet-body {
@@ -541,14 +556,15 @@
   gap: 8px;
   padding: 12px 18px;
   flex-wrap: wrap;
-  background: var(--c-input);
-  border-top: 0.5px solid var(--c-panel-border);
+  background: rgba(128, 128, 128, 0.04);
+  border-top: 1px solid rgba(128, 128, 128, 0.1);
 }
 
 .bp-foot-spacer {
   flex: 1;
 }
 
+/* 按钮：原版尺寸 */
 .bp-btn {
   display: inline-flex;
   align-items: center;
@@ -557,7 +573,7 @@
   padding: 6px 14px;
   border: none;
   border-radius: 6px;
-  font-size: calc(10.8px * var(--app-text-scale, 1));
+  font-size: calc(12px * var(--app-text-scale, 1));
   font-family: inherit;
   cursor: pointer;
 }
@@ -567,38 +583,43 @@
   cursor: not-allowed;
 }
 
+.bp-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
 .bp-btn[data-variant="primary"] {
-  background: var(--c-success);
+  background: var(--bp-accent);
   color: #fff;
   font-weight: 500;
 }
 
 .bp-btn[data-variant="ghost"] {
-  background: var(--c-input);
+  background: rgba(128, 128, 128, 0.12);
   color: var(--c-text);
 }
 
 .bp-btn[data-variant="outline"] {
-  border: 0.5px solid var(--c-panel-border);
+  border: 1px solid rgba(128, 128, 128, 0.25);
   background: transparent;
   color: var(--c-text);
 }
 
 .bp-btn[data-variant="accent"] {
-  border: 0.5px solid color-mix(in srgb, var(--c-success) 40%, transparent);
-  background: color-mix(in srgb, var(--c-success) 10%, transparent);
-  color: var(--c-success);
+  border: 1px solid var(--bp-accent);
+  background: var(--bp-accent-light);
+  color: var(--bp-accent);
 }
 
 .bp-btn[data-variant="info"] {
-  border: 0.5px solid color-mix(in srgb, #3b82f6 40%, transparent);
-  background: color-mix(in srgb, #3b82f6 10%, transparent);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  background: rgba(59, 130, 246, 0.08);
   color: #3b82f6;
 }
 
 .bp-btn[data-variant="danger"] {
-  background: color-mix(in srgb, var(--c-danger) 12%, transparent);
-  color: var(--c-danger);
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
 }
 
 /* 图标更换区 */
@@ -607,9 +628,9 @@
   align-items: center;
   gap: 12px;
   padding: 12px;
-  border: 0.5px solid var(--c-panel-border);
+  border: 1px solid rgba(128, 128, 128, 0.1);
   border-radius: 10px;
-  background: var(--c-input);
+  background: rgba(128, 128, 128, 0.05);
 }
 
 .bp-icon-preview {
@@ -618,12 +639,13 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: calc(36px * var(--app-text-scale, 1));
-  height: calc(36px * var(--app-text-scale, 1));
+  width: 44px;
+  height: 44px;
+  border: none;
   border-radius: 10px;
   overflow: hidden;
-  background: color-mix(in srgb, var(--c-success) 14%, var(--c-input));
-  color: var(--c-success);
+  background: var(--bp-accent-light);
+  color: var(--bp-accent);
   cursor: pointer;
   font-size: calc(18px * var(--app-text-scale, 1));
 }
@@ -633,9 +655,9 @@
   flex-direction: column;
   gap: 10px;
   padding: 12px;
+  border: 1px solid rgba(128, 128, 128, 0.12);
   border-radius: 10px;
-  background: var(--c-input);
-  border: 0.5px solid var(--c-panel-border);
+  background: rgba(128, 128, 128, 0.06);
 }
 
 .bp-img-box-head {
@@ -645,9 +667,9 @@
 }
 
 .bp-img-box-title {
-  font-size: calc(10.8px * var(--app-text-scale, 1));
+  font-size: calc(12px * var(--app-text-scale, 1));
   font-weight: 600;
-  color: var(--c-text-title);
+  color: var(--c-text);
 }
 
 .bp-img-row {
@@ -673,11 +695,11 @@
   min-width: 0;
 }
 
-/* ── 转送 / 目标选择浮层 ── */
+/* ── 浮层（转送 / 角色选择 / 可见角色） ── */
 .bp-sub-overlay {
   position: absolute;
   inset: 0;
-  z-index: 50;
+  z-index: 120;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -693,7 +715,7 @@
   max-height: 80vh;
   border-radius: 12px;
   overflow: hidden;
-  background: var(--c-panel);
+  background: var(--c-page-body-bg, #fff);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3);
 }
 
@@ -702,18 +724,18 @@
   align-items: center;
   justify-content: space-between;
   padding: 12px 14px;
-  border-bottom: 0.5px solid var(--c-panel-border);
+  border-bottom: 1px solid rgba(128, 128, 128, 0.12);
 }
 
 .bp-sub-title {
-  font-size: calc(11.7px * var(--app-text-scale, 1));
+  font-size: calc(13px * var(--app-text-scale, 1));
   font-weight: 600;
-  color: var(--c-text-title);
+  color: var(--c-text);
 }
 
 .bp-sub-hint {
   margin-top: 3px;
-  font-size: calc(9px * var(--app-text-scale, 1));
+  font-size: calc(10px * var(--app-text-scale, 1));
   color: var(--c-icon);
   line-height: 1.4;
 }
@@ -730,28 +752,30 @@
   justify-content: flex-end;
   gap: 8px;
   padding: 8px 12px;
-  border-top: 0.5px solid var(--c-panel-border);
+  border-top: 1px solid rgba(128, 128, 128, 0.12);
 }
 
+/* 选择行：原版 .bp-transfer-item / .bp-target-edit-item */
 .bp-pick-row {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
   border-radius: 8px;
-  font-size: calc(11.7px * var(--app-text-scale, 1));
+  font-size: calc(13px * var(--app-text-scale, 1));
   color: var(--c-text);
   cursor: pointer;
+  transition: background 0.15s;
 }
 
-.bp-pick-row:active {
-  background: var(--c-input);
+.bp-pick-row:hover {
+  background: rgba(128, 128, 128, 0.08);
 }
 
 .bp-pick-check {
-  width: calc(14.4px * var(--app-text-scale, 1));
-  height: calc(14.4px * var(--app-text-scale, 1));
-  accent-color: var(--c-success);
+  width: 16px;
+  height: 16px;
+  accent-color: var(--bp-accent);
   flex-shrink: 0;
   cursor: pointer;
 }
@@ -759,15 +783,29 @@
 .bp-pick-name {
   flex: 1;
   min-width: 0;
-  font-size: calc(11.7px * var(--app-text-scale, 1));
+  font-size: calc(13px * var(--app-text-scale, 1));
   color: var(--c-text);
   word-break: break-word;
 }
 
+.bp-pick-check-mark {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  color: var(--bp-accent);
+}
+
 .bp-sub-empty {
   padding: 24px 12px;
-  font-size: calc(10.8px * var(--app-text-scale, 1));
+  font-size: calc(12px * var(--app-text-scale, 1));
   color: var(--c-icon);
   text-align: center;
   line-height: 1.5;
+}
+
+/* 底部「添加物品」入口 */
+.bp-add-row {
+  display: flex;
+  justify-content: center;
+  padding: 0 16px 14px;
 }

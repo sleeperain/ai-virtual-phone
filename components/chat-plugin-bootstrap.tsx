@@ -6,22 +6,18 @@
 
 import { useEffect } from "react";
 import { getChatPluginRuntime } from "@/lib/chat-plugin-runtime";
-import { ensureBackpackMigrated } from "@/lib/backpack-storage";
-
-// 副作用 import：lib/backpack-legacy 会把自己注册成背包的一次性迁移 runner。
-// 必须在这里 import，不能放进 backpack-storage —— 它会 import chat-storage，
-// 而 chat-storage 又依赖背包标记，反向 import 会形成循环依赖。
-import "@/lib/backpack-legacy";
+// 这条 import 同时完成两件事：把 runner 注册进 backpack-storage，
+// 以及拿到需要「等水合完成」的异步引导函数。
+// 不能放进 backpack-storage —— 它会 import chat-storage，而 chat-storage
+// 又依赖背包标记，反向 import 会形成循环依赖。
+import { initBackpackMigration } from "@/lib/backpack-legacy";
 
 export function ChatPluginBootstrap() {
     useEffect(() => {
         void getChatPluginRuntime().ensureStarted();
-        // runner 注册完，主动跑一次迁移，别等用户第一次打开背包才搬数据
-        try {
-            ensureBackpackMigrated();
-        } catch (e) {
-            console.warn("[backpack] 启动迁移失败", e);
-        }
+        // 迁移要读 kv / 购物订单 / 会话，三者都是异步水合的。
+        // 必须等水合完再跑，否则读到空数据会把版本标记写错。
+        void initBackpackMigration();
     }, []);
     return null;
 }

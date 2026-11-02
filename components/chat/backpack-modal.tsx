@@ -201,7 +201,7 @@ export function BackpackModal({
                     setMenuOpen(false);
                 }}
             >
-                <div className="bp-header" style={{ position: "relative" }}>
+                <div className="bp-header">
                     <button
                         type="button"
                         className="bp-icon-btn bp-header-left"
@@ -365,7 +365,7 @@ export function BackpackModal({
                                     <button
                                         type="button"
                                         className="bp-batch-op"
-                                        style={{ background: "color-mix(in srgb, var(--c-success) 14%, transparent)", color: "var(--c-success)" }}
+                                        data-variant="accent"
                                         onClick={() => handleBatchInject(true)}
                                     >
                                         <Sparkles />
@@ -374,7 +374,7 @@ export function BackpackModal({
                                     <button
                                         type="button"
                                         className="bp-batch-op"
-                                        style={{ background: "var(--c-input)", color: "var(--c-text)" }}
+                                        data-variant="ghost"
                                         onClick={() => handleBatchInject(false)}
                                     >
                                         <Ban />
@@ -385,7 +385,7 @@ export function BackpackModal({
                             <button
                                 type="button"
                                 className="bp-batch-op"
-                                style={{ background: "color-mix(in srgb, var(--c-danger) 12%, transparent)", color: "var(--c-danger)" }}
+                                data-variant="danger"
                                 onClick={handleBatchDelete}
                             >
                                 <Trash2 />
@@ -482,25 +482,23 @@ export function BackpackModal({
                     </div>
                 )}
 
-                {visibleItems.length === 0 && !manageMode && !query.trim() && (
-                    <div style={{ display: "flex", justifyContent: "center", padding: "0 16px 14px" }}>
-                        <button
-                            type="button"
-                            className="bp-btn"
-                            data-variant="accent"
-                            onClick={() => setEditorState({ item: null })}
-                        >
-                            <Plus size={13} />
-                            <span>添加物品</span>
-                        </button>
-                    </div>
-                )}
-
-                {visibleItems.length === 0 && !manageMode && query.trim() && (
-                    <div style={{ display: "flex", justifyContent: "center", padding: "0 16px 14px" }}>
-                        <button type="button" className="bp-btn" data-variant="ghost" onClick={() => setQuery("")}>
-                            清空搜索
-                        </button>
+                {visibleItems.length === 0 && !manageMode && (
+                    <div className="bp-add-row">
+                        {query.trim() ? (
+                            <button type="button" className="bp-btn" data-variant="ghost" onClick={() => setQuery("")}>
+                                清空搜索
+                            </button>
+                        ) : (
+                            <button
+                                type="button"
+                                className="bp-btn"
+                                data-variant="accent"
+                                onClick={() => setEditorState({ item: null })}
+                            >
+                                <Plus size={13} />
+                                <span>添加物品</span>
+                            </button>
+                        )}
                     </div>
                 )}
 

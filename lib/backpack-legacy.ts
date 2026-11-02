@@ -10,10 +10,11 @@
 //   v2 购物订单里已到货的商品全量进「我的背包」，来源/时间/详情由订单锁定
 //   v3 把「按会话归属」的老数据换算成「按角色归属」
 
-import { loadChatSessions } from "./chat-storage";
+import { hydrateChatStorage, loadChatSessions } from "./chat-storage";
 import { loadDeliveredShoppingGifts } from "./shopping-gift-utils";
-import { kvGet } from "./kv-db";
+import { hydrateKvDb, kvGet } from "./kv-db";
 import {
+    ensureBackpackMigrated,
     formatBackpackTime,
     loadTransferTargets,
     readBackpackItemsForMigration,
@@ -251,13 +252,34 @@ registerBackpackMigrationRunner(fromVersion => {
     let pluginItems = 0;
     let shoppingItems = 0;
 
-    if (fromVersion < 1) pluginItems = importLegacyPluginData(items);
-    if (fromVersion < 2) shoppingItems = importShoppingOrders(items);
-    if (fromVersion < 3) migrateToCharacterOwnership(items);
+    // v4 修复了 v3 的时序 bug，受影响用户的版本标记被误写成 3 但一件都没搬。
+    // 三步本身都有去重、可重复执行，所以 fromVersion < 4 时全部重跑一遍。
+    const rerunAll = fromVersion < 4;
+
+    if (rerunAll || fromVersion < 1) pluginItems = importLegacyPluginData(items);
+    if (rerunAll || fromVersion < 2) shoppingItems = importShoppingOrders(items);
+    if (rerunAll || fromVersion < 3) migrateToCharacterOwnership(items);
 
     writeBackpackItemsFromMigration(items);
     return { pluginItems, shoppingItems };
 });
+
+/**
+ * 启动引导：等 kv 和聊天数据都水合完，再跑迁移。
+ *
+ * 必须等：迁移要读插件数据桶（kv）、购物订单（kv）、会话（chat-db）。
+ * 这些存储都是异步水合的，「立刻跑」只会读到空数据。
+ */
+export async function initBackpackMigration(): Promise<void> {
+    if (typeof window === "undefined") return;
+    try {
+        await Promise.allSettled([hydrateKvDb(), hydrateChatStorage()]);
+    } catch (e) {
+        console.warn("[backpack] 水合等待失败，稍后再试", e);
+    }
+    // 水合是走的，ensureBackpackMigrated 内部还会再确认一次状态
+    ensureBackpackMigrated();
+}
 
 /**
  * 「重新扫描」：只补购物订单里新到货的商品。
