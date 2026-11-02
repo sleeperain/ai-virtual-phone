@@ -233,8 +233,11 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
         return () => window.removeEventListener("chat-hide-tabbar", onHide);
     }, []);
 
-    // ── 系统返回手势的层级（先注册的在栈底）──
-    // 1) 不在会话里但停在别的 tab 上：先回「消息」列表，而不是直接退出微信
+    // ── 返回手势的层级（先注册的在栈底）──
+    // 说明：全局默认是「一刀切」——不管在第几层，滑动都直接回桌面，此时下面这两层
+    // 会被桌面层抢先，不生效；只有把 window.__aiVirtualPhoneBackNavStepwise 设成
+    // true 切到逐级模式时，才会按这里注册的顺序逐层退。
+    // 1) 不在会话里但停在别的 tab 上：回「消息」列表
     const inRoom = Boolean(activeSession || activeMascot);
     useEffect(() => {
         // 房间层和 tab 层互斥，避免两层叠在一起导致滑一次退两层
@@ -243,7 +246,7 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
         return registerBackLayer(() => setActiveTab("messages"));
     }, [inRoom, activeTab]);
 
-    // 2) 打开的会话房间：退它回会话列表（再退一层由桌面负责关掉微信）
+    // 2) 打开的会话房间：退它回会话列表（仅逐级模式；一刀切模式下由桌面直接关掉微信）
     useEffect(() => {
         if (!inRoom) return;
         return registerBackLayer(() => {

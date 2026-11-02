@@ -1383,10 +1383,11 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
     }
   }, [showWidgetPicker]);
 
-  // ── 系统返回手势（浏览器 / 系统后退）→ 应用内逐级返回 ──
-  // 最底一层是「当前打开的 APP」：退掉它回桌面。页面内更深的层级由 PageShell
-  // 和各 APP 自己注册（见 lib/back-navigation），桌面上还开着的文件夹、编辑模式
-  // 也各算一层。
+  // ── 系统返回手势（左右滑 / 浏览器后退）→ 回手机桌面 ──
+  // 默认一刀切：不管 APP 内部在第几层，滑动都直接关掉当前 APP 回桌面。
+  // 「当前打开的 APP」作为 base 注册，优先级高于 APP 内部自注册的层级
+  // （见 lib/back-navigation 的 resolveAction）；桌面上还开着的文件夹、
+  // 编辑模式各算一层，在没有 APP 打开时生效。
   useEffect(() => {
     if (!activeApp) return;
     return setBackBaseHandler(() => setActiveApp(null));

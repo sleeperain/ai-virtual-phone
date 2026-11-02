@@ -1,29 +1,27 @@
 /**
- * 系统「返回」→ 应用内逐级返回
+ * 系统「返回」→ 仿真手机内的返回
  *
- * 目标：不自己画手势条，直接复用浏览器 / PWA 的系统后退手势
- *（iOS Safari 左缘右滑、Android 手势导航的返回、桌面浏览器的后退键 / 鼠标侧键），
- * 让它在仿真手机里表现为「一层一层往回退」，退到桌面后再滑才是浏览器本来的后退。
+ * 默认行为（用户要的一刀切）：不管当前在 APP 的第几层，左右滑 / 浏览器后退
+ * 一次就直接回到手机主桌面。再滑一次什么都不发生，绝不会离开整个网页。
  *
- * 做法：只要存在可退目标，就在 history 里压一条「哨兵」记录。用户的系统后退
- * 会消耗掉这条哨兵并触发 popstate，我们在 popstate 里按下面的优先级退一层，
- * 然后重建哨兵，保证下一次手势依然可用；可退目标消失时再把哨兵撤掉，
- * 恢复浏览器默认的后退行为。
+ * 实现思路：在 history 里**常驻**一条「守卫记录」。用户的系统后退手势会消耗掉
+ * 这条记录并触发 popstate，我们在 popstate 里执行返回动作，然后立刻把守卫补回去。
+ * 因为守卫是常驻的、与「当前有没有可退目标」无关，所以不存在「退到某一层后
+ * 守卫没补上 → 下一次滑动变成浏览器真实后退 → 整页大退」这条失败路径。
  *
- * 退回优先级：
- *   1. 页面返回栈（PageShell 的 onBack、各 APP 自己注册的层级）—— 最上层优先
- *   2. 当前界面上可见的返回箭头（button.page-back-btn）—— 没主动注册的页面靠它兜底
- *   3. 桌面层（当前打开的 APP）—— 关闭 APP 回到桌面
+ * ── 为什么不用「只在有目标时才压守卫」的老做法 ──
+ * 老做法在退完最后一层时要主动 history.back() 把守卫撤掉，这个 back 调用会和
+ * 用户自己的后退手势抢历史栈；而且 popstate 里重建守卫在 iOS Safari 上偶发被吞
+ * （手势收尾阶段的历史操作会被并入上一次导航）。两个问题叠加，表现就是
+ * 「只能退两级，第三次直接大退」。现在的做法完全不调用 history.back()，
+ * 守卫只增不减，再用「校验 + 重试 + 巡检」保证它一定在。
  *
- * ── 两个曾经踩过的坑（改动时别再踩回去）──
- * 1. 「当前有没有哨兵」一律以 history.state 上的标记为准，不要只信内存里的布尔值。
- *    内存 flag 和真实历史一旦不同步（Safari 在 popstate 里同步 pushState 有概率丢），
- *    就会发生「脑子以为有哨兵、其实没有」——用户一滑就真的离开页面（大退）。
- * 2. popstate 里退完一层后，要等 React 把状态 commit 完再重建哨兵（scheduleSync 的 0ms 延迟）。
- *    同步重建时 React 状态还是旧的，hasBackTarget() 会误判为「还有目标」，
- *    于是压出一条多余的哨兵，之后只能靠 back() 去撤，又和「撤哨兵的 releasing 标记」互相打架。
- *    releasing 也必须有独立超时兜底，否则它一旦卡在 true，后面每一次手势都会被当成
- *    「自己撤哨兵引起的」而忽略，用户体验就是滑几次之后突然大退。
+ * ── 副作用（有意为之）──
+ * 守卫常驻 = 浏览器后退键 / 系统返回手势不会让页面离开。这对仿真手机是想要的，
+ * 但对「想用后退键离开这个网页」的用户是个意外。留了开关：
+ *   window.__aiVirtualPhoneBackNavFreeExit = true   // 桌面上再滑就让浏览器正常后退
+ * 调试逐级模式（老行为）：
+ *   window.__aiVirtualPhoneBackNavStepwise = true   // 先退内部层级，最后才回桌面
  */
 
 export type BackLayerHandle = () => void;
@@ -37,21 +35,20 @@ type BackState = {
   /** 页面级返回栈，后压入的在上面 */
   layers: BackLayer[];
   nextId: number;
-  /** 最底一层（当前打开的 APP），与 layers 分开存，保证它永远在栈底 */
+  /** 最底一层（当前打开的 APP） */
   base: (() => void) | null;
-  /** 正在主动 history.back() 撤哨兵，紧接着到来的那次 popstate 要忽略 */
-  releasing: boolean;
 };
 
 const INSTALL_FLAG = "__aiVirtualPhoneBackNavInstalled";
 const STATE_KEY = "__aiVirtualPhoneBackNavState";
-const BACK_STATE_KEY = "__aiVirtualPhoneBack";
+const GUARD_KEY = "__aiVirtualPhoneBackGuard";
 const DEBUG_FLAG = "__aiVirtualPhoneBackNavDebug";
+const FREE_EXIT_FLAG = "__aiVirtualPhoneBackNavFreeExit";
+const STEPWISE_FLAG = "__aiVirtualPhoneBackNavStepwise";
 
 /**
  * 没显式注册返回逻辑的页面靠这些选择器兜底。
- * 按顺序取第一个命中的：优先统一的 page-back-btn，其次是各 APP 自绘返回箭头时
- * 常用的 aria-label / data-ui 约定。
+ * 只在「逐级模式」下使用；一刀切模式下不需要它。
  */
 const BACK_BUTTON_SELECTORS = [
   "button.page-back-btn",
@@ -60,17 +57,19 @@ const BACK_BUTTON_SELECTORS = [
   'button[aria-label="Back"]',
 ] as const;
 
-/** 主动 history.back() 之后等 popstate 的兜底超时，防止 releasing 卡死 */
-const RELEASING_TIMEOUT_MS = 1200;
+/** 补守卫的最大重试次数与退避基数（iOS 手势收尾时历史操作会被推迟） */
+const GUARD_RETRY_MAX = 12;
+const GUARD_RETRY_BASE_MS = 16;
+/** 巡检间隔：兜住任何我们没预料到的守卫丢失 */
+const PATROL_INTERVAL_MS = 1000;
 
-let syncTimer = 0;
-let releasingTimer = 0;
+let patrolTimer = 0;
 
 function getBackState(): BackState {
   const scope = window as unknown as Record<string, unknown>;
   const existing = scope[STATE_KEY] as BackState | undefined;
   if (existing && Array.isArray(existing.layers)) return existing;
-  const fresh: BackState = { layers: [], nextId: 1, base: null, releasing: false };
+  const fresh: BackState = { layers: [], nextId: 1, base: null };
   scope[STATE_KEY] = fresh;
   return fresh;
 }
@@ -86,14 +85,21 @@ function readHistoryState(): Record<string, unknown> {
   return raw && typeof raw === "object" ? { ...(raw as Record<string, unknown>) } : {};
 }
 
-/** 真实历史里的当前项是不是我们压的哨兵（唯一真相） */
-function hasSentinelInHistory(): boolean {
-  return readHistoryState()[BACK_STATE_KEY] === true;
+/** 当前历史项是不是我们压的守卫（唯一真相，不信内存布尔值） */
+function isGuardEntry(): boolean {
+  return readHistoryState()[GUARD_KEY] === true;
+}
+
+function runHandler(handler: () => void): void {
+  try {
+    handler();
+  } catch (error) {
+    console.warn("[back-navigation] 返回处理器执行失败：", error);
+  }
 }
 
 function isClickable(element: HTMLElement): boolean {
   if (element.hasAttribute("disabled")) return false;
-  // 被隐藏的页面（display:none / 未挂载）没有布局盒子，直接排除，避免点到后台页面的返回箭头
   if (element.getClientRects().length === 0) return false;
   if (element.closest('[aria-hidden="true"]')) return false;
   const style = window.getComputedStyle(element);
@@ -101,7 +107,6 @@ function isClickable(element: HTMLElement): boolean {
   return style.pointerEvents !== "none";
 }
 
-/** 在仿真手机屏幕内找最后一个可见的返回箭头（越晚渲染的页面越可能在最上层） */
 function findVisibleBackButton(): HTMLElement | null {
   if (typeof document === "undefined") return null;
   const root = document.querySelector<HTMLElement>('[data-ui="phone-screen"]') ?? document.body;
@@ -114,155 +119,117 @@ function findVisibleBackButton(): HTMLElement | null {
   return null;
 }
 
-function hasBackTarget(): boolean {
-  const state = getBackState();
-  if (state.layers.length > 0 || state.base) return true;
-  return findVisibleBackButton() !== null;
-}
-
-function runHandler(handler: () => void): void {
+/** 压一条守卫记录，返回是否成功写进 history.state */
+function pushGuard(): boolean {
+  if (isGuardEntry()) return true;
   try {
-    handler();
-  } catch (error) {
-    console.warn("[back-navigation] 返回处理器执行失败：", error);
+    window.history.pushState({ ...readHistoryState(), [GUARD_KEY]: true }, "");
+    return isGuardEntry();
+  } catch {
+    return false;
   }
 }
 
-/** 有可退目标就把哨兵补上（幂等） */
-function ensureSentinel(): void {
-  const state = getBackState();
-  if (state.releasing) return;
-  if (hasSentinelInHistory()) return;
-  if (!hasBackTarget()) return;
-  window.history.pushState({ ...readHistoryState(), [BACK_STATE_KEY]: true }, "");
-  debug("哨兵已压入");
+/**
+ * 确保守卫在位。同步压一次，再带退避重试校验——
+ * iOS Safari 在系统后退手势收尾阶段的历史操作可能被并入上一次导航而丢失，
+ * 只压一次不够，必须校验到真的写进去为止。
+ */
+function ensureGuard(): void {
+  if (isGuardEntry()) return;
+  pushGuard();
+
+  let attempt = 0;
+  const retry = () => {
+    if (isGuardEntry()) return;
+    attempt += 1;
+    if (attempt > GUARD_RETRY_MAX) {
+      debug("守卫补写失败，放弃本轮重试");
+      return;
+    }
+    pushGuard();
+    window.setTimeout(retry, GUARD_RETRY_BASE_MS * attempt);
+  };
+  window.setTimeout(retry, 0);
 }
 
-/** 没有可退目标了就把哨兵撤掉，让系统后退回到浏览器默认行为 */
-function dropSentinel(): void {
-  const state = getBackState();
-  if (state.releasing) return;
-  if (!hasSentinelInHistory()) return;
-
-  state.releasing = true;
-  window.history.back();
-  debug("撤哨兵");
-
-  window.clearTimeout(releasingTimer);
-  releasingTimer = window.setTimeout(() => {
-    releasingTimer = 0;
-    const current = getBackState();
-    if (!current.releasing) return;
-    current.releasing = false;
-    // 超时说明那次 popstate 没来（或已被别处吃掉），重新对齐一次
-    scheduleSync();
-  }, RELEASING_TIMEOUT_MS);
+/** 用户是否希望「桌面上再滑就让浏览器正常后退」 */
+function freeExitEnabled(): boolean {
+  const scope = window as unknown as Record<string, unknown>;
+  return scope[FREE_EXIT_FLAG] === true;
 }
 
-function syncSentinel(): void {
-  if (hasBackTarget()) ensureSentinel();
-  else dropSentinel();
+function stepwiseEnabled(): boolean {
+  const scope = window as unknown as Record<string, unknown>;
+  return scope[STEPWISE_FLAG] === true;
 }
 
 /**
- * 立刻对齐哨兵（同步执行）。
- * popstate 里退完一层必须用这个，不能用 scheduleSync：layers / base 是我们自己的
- * 模块级数据，popstate 那一刻就已经是最新值，不依赖 React 重渲染，所以同步补哨兵是安全的；
- * 而 setTimeout(0) 在系统后退手势收尾的时机里会被明显推迟甚至不执行，
- * 一旦没补上，用户下一次滑动就是浏览器真实后退 → 整页大退（现象：只能退两级）。
+ * 决定这次后退要做什么。返回 null 表示「什么都不做」（留在当前界面）。
+ * 优先级：一刀切模式下 base（关掉当前 APP）永远最先；逐级模式先弹内部层级。
  */
-function syncNow(): void {
-  window.clearTimeout(syncTimer);
-  syncTimer = 0;
+function resolveAction(): (() => void) | null {
+  const state = getBackState();
 
-  // 第一次立刻对齐：只依赖我们的模块级栈，保证哨兵绝不缺席（这是防大退的底线）
-  syncSentinel();
+  if (stepwiseEnabled()) {
+    const layer = state.layers.pop();
+    if (layer) return layer.handler;
+    if (state.base) return state.base;
+    const button = findVisibleBackButton();
+    return button ? () => button.click() : null;
+  }
 
-  // 第二次延后再对齐：退完一层时 DOM 还停留在旧页面，上面的兜底选择器可能
-  // 误判出「还有返回箭头」而多压一条哨兵。等 React 提交完再对一次，
-  // 把可能多压的那条撤掉。两次都幂等，重复调用没有副作用。
-  syncTimer = window.setTimeout(() => {
-    syncTimer = 0;
-    syncSentinel();
-  }, 0);
+  // 一刀切：有打开的 APP 就直接回桌面，不管它在第几层
+  if (state.base) return state.base;
+
+  // 桌面上的文件夹、编辑模式等仍可退
+  const layer = state.layers.pop();
+  if (layer) return layer.handler;
+
+  const button = findVisibleBackButton();
+  return button ? () => button.click() : null;
 }
 
-/** 延后到 React commit 之后再对齐（供 effect 触发的场景用，react 状态可能还没提交） */
-function scheduleSync(): void {
-  window.clearTimeout(syncTimer);
-  syncTimer = window.setTimeout(() => {
-    syncTimer = 0;
-    syncSentinel();
-  }, 0);
+/** 当前是否还「有事可退」——只在决定要不要放行浏览器后退时用 */
+function hasAction(): boolean {
+  const state = getBackState();
+  return Boolean(state.base) || state.layers.length > 0 || findVisibleBackButton() !== null;
 }
 
 function handlePopState(): void {
-  const state = getBackState();
+  const action = resolveAction();
+  debug("popstate", { action: Boolean(action), base: Boolean(getBackState().base) });
 
-  if (state.releasing) {
-    // 这次后退是我们自己撤哨兵引起的，不是用户手势。
-    // 但撤哨兵期间如果又有新的可退目标出现（比如刚好打开了 APP），
-    // 补哨兵会被 releasing 拦下 —— 所以这里必须再对齐一次，否则哨兵就永久丢了。
-    state.releasing = false;
-    window.clearTimeout(releasingTimer);
-    releasingTimer = 0;
-    debug("忽略自撤哨兵的 popstate");
-    syncNow();
+  if (action) {
+    runHandler(action);
+    // 无论动作是否改变了 React 状态，守卫都要立刻补回去，绝不留给下一次手势
+    ensureGuard();
     return;
   }
 
-  debug("popstate：退一层", {
-    layers: state.layers.length,
-    base: Boolean(state.base),
-  });
-
-  // 注意：这里全部用 syncNow() 同步补哨兵，绝不能用延时版本。
-  // 延时版本会在系统手势里丢时机，导致下一次滑动直接大退。
-  const layer = state.layers.pop();
-  if (layer) {
-    runHandler(layer.handler);
-    syncNow();
+  if (freeExitEnabled()) {
+    // 用户显式要求放行：不再补守卫，这次后退就交给浏览器
+    debug("放行浏览器后退");
     return;
   }
 
-  const backButton = findVisibleBackButton();
-  if (backButton) {
-    backButton.click();
-    syncNow();
-    return;
-  }
-
-  if (state.base) {
-    runHandler(state.base);
-    syncNow();
-    return;
-  }
-
-  // 一个可退目标都没有：这次后退交给浏览器照常处理（离开本页）
+  // 桌面上什么都不做，但守卫照补，保证再滑也不会离开网页
+  ensureGuard();
 }
 
-/**
- * 手势开始前补哨兵。
- * 正常情况下哨兵一直有效，这里直接 return，只有状态错乱时才真的去补——
- * 相当于给「哨兵丢了」留一道兜底，不至于下一次滑动就大退。
- */
-function handleGestureStart(): void {
-  if (hasSentinelInHistory()) return;
-  ensureSentinel();
-}
-
-/** 幂等安装：监听 popstate，并清掉刷新后可能残留在 history 里的哨兵标记 */
+/** 幂等安装 */
 export function installBackNavigation(): void {
   if (typeof window === "undefined") return;
   const scope = window as unknown as Record<string, unknown>;
   if (scope[INSTALL_FLAG]) return;
   scope[INSTALL_FLAG] = true;
 
+  // 刷新后可能残留旧标记（上次页面实例压的），先清掉再重新压，避免重复累积
   const raw = window.history.state;
-  if (raw && typeof raw === "object" && (raw as Record<string, unknown>)[BACK_STATE_KEY]) {
+  if (raw && typeof raw === "object" && (raw as Record<string, unknown>)[GUARD_KEY]) {
     try {
       const next = { ...(raw as Record<string, unknown>) };
-      delete next[BACK_STATE_KEY];
+      delete next[GUARD_KEY];
       window.history.replaceState(next, "");
     } catch {
       /* 某些环境限制 replaceState，忽略即可 */
@@ -270,15 +237,29 @@ export function installBackNavigation(): void {
   }
 
   window.addEventListener("popstate", handlePopState);
-  window.addEventListener("pointerdown", handleGestureStart, { passive: true, capture: true });
-  window.addEventListener("touchstart", handleGestureStart, { passive: true, capture: true });
 
-  scheduleSync();
+  // 手势一开始就校验一次，把「守卫已经丢了」的情况压在下一次后退之前
+  const onGestureStart = () => ensureGuard();
+  window.addEventListener("pointerdown", onGestureStart, { passive: true, capture: true });
+  window.addEventListener("touchstart", onGestureStart, { passive: true, capture: true });
+
+  // 从 bfcache 恢复时 history 可能已经换了，重新校验
+  window.addEventListener("pageshow", () => ensureGuard());
+  window.addEventListener("focus", () => ensureGuard());
+
+  ensureGuard();
+
+  // 巡检兜底：任何我们没预料到的守卫丢失，1 秒内自己修回来
+  window.clearInterval(patrolTimer);
+  patrolTimer = window.setInterval(() => {
+    if (document.visibilityState !== "visible") return;
+    if (!isGuardEntry()) ensureGuard();
+  }, PATROL_INTERVAL_MS);
 }
 
 /**
  * 注册一层「页面级」返回。返回注销函数，在组件 useEffect 里直接 return 即可。
- * 后注册的在上层；系统后退会先退它们。
+ * 后注册的在上层。
  */
 export function registerBackLayer(handler: () => void): BackLayerHandle {
   if (typeof window === "undefined") return () => undefined;
@@ -288,21 +269,19 @@ export function registerBackLayer(handler: () => void): BackLayerHandle {
   const layer: BackLayer = { id: state.nextId, handler };
   state.nextId += 1;
   state.layers.push(layer);
-  scheduleSync();
+  ensureGuard();
 
   return () => {
     const current = getBackState();
     const index = current.layers.findIndex((item) => item.id === layer.id);
-    // 已经被 popstate 弹掉了，不用重复处理
     if (index < 0) return;
     current.layers.splice(index, 1);
-    scheduleSync();
   };
 }
 
 /**
- * 注册最底一层（当前打开的 APP）。传 null 表示没有。
- * 单独存放是为了不受 React effect「子先父后」执行顺序影响：桌面层永远在栈底。
+ * 注册「当前打开的 APP」这一层。传 null 表示没有。
+ * 一刀切模式下它优先级最高；单独存放也不受 React effect 执行顺序影响。
  */
 export function setBackBaseHandler(handler: (() => void) | null): BackLayerHandle {
   if (typeof window === "undefined") return () => undefined;
@@ -310,14 +289,12 @@ export function setBackBaseHandler(handler: (() => void) | null): BackLayerHandl
 
   const state = getBackState();
   state.base = handler;
-  scheduleSync();
+  ensureGuard();
 
   return () => {
     const current = getBackState();
-    // 已经被新一层顶替，别把新的清掉
     if (current.base !== handler) return;
     current.base = null;
-    scheduleSync();
   };
 }
 
