@@ -572,6 +572,9 @@ export function BackpackModal({
                             refresh();
                         }}
                         onTransfer={item => {
+                            // 先收起详情弹窗再开目标列表：详情是 fixed 全屏遮罩，
+                            // 两层叠着即使列表在上层，操作完详情也已经过期了。
+                            setEditorState(null);
                             if (item.recipient === "user") setDeliverItem(item);
                             else setTransferItem(item);
                         }}

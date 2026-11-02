@@ -69,16 +69,18 @@ export function BackpackTransferPicker({
 
     return (
         <div
-            className="bp-sub-overlay"
             onClick={onClose}
             style={{
-                position: "absolute",
+                // 必须 fixed + 高于 .modal-overlay 的 9999：
+                // 这个列表是从详情弹窗里点出来的，详情弹窗本身是 fixed 全屏遮罩，
+                // 用 absolute 会被它压在下面（表现为「列表跑到详情页后面」）。
+                position: "fixed",
                 inset: 0,
                 background: "rgba(0,0,0,0.45)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                zIndex: 50,
+                zIndex: 10000,
                 padding: 20,
             }}
         >
