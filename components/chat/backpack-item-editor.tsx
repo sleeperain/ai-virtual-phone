@@ -3,11 +3,12 @@
 // components/chat/backpack-item-editor.tsx
 // 原生背包 · 物品详情 / 新建
 //
-// 购物订单来源的物品：来源（店铺名）、购买时间、详情由订单锁定，
-// 界面上只读并标注锁图标——用户在别处改不动物品的真实出处。
+// 结构与 inline style 照搬「背包」插件 3.25.0 的 openItemEditModal：
+//   图标行 → 图片控制 → 来源/价值 grid → 时间 → 备注 → 底部按钮
+// class 沿用插件：bp-input-field / bp-readonly-value / bp-readonly-hint
+// 唯一改动：字号走 calc(px * --app-text-scale)，购物来源字段锁定只读。
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Camera, Lock, Upload, X } from "lucide-react";
 import {
     createManualBackpackItem,
     formatBackpackTime,
@@ -20,7 +21,6 @@ import type { BackpackItem } from "@/lib/backpack-types";
 type BackpackItemEditorProps = {
     item: BackpackItem | null;
     isNew: boolean;
-    /** "user" 或角色 id */
     targetId: string;
     targetName: string;
     isUserTarget: boolean;
@@ -32,6 +32,37 @@ type BackpackItemEditorProps = {
 
 const MAX_IMAGE_LEN = 250 * 1024;
 const ALLOWED_DATA_IMAGE = /^data:image\/(png|jpe?g|gif|webp|bmp|avif|apng);/i;
+
+const TS = (px: number) => `calc(${px}px * var(--app-text-scale, 1))`;
+
+/** 图标：尺寸照搬插件 ICONS */
+const IconClose = () => (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="18" y1="6" x2="6" y2="18" />
+        <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+);
+const IconCamera = () => (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" />
+        <circle cx="12" cy="13" r="3" />
+    </svg>
+);
+const IconUpload = () => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <polyline points="17 8 12 3 7 8" />
+        <line x1="12" y1="3" x2="12" y2="15" />
+    </svg>
+);
+const IconGift = () => (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="8" width="18" height="4" rx="1" />
+        <path d="M12 8v13" />
+        <path d="M19 12v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7" />
+        <path d="M7.5 8a2.5 2.5 0 0 1 0-5A4.8 8 0 0 1 12 8a4.8 8 0 0 1 4.5-5 2.5 2.5 0 0 1 0 5" />
+    </svg>
+);
 
 function isValidImageUrl(url: string): boolean {
     if (!url) return false;
@@ -47,7 +78,7 @@ function isValidImageUrl(url: string): boolean {
     }
 }
 
-/** 压缩到 200×200，保持体积可控 */
+/** 压缩到 200×200，与插件同一套参数 */
 function compressImageFile(file: File, maxWidth = 200, maxHeight = 200): Promise<string> {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -105,9 +136,13 @@ export function BackpackItemEditor({
     const canEditDate = !shoppingLock && (isNew || !item || item.isManual || item.isRoleAdded);
 
     const [title, setTitle] = useState(item?.title ?? "");
-    const [source, setSource] = useState(shoppingLock ? shoppingLock.merchantLabel : (item?.source === "未标注" ? "" : item?.source ?? ""));
+    const [source, setSource] = useState(
+        shoppingLock ? shoppingLock.merchantLabel : (item?.source === "未标注" ? "" : item?.source ?? ""),
+    );
     const [value, setValue] = useState(item?.value === "--" ? "" : item?.value ?? "");
-    const [date, setDate] = useState(item?.date && item.date !== "近期" ? item.date : formatBackpackTime(Date.now()));
+    const [date, setDate] = useState(
+        item?.date && item.date !== "近期" ? item.date : formatBackpackTime(Date.now()),
+    );
     const [note, setNote] = useState(item?.note ?? "");
     const [customImage, setCustomImage] = useState(item?.customImage ?? "");
     const [imgBoxOpen, setImgBoxOpen] = useState(false);
@@ -117,31 +152,26 @@ export function BackpackItemEditor({
         Array.isArray(item?.visibleTo) ? item.visibleTo.filter(Boolean) : [],
     );
     const [visibleOpen, setVisibleOpen] = useState(false);
-    /** 「可见角色」弹窗里的勾选草稿 */
-    const [visibleTargets, setVisibleTargets] = useState<Set<string>>(
-        new Set(Array.isArray(item?.visibleTo) ? item.visibleTo.filter(Boolean) : []),
-    );
+    const [visibleDraft, setVisibleDraft] = useState<Set<string>>(new Set());
     const fileRef = useRef<HTMLInputElement>(null);
 
-    // 「可见角色」只列角色（不含群）：物品归属与可见范围都以角色为单位
-    const usableTargets = useMemo(() => loadBackpackTargets().filter(t => !t.isUser), []);
+    const characterTargets = useMemo(() => loadBackpackTargets().filter(t => !t.isUser), []);
 
-    // 每次打开弹窗都从物品当前的 visibleTo 重新初始化草稿
     useEffect(() => {
         if (!visibleOpen) return;
-        setVisibleTargets(new Set(Array.isArray(item?.visibleTo) ? item.visibleTo.filter(Boolean) : []));
+        setVisibleDraft(new Set(Array.isArray(item?.visibleTo) ? item.visibleTo.filter(Boolean) : []));
     }, [visibleOpen, item?.visibleTo]);
 
     const handlePickFile = async (file: File) => {
         try {
-            toast?.("正在处理图片…");
+            toast?.("正在处理图片...");
             const compressed = await compressImageFile(file);
             if (compressed.length > MAX_IMAGE_LEN) {
                 toast?.("图片过大，请换一张");
                 return;
             }
             setCustomImage(compressed);
-            toast?.("预览已更新，保存后生效");
+            toast?.("预览已更新，点击保存即可生效");
         } catch {
             toast?.("图片读取失败");
         }
@@ -162,7 +192,7 @@ export function BackpackItemEditor({
             if (isNew) {
                 createManualBackpackItem({
                     title: finalTitle,
-                    source: shoppingLock ? shoppingLock.merchantLabel : source,
+                    source: shoppingLock ? shoppingLock.merchantLabel : (source || "心意手作"),
                     value,
                     date: canEditDate ? date : undefined,
                     note,
@@ -173,12 +203,12 @@ export function BackpackItemEditor({
                 toast?.("已添加物品到背包");
             } else if (item) {
                 const patch: Partial<BackpackItem> = {
-                    value,
+                    value: value || "--",
                     note,
                     customImage: finalImage,
                     userEdited: true,
                 };
-                // 来源被订单锁定时不写回，避免界面值覆盖真实店铺
+                // 订单来源的物品：来源与时间由订单锁定，不写回界面值
                 if (!shoppingLock) patch.source = source || "未标注";
                 if (canEditTitle) patch.title = finalTitle;
                 if (canEditDate) {
@@ -186,9 +216,7 @@ export function BackpackItemEditor({
                     const ts = parseBackpackTime(date);
                     if (ts) patch.timestamp = ts;
                 }
-                if (item.recipient === "user") {
-                    patch.visibleTo = visibleTo.slice();
-                }
+                if (item.recipient === "user") patch.visibleTo = visibleTo.slice();
                 updateBackpackItem(item.id, patch);
                 toast?.("已保存物品修改");
             }
@@ -198,10 +226,8 @@ export function BackpackItemEditor({
         }
     };
 
-    // 「可见角色」改的是这件物品自己的 visibleTo：保存后这些角色
-    // 就能在提示词里看到它，与转送白名单（哪些角色能接收）是两件事。
-    const handleSaveVisible = () => {
-        const ids = [...visibleTargets];
+    const saveVisible = () => {
+        const ids = [...visibleDraft];
         setVisibleTo(ids);
         if (item && !isNew) {
             updateBackpackItem(item.id, { visibleTo: ids, userEdited: true });
@@ -210,91 +236,178 @@ export function BackpackItemEditor({
         setVisibleOpen(false);
     };
 
-    const lockedBadge = (
+    const transferLabel = isNew
+        ? ""
+        : (isUserTarget || item?.recipient === "user") ? "送给…" : "放入到…";
+
+    const lockTag = (
         <span className="bp-lock-tag">
-            <Lock />
             <span>订单锁定</span>
         </span>
     );
 
-    // 我的背包 → 送给角色（会发卡片）；角色背包 → 放入到别处（纯转移）
-    const transferLabel = isNew
-        ? ""
-        : (isUserTarget || item?.recipient === "user")
-            ? "送给…"
-            : "放入到…";
-
     return (
         <div className="modal-overlay" data-ui="modal" onClick={onClose}>
-            <div className="bp-sheet" onClick={e => e.stopPropagation()}>
-                <div className="bp-sheet-head">
-                    <span className="bp-sheet-title">{isNew ? "添加物品到背包" : "物品详情与修改"}</span>
-                    <button type="button" className="bp-icon-btn" aria-label="关闭" onClick={onClose}>
-                        <X />
+            <div
+                onClick={e => e.stopPropagation()}
+                style={{
+                    position: "relative",
+                    display: "flex",
+                    flexDirection: "column",
+                    width: "min(92vw, 450px)",
+                    maxHeight: "84vh",
+                    background: "var(--c-page-body-bg,#ffffff)",
+                    color: "var(--c-text,#1f2937)",
+                    borderRadius: 16,
+                    overflow: "hidden",
+                    boxShadow: "0 16px 40px rgba(0,0,0,0.22)",
+                    fontFamily: "inherit",
+                }}
+            >
+                {/* 标题栏 */}
+                <div style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "14px 18px",
+                    borderBottom: "1px solid rgba(128,128,128,0.12)",
+                }}>
+                    <span style={{ fontWeight: 600, fontSize: TS(14), color: "var(--c-text)" }}>
+                        {isNew ? "添加物品到背包" : "物品详情与修改"}
+                    </span>
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        style={{
+                            border: "none",
+                            background: "transparent",
+                            color: "var(--c-text)",
+                            padding: 2,
+                            cursor: "pointer",
+                            display: "flex",
+                            opacity: 0.75,
+                        }}
+                    >
+                        <IconClose />
                     </button>
                 </div>
 
-                <div className="bp-sheet-body">
-                    <div className="bp-icon-row">
-                        <button
-                            type="button"
-                            className="bp-icon-preview"
-                            title="点击更换图片"
+                {/* 内容 */}
+                <div style={{
+                    padding: "16px 18px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 12,
+                    overflowY: "auto",
+                    maxHeight: "70vh",
+                }}>
+                    {/* 图标 + 名称 */}
+                    <div style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 12,
+                        padding: 12,
+                        borderRadius: 10,
+                        background: "rgba(128,128,128,0.05)",
+                        border: "1px solid rgba(128,128,128,0.1)",
+                    }}>
+                        <div
                             onClick={() => setImgBoxOpen(v => !v)}
+                            title="点击更换图片"
+                            style={{
+                                position: "relative",
+                                width: 44,
+                                height: 44,
+                                borderRadius: 10,
+                                background: "var(--bp-accent-light)",
+                                color: "var(--bp-accent)",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                flexShrink: 0,
+                                cursor: "pointer",
+                                overflow: "hidden",
+                            }}
                         >
                             {customImage ? (
-                                <img src={customImage} alt="" className="bp-item-icon-img" />
+                                /* eslint-disable-next-line @next/next/no-img-element */
+                                <img src={customImage} className="backpack-custom-thumb" alt="" />
                             ) : item?.previewIcon ? (
-                                <span aria-hidden>{item.previewIcon}</span>
+                                <span style={{ fontSize: TS(18) }} aria-hidden>{item.previewIcon}</span>
                             ) : (
-                                <Camera size={18} strokeWidth={1.6} />
+                                <IconGift />
                             )}
-                        </button>
-                        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
-                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                                <span className="bp-field-label">物品名称</span>
+                        </div>
+                        <div style={{ minWidth: 0, flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                                <span style={{ fontSize: TS(11), color: "var(--c-icon)" }}>物品名称</span>
                                 <button
                                     type="button"
-                                    className="bp-text-btn"
                                     onClick={() => setImgBoxOpen(v => !v)}
+                                    style={{
+                                        border: "none",
+                                        background: "transparent",
+                                        color: "var(--bp-accent)",
+                                        fontSize: TS(11),
+                                        padding: 0,
+                                        cursor: "pointer",
+                                    }}
                                 >
                                     更换图片
                                 </button>
                             </div>
                             {canEditTitle ? (
                                 <input
-                                    className="bp-input"
+                                    className="bp-input-field"
                                     value={title}
                                     onChange={e => setTitle(e.target.value)}
                                     placeholder="例如：冻干草莓脆"
-                                    style={{ fontWeight: 600 }}
+                                    style={{ fontWeight: 600, fontSize: TS(13) }}
                                 />
                             ) : (
                                 <>
-                                    <div className="bp-readonly">{item?.title ?? ""}</div>
-                                    <div className="bp-readonly-hint">名称来自记录，如需修改请手动添加一件物品</div>
+                                    <div className="bp-readonly-value">{item?.title ?? ""}</div>
+                                    <div className="bp-readonly-hint">名称来自卡片，如需修改请手动添加一件物品</div>
                                 </>
                             )}
                         </div>
                     </div>
 
+                    {/* 图片控制区 */}
                     {imgBoxOpen && (
-                        <div className="bp-img-box">
-                            <div className="bp-img-box-head">
-                                <span className="bp-img-box-title">更换物品图片</span>
+                        <div style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 10,
+                            padding: 12,
+                            borderRadius: 10,
+                            background: "rgba(128,128,128,0.06)",
+                            border: "1px solid rgba(128,128,128,0.12)",
+                        }}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                                <span style={{ fontSize: TS(12), fontWeight: 600, color: "var(--c-text)" }}>
+                                    更换物品图片
+                                </span>
                                 <button
                                     type="button"
-                                    className="bp-text-btn"
-                                    data-tone="muted"
                                     onClick={() => {
                                         setCustomImage("");
                                         setUrlDraft("");
+                                    }}
+                                    style={{
+                                        border: "none",
+                                        background: "transparent",
+                                        color: "#9ca3af",
+                                        fontSize: TS(11),
+                                        padding: 0,
+                                        cursor: "pointer",
                                     }}
                                 >
                                     恢复默认图标
                                 </button>
                             </div>
-                            <div className="bp-img-row">
+
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                 <input
                                     ref={fileRef}
                                     type="file"
@@ -308,26 +421,36 @@ export function BackpackItemEditor({
                                 />
                                 <button
                                     type="button"
-                                    className="bp-btn"
-                                    data-variant="outline"
                                     onClick={() => fileRef.current?.click()}
+                                    style={{
+                                        border: "none",
+                                        background: "rgba(128,128,128,0.15)",
+                                        color: "var(--c-text)",
+                                        padding: "6px 10px",
+                                        borderRadius: 6,
+                                        fontSize: TS(11),
+                                        cursor: "pointer",
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 4,
+                                    }}
                                 >
-                                    <Upload size={12} />
+                                    <IconUpload />
                                     <span>上传本地图片</span>
                                 </button>
-                                <span className="bp-readonly-hint">自动轻量压缩</span>
+                                <span style={{ fontSize: TS(10), color: "var(--c-icon)" }}>自动轻量压缩</span>
                             </div>
-                            <div className="bp-img-row">
+
+                            <div style={{ display: "flex", gap: 6 }}>
                                 <input
-                                    className="bp-input"
+                                    className="bp-input-field"
                                     value={urlDraft}
                                     onChange={e => setUrlDraft(e.target.value)}
-                                    placeholder="输入图片链接 (URL)…"
+                                    placeholder="输入图片链接 (URL)..."
+                                    style={{ flex: 1, fontSize: TS(11), padding: "5px 8px" }}
                                 />
                                 <button
                                     type="button"
-                                    className="bp-btn"
-                                    data-variant="ghost"
                                     onClick={() => {
                                         if (!urlDraft.trim()) {
                                             toast?.("请输入有效的图片 URL");
@@ -338,7 +461,16 @@ export function BackpackItemEditor({
                                             return;
                                         }
                                         setCustomImage(urlDraft.trim());
-                                        toast?.("预览已更新，保存后生效");
+                                        toast?.("预览已更新，点击保存即可生效");
+                                    }}
+                                    style={{
+                                        border: "none",
+                                        background: "rgba(128,128,128,0.15)",
+                                        color: "var(--c-text)",
+                                        padding: "5px 12px",
+                                        borderRadius: 6,
+                                        fontSize: TS(11),
+                                        cursor: "pointer",
                                     }}
                                 >
                                     应用
@@ -347,27 +479,30 @@ export function BackpackItemEditor({
                         </div>
                     )}
 
-                    <div className="bp-grid-2">
-                        <div className="bp-field">
+                    {/* 来源 / 价值 */}
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 12px" }}>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
-                                <span className="bp-field-label">来源 / 赠予人</span>
-                                {shoppingLock && lockedBadge}
+                                <span style={{ fontSize: TS(11), color: "var(--c-icon)" }}>来源 / 赠予人</span>
+                                {shoppingLock && lockTag}
                             </div>
                             {shoppingLock ? (
-                                <div className="bp-readonly">{shoppingLock.merchantLabel}</div>
+                                <div className="bp-readonly-value" style={{ fontWeight: 400 }}>
+                                    {shoppingLock.merchantLabel}
+                                </div>
                             ) : (
                                 <input
-                                    className="bp-input"
+                                    className="bp-input-field"
                                     value={source}
                                     onChange={e => setSource(e.target.value)}
                                     placeholder="例如：穆叶"
                                 />
                             )}
                         </div>
-                        <div className="bp-field">
-                            <span className="bp-field-label">价值</span>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                            <span style={{ fontSize: TS(11), color: "var(--c-icon)" }}>价值</span>
                             <input
-                                className="bp-input"
+                                className="bp-input-field"
                                 value={value}
                                 onChange={e => setValue(e.target.value)}
                                 placeholder="例如：29.90"
@@ -375,66 +510,110 @@ export function BackpackItemEditor({
                         </div>
                     </div>
 
+                    {/* 商品详情（购物来源，锁定） */}
                     {shoppingLock?.detail && (
-                        <div className="bp-field">
+                        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
-                                <span className="bp-field-label">商品详情</span>
-                                {lockedBadge}
+                                <span style={{ fontSize: TS(11), color: "var(--c-icon)" }}>商品详情</span>
+                                {lockTag}
                             </div>
-                            <div className="bp-readonly" style={{ fontWeight: 400, color: "var(--c-text)" }}>
+                            <div className="bp-readonly-value" style={{ fontWeight: 400 }}>
                                 {shoppingLock.detail}
                             </div>
                         </div>
                     )}
 
-                    <div className="bp-field">
+                    {/* 时间 */}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
-                            <span className="bp-field-label">送出时间 / 购买时间</span>
-                            {shoppingLock && lockedBadge}
+                            <span style={{ fontSize: TS(11), color: "var(--c-icon)" }}>
+                                送出时间 / 记录时间
+                            </span>
+                            {shoppingLock && lockTag}
                         </div>
                         {canEditDate ? (
-                            <div className="bp-date-row">
+                            <div style={{ display: "flex", gap: 6, alignItems: "stretch" }}>
                                 <input
-                                    className="bp-input"
+                                    className="bp-input-field"
                                     value={date}
                                     onChange={e => setDate(e.target.value)}
                                     placeholder="例如：09/12 14:30"
+                                    style={{ flex: 1 }}
                                 />
                                 <button
                                     type="button"
-                                    className="bp-btn"
-                                    data-variant="outline"
+                                    title="填入当前时间"
                                     onClick={() => setDate(formatBackpackTime(Date.now()))}
+                                    style={{
+                                        border: "1px solid rgba(128,128,128,0.2)",
+                                        background: "rgba(128,128,128,0.08)",
+                                        color: "var(--c-text)",
+                                        padding: "0 12px",
+                                        borderRadius: 8,
+                                        fontSize: TS(11),
+                                        cursor: "pointer",
+                                        whiteSpace: "nowrap",
+                                        fontFamily: "inherit",
+                                        flexShrink: 0,
+                                    }}
                                 >
                                     现在
                                 </button>
                             </div>
                         ) : (
-                            <div className="bp-readonly" style={{ fontWeight: 400 }}>{item?.date || "近期"}</div>
+                            <div style={{
+                                fontSize: TS(12),
+                                color: "var(--c-text)",
+                                padding: "7px 10px",
+                                background: "rgba(128,128,128,0.06)",
+                                borderRadius: 8,
+                                border: "1px solid rgba(128,128,128,0.12)",
+                                userSelect: "text",
+                            }}>
+                                {item?.date || "近期"}
+                            </div>
                         )}
                         {!canEditDate && !shoppingLock && (
-                            <div className="bp-readonly-hint">时间来自记录，如需修改请手动添加一件物品</div>
+                            <div className="bp-readonly-hint">时间来自卡片，如需修改请手动添加一件物品</div>
                         )}
                     </div>
 
-                    <div className="bp-field">
-                        <span className="bp-field-label">物品备注</span>
+                    {/* 备注 */}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                        <span style={{ fontSize: TS(12), fontWeight: 600, color: "var(--c-text)" }}>物品备注</span>
                         <textarea
-                            className="bp-textarea"
+                            className="bp-input-field"
                             value={note}
                             onChange={e => setNote(e.target.value)}
-                            placeholder="填写物品备注说明（可不填）…"
+                            placeholder="填写物品备注说明（可不填）..."
+                            style={{ height: 78, padding: "8px 10px", resize: "none", lineHeight: 1.5 }}
                         />
                     </div>
                 </div>
 
-                <div className="bp-sheet-foot">
-                    {!isNew && item && (
+                {/* 底部按钮 */}
+                <div style={{
+                    display: "flex",
+                    gap: 8,
+                    alignItems: "center",
+                    padding: "12px 18px",
+                    background: "rgba(128,128,128,0.04)",
+                    borderTop: "1px solid rgba(128,128,128,0.1)",
+                    flexWrap: "wrap",
+                }}>
+                    {!isNew && (
                         <button
                             type="button"
-                            className="bp-btn"
-                            data-variant="outline"
-                            onClick={() => onTransfer(item)}
+                            onClick={() => onTransfer(item!)}
+                            style={{
+                                border: "1px solid rgba(128,128,128,0.25)",
+                                background: "transparent",
+                                color: "var(--c-text)",
+                                padding: "6px 12px",
+                                borderRadius: 6,
+                                fontSize: TS(12),
+                                cursor: "pointer",
+                            }}
                         >
                             {transferLabel}
                         </button>
@@ -442,28 +621,57 @@ export function BackpackItemEditor({
                     {!isNew && item?.recipient === "user" && (
                         <button
                             type="button"
-                            className="bp-btn"
-                            data-variant="info"
                             onClick={() => setVisibleOpen(true)}
+                            style={{
+                                border: "1px solid rgba(59,130,246,0.35)",
+                                background: "rgba(59,130,246,0.08)",
+                                color: "#3b82f6",
+                                padding: "6px 12px",
+                                borderRadius: 6,
+                                fontSize: TS(12),
+                                cursor: "pointer",
+                            }}
                         >
                             {visibleTo.length > 0 ? `可见角色(${visibleTo.length})` : "可见角色"}
                         </button>
                     )}
-                    <div className="bp-foot-spacer" />
-                    <button type="button" className="bp-btn" data-variant="ghost" onClick={onClose}>
+                    <div style={{ flex: 1 }} />
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        style={{
+                            border: "none",
+                            background: "rgba(128,128,128,0.12)",
+                            color: "var(--c-text)",
+                            padding: "6px 14px",
+                            borderRadius: 6,
+                            fontSize: TS(12),
+                            cursor: "pointer",
+                        }}
+                    >
                         取消
                     </button>
                     <button
                         type="button"
-                        className="bp-btn"
-                        data-variant="primary"
                         disabled={saving}
                         onClick={handleSave}
+                        style={{
+                            border: "none",
+                            background: "var(--bp-accent)",
+                            color: "#ffffff",
+                            padding: "6px 16px",
+                            borderRadius: 6,
+                            fontSize: TS(12),
+                            fontWeight: 500,
+                            cursor: saving ? "not-allowed" : "pointer",
+                            opacity: saving ? 0.5 : 1,
+                        }}
                     >
                         保存
                     </button>
                 </div>
 
+                {/* 可见角色浮层 */}
                 {visibleOpen && (
                     <div className="bp-sub-overlay" onClick={() => setVisibleOpen(false)}>
                         <div className="bp-sub-panel" onClick={e => e.stopPropagation()}>
@@ -471,22 +679,24 @@ export function BackpackItemEditor({
                                 <div>
                                     <div className="bp-sub-title">让哪些角色知道这件物品</div>
                                     <div className="bp-sub-hint">
-                                        {visibleTo.length === 0 ? "当前没有角色知道这件物品" : `当前让 ${visibleTo.length} 个角色知道`}
+                                        {visibleDraft.size === 0
+                                            ? "（当前没有角色知道这件物品）"
+                                            : `当前让 ${visibleDraft.size} 个角色知道`}
                                     </div>
                                 </div>
                             </div>
                             <div className="bp-sub-list">
-                                {usableTargets.length === 0 ? (
+                                {characterTargets.length === 0 ? (
                                     <div className="bp-sub-empty">暂无可选角色</div>
                                 ) : (
-                                    usableTargets.map(t => (
-                                        <label key={t.id} className="bp-pick-row">
+                                    characterTargets.map(t => (
+                                        <label key={t.id} className="bp-target-edit-item">
                                             <input
                                                 type="checkbox"
                                                 className="bp-pick-check"
-                                                checked={visibleTargets.has(t.id)}
+                                                checked={visibleDraft.has(t.id)}
                                                 onChange={e => {
-                                                    setVisibleTargets(prev => {
+                                                    setVisibleDraft(prev => {
                                                         const next = new Set(prev);
                                                         if (e.target.checked) next.add(t.id);
                                                         else next.delete(t.id);
@@ -499,33 +709,54 @@ export function BackpackItemEditor({
                                     ))
                                 )}
                             </div>
-                            <div className="bp-sub-foot">
+                            <div className="bp-sub-foot" style={{ justifyContent: "space-between" }}>
                                 <button
                                     type="button"
-                                    className="bp-btn"
-                                    data-variant="ghost"
-                                    onClick={() => setVisibleOpen(false)}
-                                >
-                                    取消
-                                </button>
-                                <button
-                                    type="button"
-                                    className="bp-btn"
-                                    data-variant="primary"
-                                    onClick={handleSaveVisible}
-                                >
-                                    保存
-                                </button>
-                                <button
-                                    type="button"
-                                    className="bp-btn"
-                                    data-variant="outline"
-                                    onClick={() => {
-                                        setVisibleTargets(new Set(usableTargets.map(t => t.id)));
+                                    onClick={() => setVisibleDraft(new Set(characterTargets.map(t => t.id)))}
+                                    style={{
+                                        border: "none",
+                                        background: "transparent",
+                                        color: "var(--bp-accent)",
+                                        fontSize: TS(12),
+                                        padding: 0,
+                                        cursor: "pointer",
                                     }}
                                 >
                                     全选
                                 </button>
+                                <div style={{ display: "flex", gap: 8 }}>
+                                    <button
+                                        type="button"
+                                        onClick={() => setVisibleOpen(false)}
+                                        style={{
+                                            border: "none",
+                                            background: "rgba(128,128,128,0.12)",
+                                            color: "var(--c-text)",
+                                            padding: "6px 14px",
+                                            borderRadius: 6,
+                                            fontSize: TS(12),
+                                            cursor: "pointer",
+                                        }}
+                                    >
+                                        取消
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={saveVisible}
+                                        style={{
+                                            border: "none",
+                                            background: "var(--bp-accent)",
+                                            color: "#ffffff",
+                                            padding: "6px 16px",
+                                            borderRadius: 6,
+                                            fontSize: TS(12),
+                                            fontWeight: 500,
+                                            cursor: "pointer",
+                                        }}
+                                    >
+                                        保存
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -534,5 +765,3 @@ export function BackpackItemEditor({
         </div>
     );
 }
-
-
