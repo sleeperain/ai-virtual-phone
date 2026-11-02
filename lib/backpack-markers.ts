@@ -1,22 +1,24 @@
 // lib/backpack-markers.ts
 // 原生背包 · 回复标记解析
 //
-// 模型在回复里写 [给予用户:物品] [拿取:物品] 这类标记，这里就地执行并把标记抹掉。
+// 模型在回复里写 [给予用户:物品] 这类标记，这里就地执行并把标记抹掉。
 // 必须同步执行：调用点位于回复落地之前的流水线上。
+//
+// 归属一律是「某个角色」：谁的回复，就操作谁的背包。
+// 群聊里同样成立——说话的角色只会动到自己的背包。
 
 import {
     formatBackpackTime,
-    isGroupSessionId,
     loadBackpackItems,
-    loadBackpackTargets,
     mutateBackpackItems,
     parseBackpackTime,
+    resolveCharacterIdByName,
 } from "./backpack-storage";
-import type { BackpackItem, BackpackRecipient } from "./backpack-types";
+import type { BackpackItem } from "./backpack-types";
 
 const MARKER_KEYWORDS = "(给予用户|赠送给角色|拿取|背包备注|新增物品|修改物品|丢弃)";
-
 const RE_ANY = new RegExp(`\\[${MARKER_KEYWORDS}\\s*[:：]`);
+
 const RE_GIVE = /\[给予用户\s*[:：][\s\S]*?\]/g;
 const RE_GIVE_CHAR = /\[赠送给角色\s*[:：][\s\S]*?\]/g;
 const RE_TAKE = /\[拿取\s*[:：][\s\S]*?\]/g;
@@ -30,17 +32,21 @@ export function hasBackpackMarker(text: string): boolean {
     return typeof text === "string" && RE_ANY.test(text);
 }
 
-/** 只抹除标记，不执行任何动作（用户自己发的文本走这里，防止用户伪造标记改背包） */
+/** 只抹除标记，不执行任何动作（用户自己发的文本走这里，防止手写标记改背包） */
 export function stripBackpackMarkers(text: string): string {
     if (!hasBackpackMarker(text)) return text;
-    return text
+    return trimBlank(text
         .replace(RE_GIVE, "")
         .replace(RE_GIVE_CHAR, "")
         .replace(RE_TAKE, "")
         .replace(RE_NOTE, "")
         .replace(RE_ADD, "")
         .replace(RE_EDIT, "")
-        .replace(RE_DROP, "")
+        .replace(RE_DROP, ""));
+}
+
+function trimBlank(text: string): string {
+    return text
         .replace(/[ \t]+\n/g, "\n")
         .replace(/\n{3,}/g, "\n\n")
         .trim();
@@ -57,24 +63,10 @@ function normalizeItemName(value: string): string {
         .toLowerCase();
 }
 
-function normalizeTargetName(value: string): string {
-    return String(value || "")
-        .trim()
-        .replace(/[【】\[\]「」『』（）()《》\s]/g, "")
-        .replace(/的背包$/, "")
-        .replace(/的礼物堆$/, "")
-        .toLowerCase();
-}
-
-/** 在指定归属下找物品下标：先精确、再归一化、最后包含匹配 */
-function findItemIndex(
-    items: BackpackItem[],
-    sessionId: string,
-    name: string,
-    recipient: BackpackRecipient,
-): number {
+/** 在角色自己的背包里找物品下标：先精确、再归一化、最后包含匹配 */
+function findOwnItemIndex(items: BackpackItem[], characterId: string, name: string): number {
     const rawName = String(name || "").trim();
-    if (!rawName || !sessionId) return -1;
+    if (!rawName || !characterId) return -1;
     const normName = normalizeItemName(rawName);
     if (!normName) return -1;
     const canContains = normName.length >= 2;
@@ -84,8 +76,7 @@ function findItemIndex(
 
     for (let i = 0; i < items.length; i += 1) {
         const item = items[i];
-        if (item.sessionId !== sessionId) continue;
-        if (item.recipient !== recipient) continue;
+        if (item.recipient !== "character" || item.characterId !== characterId) continue;
         if (item.title === rawName) return i;
         const norm = normalizeItemName(item.title);
         if (normHit < 0 && norm === normName) normHit = i;
@@ -100,6 +91,29 @@ function findItemIndex(
     }
     if (normHit >= 0) return normHit;
     return containsHit;
+}
+
+/**
+ * 在用户背包里找物品：优先挑「这个角色知道」的那件，其次退到任意同名件。
+ * 返回下标，找不到 -1。
+ */
+function findUserItemIndex(items: BackpackItem[], characterId: string, name: string): number {
+    const normName = normalizeItemName(name);
+    if (!normName) return -1;
+
+    let visibleIdx = -1;
+    let anyIdx = -1;
+    for (let i = 0; i < items.length; i += 1) {
+        const item = items[i];
+        if (item.recipient !== "user") continue;
+        const norm = normalizeItemName(item.title);
+        const hit = norm === normName
+            || (norm.length >= 2 && normName.length >= 2 && (norm.includes(normName) || normName.includes(norm)));
+        if (!hit) continue;
+        if (visibleIdx < 0 && item.visibleTo.includes(characterId)) visibleIdx = i;
+        if (anyIdx < 0) anyIdx = i;
+    }
+    return visibleIdx >= 0 ? visibleIdx : anyIdx;
 }
 
 // ── 标记体解析 ─────────────────────────────────────────────
@@ -171,100 +185,89 @@ function parseGiveToCharacterBody(body: string): { targetName: string; itemName:
 
 // ── 执行 ───────────────────────────────────────────────────
 
-/**
- * 执行回复里的背包标记，返回去掉标记后的文本。
- * 无标记时原样返回，不做任何写操作。
- */
-export function applyBackpackMarkers(text: string, sessionId: string): string {
-    if (!sessionId || !hasBackpackMarker(text)) return text;
+export type BackpackMarkerResult = {
+    /** 去掉标记后的文本 */
+    text: string;
+    /** 本轮送出给用户的物品（调用方据此在聊天里发礼物卡片） */
+    givenToUser: BackpackItem[];
+    /** 是否有实际改动（用于提示词缓存失效等判断） */
+    changed: boolean;
+};
 
-    const inGroup = isGroupSessionId(sessionId);
-    const targets = loadBackpackTargets();
+/**
+ * 执行回复里的背包标记。
+ * characterId 是这条回复的说话角色——所有操作都落在他的背包上。
+ */
+export function applyBackpackMarkers(text: string, characterId: string): BackpackMarkerResult {
+    if (!characterId || !hasBackpackMarker(text)) {
+        return { text, givenToUser: [], changed: false };
+    }
 
     let output = text;
     let mutated = false;
+    const givenIds: string[] = [];
 
     mutateBackpackItems(items => {
-        output = output.replace(/\[给予用户\s*[:：]\s*([\s\S]*?)\s*\]/g, (_full, nameRaw) => {
+        output = output.replace(RE_GIVE, (_full, nameRaw) => {
             const name = String(nameRaw || "").trim();
             if (!name) return "";
-            const idx = findItemIndex(items, sessionId, name, "character");
+            const idx = findOwnItemIndex(items, characterId, name);
             if (idx >= 0) {
+                const item = items[idx];
                 items[idx] = {
-                    ...items[idx],
+                    ...item,
                     recipient: "user",
-                    sessionId: "",
+                    characterId: "",
                     visibleTo: [],
                     injected: false,
                     timestamp: Date.now(),
                 };
+                givenIds.push(item.id);
                 mutated = true;
             }
             return "";
         });
 
-        output = output.replace(/\[赠送给角色\s*[:：]\s*([\s\S]*?)\s*\]/g, (_full, body) => {
+        output = output.replace(RE_GIVE_CHAR, (_full, body) => {
             const parsed = parseGiveToCharacterBody(String(body));
             if (!parsed) return "";
-            const normTarget = normalizeTargetName(parsed.targetName);
-            const target = targets.find(t =>
-                !t.isUser && !t.isGroup && t.id !== sessionId && normalizeTargetName(t.rawName) === normTarget);
-            if (!target) return "";
-            const idx = findItemIndex(items, sessionId, parsed.itemName, "character");
+            const targetCharacterId = resolveCharacterIdByName(parsed.targetName);
+            if (!targetCharacterId || targetCharacterId === characterId) return "";
+            const idx = findOwnItemIndex(items, characterId, parsed.itemName);
             if (idx < 0) return "";
             items[idx] = {
                 ...items[idx],
                 recipient: "character",
-                sessionId: target.id,
+                characterId: targetCharacterId,
                 visibleTo: [],
+                injected: true,
                 timestamp: Date.now(),
             };
             mutated = true;
             return "";
         });
 
-        output = output.replace(/\[拿取\s*[:：]\s*([\s\S]*?)\s*\]/g, (_full, nameRaw) => {
+        output = output.replace(RE_TAKE, (_full, nameRaw) => {
             const name = String(nameRaw || "").trim();
             if (!name) return "";
-            // 群聊里先看群礼物堆，再退回用户背包
-            if (inGroup) {
-                const gIdx = findItemIndex(items, sessionId, name, "group");
-                if (gIdx >= 0) {
-                    const next = { ...items[gIdx] };
-                    next.recipient = "character";
-                    next.visibleTo = [];
-                    next.injected = true;
-                    next.timestamp = Date.now();
-                    delete next.giver;
-                    delete next.giverRole;
-                    items[gIdx] = next;
-                    mutated = true;
-                    return "";
-                }
-            }
-            // 用户背包物品：找到后再定位它原本挂在哪个会话下
-            const uIdx = items.findIndex(it => it.recipient === "user" && it.visibleTo.includes(sessionId)
-                && normalizeItemName(it.title) === normalizeItemName(name));
-            const fallbackIdx = uIdx >= 0 ? uIdx : items.findIndex(it => it.recipient === "user"
-                && normalizeItemName(it.title) === normalizeItemName(name));
-            if (fallbackIdx >= 0) {
-                items[fallbackIdx] = {
-                    ...items[fallbackIdx],
-                    recipient: "character",
-                    sessionId,
-                    visibleTo: [],
-                    injected: true,
-                    timestamp: Date.now(),
-                };
-                mutated = true;
-            }
+            const idx = findUserItemIndex(items, characterId, name);
+            if (idx < 0) return "";
+            items[idx] = {
+                ...items[idx],
+                recipient: "character",
+                characterId,
+                visibleTo: [],
+                injected: true,
+                timestamp: Date.now(),
+            };
+            mutated = true;
             return "";
         });
 
-        output = output.replace(/\[背包备注\s*[:：]\s*([\s\S]*?)\s*\]/g, (_full, body) => {
+        output = output.replace(RE_NOTE, (_full, body) => {
             const parsed = parseNoteBody(String(body));
             if (!parsed) return "";
-            const idx = findItemIndex(items, sessionId, parsed.name, "character");
+            const idx = findOwnItemIndex(items, characterId, parsed.name);
             if (idx >= 0) {
                 items[idx] = { ...items[idx], note: parsed.content, userEdited: true };
                 mutated = true;
@@ -272,11 +275,11 @@ export function applyBackpackMarkers(text: string, sessionId: string): string {
             return "";
         });
 
-        output = output.replace(/\[新增物品\s*[:：]\s*([\s\S]*?)\s*\]/g, (_full, body) => {
+        output = output.replace(RE_ADD, (_full, body) => {
             const parsed = parseNewItemBody(String(body));
             if (!parsed) return "";
             const now = Date.now();
-            const item: BackpackItem = {
+            items.unshift({
                 id: `bp_role_${now}_${Math.random().toString(36).slice(2, 8)}`,
                 title: parsed.title,
                 source: parsed.source,
@@ -284,28 +287,23 @@ export function applyBackpackMarkers(text: string, sessionId: string): string {
                 date: parsed.date || formatBackpackTime(now),
                 note: parsed.note,
                 customImage: "",
-                recipient: inGroup ? "group" : "character",
-                sessionId,
-                injected: !inGroup,
+                recipient: "character",
+                characterId,
+                injected: true,
                 visibleTo: [],
                 isManual: false,
                 isRoleAdded: true,
                 userEdited: true,
                 timestamp: now,
-            };
-            if (inGroup) {
-                item.giver = "群友";
-                item.giverRole = "assistant";
-            }
-            items.unshift(item);
+            });
             mutated = true;
             return "";
         });
 
-        output = output.replace(/\[修改物品\s*[:：]\s*([\s\S]*?)\s*\]/g, (_full, body) => {
+        output = output.replace(RE_EDIT, (_full, body) => {
             const parsed = parseEditItemBody(String(body));
             if (!parsed || parsed.noop) return "";
-            const idx = findItemIndex(items, sessionId, parsed.title, "character");
+            const idx = findOwnItemIndex(items, characterId, parsed.title);
             if (idx >= 0) {
                 const next = { ...items[idx] };
                 if (parsed.source) next.source = parsed.source;
@@ -323,10 +321,10 @@ export function applyBackpackMarkers(text: string, sessionId: string): string {
             return "";
         });
 
-        output = output.replace(/\[丢弃\s*[:：]\s*([\s\S]*?)\s*\]/g, (_full, nameRaw) => {
+        output = output.replace(RE_DROP, (_full, nameRaw) => {
             const name = String(nameRaw || "").trim();
             if (!name) return "";
-            const idx = findItemIndex(items, sessionId, name, "character");
+            const idx = findOwnItemIndex(items, characterId, name);
             if (idx >= 0) {
                 items.splice(idx, 1);
                 mutated = true;
@@ -337,24 +335,10 @@ export function applyBackpackMarkers(text: string, sessionId: string): string {
         return mutated ? items : undefined;
     });
 
-    return output
-        .replace(/[ \t]+\n/g, "\n")
-        .replace(/\n{3,}/g, "\n\n")
-        .trim();
-}
+    // 送出的物品此刻已经进了用户背包，取最新快照供调用方发卡片
+    const givenToUser = givenIds.length > 0
+        ? loadBackpackItems().filter(it => givenIds.includes(it.id) && it.recipient === "user")
+        : [];
 
-/** 把「把物品送给某个角色」这件事翻出来，用于 UI 发送卡片 */
-export function consumeGiveAwayRequests(text: string, sessionId: string): { text: string; delivered: BackpackItem[] } {
-    if (!sessionId || !hasBackpackMarker(text)) return { text, delivered: [] };
-    const delivered: BackpackItem[] = [];
-    const before = new Map(loadBackpackItems().map(it => [it.id, `${it.recipient}:${it.sessionId}`]));
-
-    const output = applyBackpackMarkers(text, sessionId);
-
-    for (const item of loadBackpackItems()) {
-        const prev = before.get(item.id);
-        if (!prev) continue;
-        if (item.recipient === "user" && prev !== "user:") delivered.push(item);
-    }
-    return { text: output, delivered };
+    return { text: trimBlank(output), givenToUser, changed: mutated };
 }

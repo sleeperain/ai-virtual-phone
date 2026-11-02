@@ -20,9 +20,9 @@ import type { BackpackItem } from "@/lib/backpack-types";
 type BackpackItemEditorProps = {
     item: BackpackItem | null;
     isNew: boolean;
+    /** "user" 或角色 id */
     targetId: string;
     targetName: string;
-    isGroupTarget: boolean;
     isUserTarget: boolean;
     onClose: () => void;
     onSaved: () => void;
@@ -94,7 +94,6 @@ export function BackpackItemEditor({
     isNew,
     targetId,
     targetName,
-    isGroupTarget,
     isUserTarget,
     onClose,
     onSaved,
@@ -124,7 +123,8 @@ export function BackpackItemEditor({
     );
     const fileRef = useRef<HTMLInputElement>(null);
 
-    const usableTargets = useMemo(() => loadBackpackTargets().filter(t => !t.isGroup), []);
+    // 「可见角色」只列角色（不含群）：物品归属与可见范围都以角色为单位
+    const usableTargets = useMemo(() => loadBackpackTargets().filter(t => !t.isUser), []);
 
     // 每次打开弹窗都从物品当前的 visibleTo 重新初始化草稿
     useEffect(() => {
@@ -160,7 +160,6 @@ export function BackpackItemEditor({
         setSaving(true);
         try {
             if (isNew) {
-                const recipient = isUserTarget ? "user" : isGroupTarget ? "group" : "character";
                 createManualBackpackItem({
                     title: finalTitle,
                     source: shoppingLock ? shoppingLock.merchantLabel : source,
@@ -168,9 +167,8 @@ export function BackpackItemEditor({
                     date: canEditDate ? date : undefined,
                     note,
                     customImage: finalImage,
-                    recipient,
-                    sessionId: isUserTarget ? "" : targetId,
-                    giver: isGroupTarget ? "用户" : undefined,
+                    recipient: isUserTarget ? "user" : "character",
+                    characterId: isUserTarget ? "" : targetId,
                 });
                 toast?.("已添加物品到背包");
             } else if (item) {
@@ -188,7 +186,7 @@ export function BackpackItemEditor({
                     const ts = parseBackpackTime(date);
                     if (ts) patch.timestamp = ts;
                 }
-                if (item.recipient === "user" || item.recipient === "group") {
+                if (item.recipient === "user") {
                     patch.visibleTo = visibleTo.slice();
                 }
                 updateBackpackItem(item.id, patch);
@@ -200,7 +198,7 @@ export function BackpackItemEditor({
         }
     };
 
-    // 「可见角色」改的是这件物品自己的 visibleTo：保存后这些会话的角色
+    // 「可见角色」改的是这件物品自己的 visibleTo：保存后这些角色
     // 就能在提示词里看到它，与转送白名单（哪些角色能接收）是两件事。
     const handleSaveVisible = () => {
         const ids = [...visibleTargets];
@@ -219,13 +217,12 @@ export function BackpackItemEditor({
         </span>
     );
 
+    // 我的背包 → 送给角色（会发卡片）；角色背包 → 放入到别处（纯转移）
     const transferLabel = isNew
         ? ""
-        : isUserTarget
+        : (isUserTarget || item?.recipient === "user")
             ? "送给…"
-            : isGroupTarget || item?.recipient === "group"
-                ? "从礼物堆拿出…"
-                : "放入到…";
+            : "放入到…";
 
     return (
         <div className="modal-overlay" data-ui="modal" onClick={onClose}>
@@ -442,7 +439,7 @@ export function BackpackItemEditor({
                             {transferLabel}
                         </button>
                     )}
-                    {!isNew && (item?.recipient === "user" || item?.recipient === "group") && (
+                    {!isNew && item?.recipient === "user" && (
                         <button
                             type="button"
                             className="bp-btn"

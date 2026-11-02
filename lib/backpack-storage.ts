@@ -1,19 +1,23 @@
 // lib/backpack-storage.ts
-// 原生背包 · 存储层与迁移
+// 原生背包 · 存储层
 //
 // 数据落在 kv-db（IndexedDB）的 backpack_items_v1，是全量物品的单一事实来源。
 // 聊天消息里的卡片只是展示；卡片被删、聊天记录被清，物品一件不少。
+//
+// ⚠ 依赖约束：本模块**不允许** import chat-storage / shopping-gift-utils。
+// 那两个模块（直接或间接）依赖背包标记，反向 import 会形成循环：
+//   chat-storage → backpack-markers → backpack-storage → chat-storage
+// 需要读会话/订单的一次性迁移放在 lib/backpack-legacy.ts，由它在启动时注册，
+// 本模块只负责调用注册进来的 runner。
 
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
-import { loadChatSessions, type ChatSession } from "./chat-storage";
 import { loadCharacters } from "./character-storage";
-import { loadDeliveredShoppingGifts } from "./shopping-gift-utils";
 import {
     BACKPACK_CHANGED_EVENT,
     type BackpackItem,
     type BackpackRecipient,
     type BackpackShoppingOrigin,
-    type BackpackTransferTarget,
+    type BackpackTarget,
     type BackpackTransferTargets,
 } from "./backpack-types";
 
@@ -21,19 +25,14 @@ const ITEMS_KEY = "backpack_items_v1";
 const TARGETS_KEY = "backpack_transfer_targets_v1";
 const MIGRATION_KEY = "backpack_migration_v1";
 
-/** 老插件的数据桶。迁移只读不写，卸载插件前用户可以自行确认 */
-const LEGACY_PLUGIN_BUCKET = "chat_plugin_data_v1:gift-backpack";
-const LEGACY_PLUGIN_ITEMS = "backpack_gifts_v1";
-const LEGACY_PLUGIN_TARGETS = "backpack_transfer_targets_v2";
-
 registerKvMigration(ITEMS_KEY);
 registerKvMigration(TARGETS_KEY);
 registerKvMigration(MIGRATION_KEY);
 
-/** 当前迁移脚本版本；加新迁移时 +1 并在 runMigrations 里追加分支 */
-const MIGRATION_VERSION = 2;
+/** 当前迁移脚本版本；加新迁移时 +1 并同步 lib/backpack-legacy.ts */
+export const BACKPACK_MIGRATION_VERSION = 3;
 
-type MigrationState = {
+export type BackpackMigrationState = {
     version: number;
     pluginItems: number;
     shoppingItems: number;
@@ -49,15 +48,18 @@ function emitChanged() {
 
 let itemsCache: BackpackItem[] | null = null;
 
-function isValidItem(raw: unknown): raw is BackpackItem {
+function isValidItem(raw: unknown): raw is Record<string, unknown> {
     if (!raw || typeof raw !== "object") return false;
-    const it = raw as Partial<BackpackItem>;
+    const it = raw as { id?: unknown };
     return typeof it.id === "string" && it.id.length > 0;
 }
 
-function normalizeItem(raw: BackpackItem): BackpackItem {
-    const recipient: BackpackRecipient =
-        raw.recipient === "character" || raw.recipient === "group" ? raw.recipient : "user";
+function toStringArray(value: unknown): string[] {
+    return Array.isArray(value) ? value.map(String).filter(Boolean) : [];
+}
+
+function normalizeItem(raw: Record<string, unknown>): BackpackItem {
+    const recipient: BackpackRecipient = raw.recipient === "character" ? "character" : "user";
     return {
         id: String(raw.id),
         title: String(raw.title ?? ""),
@@ -67,18 +69,22 @@ function normalizeItem(raw: BackpackItem): BackpackItem {
         note: String(raw.note ?? ""),
         customImage: typeof raw.customImage === "string" ? raw.customImage : "",
         previewIcon: typeof raw.previewIcon === "string" ? raw.previewIcon : undefined,
-        tone: raw.tone,
+        tone: typeof raw.tone === "string" ? raw.tone as BackpackItem["tone"] : undefined,
         recipient,
-        sessionId: recipient === "user" ? String(raw.sessionId ?? "") : String(raw.sessionId ?? ""),
+        characterId: typeof raw.characterId === "string" ? raw.characterId : "",
         injected: raw.injected === true,
-        visibleTo: Array.isArray(raw.visibleTo) ? raw.visibleTo.map(String).filter(Boolean) : [],
+        visibleTo: toStringArray(raw.visibleTo),
         isManual: raw.isManual === true,
         isRoleAdded: raw.isRoleAdded === true,
         userEdited: raw.userEdited === true,
         timestamp: Number.isFinite(raw.timestamp) ? Number(raw.timestamp) : Date.now(),
-        giver: typeof raw.giver === "string" ? raw.giver : undefined,
-        giverRole: raw.giverRole === "user" || raw.giverRole === "assistant" ? raw.giverRole : undefined,
-        shopping: raw.shopping && typeof raw.shopping === "object" ? raw.shopping : undefined,
+        shopping: raw.shopping && typeof raw.shopping === "object"
+            ? raw.shopping as BackpackShoppingOrigin
+            : undefined,
+        // 迁移前的老数据把归属记在会话上，保留给 lib/backpack-legacy.ts 读取
+        legacySessionId: typeof raw.legacySessionId === "string"
+            ? raw.legacySessionId
+            : (typeof raw.sessionId === "string" && raw.sessionId ? raw.sessionId : undefined),
     };
 }
 
@@ -91,18 +97,13 @@ function readItemsRaw(): BackpackItem[] {
     }
     try {
         const parsed: unknown = JSON.parse(raw);
-        itemsCache = Array.isArray(parsed) ? parsed.filter(isValidItem).map(normalizeItem) : [];
+        itemsCache = Array.isArray(parsed)
+            ? parsed.filter(isValidItem).map(item => normalizeItem(item as Record<string, unknown>))
+            : [];
     } catch {
         itemsCache = [];
     }
     return itemsCache;
-}
-
-function writeItems(items: BackpackItem[]) {
-    const deduped = dedupeById(items).sort((a, b) => b.timestamp - a.timestamp);
-    itemsCache = deduped;
-    kvSet(ITEMS_KEY, JSON.stringify(deduped));
-    emitChanged();
 }
 
 function dedupeById(items: BackpackItem[]): BackpackItem[] {
@@ -114,7 +115,14 @@ function dedupeById(items: BackpackItem[]): BackpackItem[] {
     return [...map.values()];
 }
 
-/** 读取全部物品（首次调用会跑一遍迁移） */
+function writeItems(items: BackpackItem[]) {
+    const deduped = dedupeById(items).sort((a, b) => b.timestamp - a.timestamp);
+    itemsCache = deduped;
+    kvSet(ITEMS_KEY, JSON.stringify(deduped));
+    emitChanged();
+}
+
+/** 读取全部物品（首次调用会尝试跑一遍迁移） */
 export function loadBackpackItems(): BackpackItem[] {
     ensureBackpackMigrated();
     return readItemsRaw().slice();
@@ -157,8 +165,7 @@ export function createManualBackpackItem(input: {
     note?: string;
     customImage?: string;
     recipient: BackpackRecipient;
-    sessionId?: string;
-    giver?: string;
+    characterId?: string;
 }): BackpackItem {
     const now = Date.now();
     const item: BackpackItem = {
@@ -170,7 +177,7 @@ export function createManualBackpackItem(input: {
         note: input.note ?? "",
         customImage: input.customImage ?? "",
         recipient: input.recipient,
-        sessionId: input.recipient === "user" ? "" : (input.sessionId ?? ""),
+        characterId: input.recipient === "character" ? (input.characterId ?? "") : "",
         injected: input.recipient === "character",
         visibleTo: [],
         isManual: true,
@@ -178,10 +185,6 @@ export function createManualBackpackItem(input: {
         userEdited: true,
         timestamp: now,
     };
-    if (input.recipient === "group") {
-        item.giver = input.giver || "用户";
-        item.giverRole = "user";
-    }
     mutateBackpackItems(items => {
         items.unshift(item);
     });
@@ -221,9 +224,9 @@ export function parseBackpackTime(text: string): number {
     return t;
 }
 
-// ── 会话 / 角色名称解析 ────────────────────────────────────
+// ── 角色解析 ───────────────────────────────────────────────
 
-function resolveCharacterNameById(characterId?: string): string {
+export function resolveCharacterName(characterId?: string): string {
     if (!characterId) return "";
     try {
         const char = loadCharacters().find(c => c.id === characterId);
@@ -233,76 +236,78 @@ function resolveCharacterNameById(characterId?: string): string {
     }
 }
 
-export function resolveGroupName(session: ChatSession): string {
-    if (!session) return "群聊";
-    const direct = (session as unknown as { groupName?: string }).groupName;
-    if (typeof direct === "string" && direct.trim()) return direct.trim();
-    const alias = session.alias;
-    if (typeof alias === "string" && alias.trim()) return alias.trim();
-    const ids = Array.isArray(session.participantIds) ? session.participantIds : [];
-    const names = ids.map(resolveCharacterNameById).filter(Boolean);
-    if (names.length > 0) return names.slice(0, 3).join("、");
-    return "群聊";
+function normalizeName(value: string): string {
+    return String(value || "")
+        .trim()
+        .replace(/[【】\[\]「」『』（）()《》\s]/g, "")
+        .replace(/的背包$/, "")
+        .toLowerCase();
 }
 
-/** 会话 id → 角色名 / 群名 */
-export function resolveSessionDisplayName(sessionId: string): string {
-    if (!sessionId) return "";
+/** 按名字找角色 id：先精确，再忽略括号空格的近似匹配 */
+export function resolveCharacterIdByName(name: string): string | null {
+    const raw = String(name || "").trim();
+    if (!raw) return null;
+    let characters;
     try {
-        const session = loadChatSessions().find(s => s.id === sessionId);
-        if (!session) return "";
-        if (session.isGroup) return resolveGroupName(session);
-        return resolveCharacterNameById(session.contactId) || "角色";
+        characters = loadCharacters();
     } catch {
-        return "";
+        return null;
     }
+    const exact = characters.find(c => c.name === raw);
+    if (exact) return exact.id;
+    const norm = normalizeName(raw);
+    if (!norm) return null;
+    const loose = characters.find(c => normalizeName(String(c.name ?? "")) === norm);
+    if (loose) return loose.id;
+    const partial = characters.find(c => {
+        const n = normalizeName(String(c.name ?? ""));
+        return n.length >= 2 && (n.includes(norm) || norm.includes(n));
+    });
+    return partial ? partial.id : null;
 }
 
-export function isGroupSessionId(sessionId: string): boolean {
-    if (!sessionId) return false;
-    try {
-        return loadChatSessions().find(s => s.id === sessionId)?.isGroup === true;
-    } catch {
-        return false;
-    }
-}
+// ── 背包目标（我的背包 + 每个角色一个，不含群聊） ──────────
 
-// ── 背包目标（我的背包 + 每个会话一个） ─────────────────────
-
-export function loadBackpackTargets(): BackpackTransferTarget[] {
-    const targets: BackpackTransferTarget[] = [{
+export function loadBackpackTargets(): BackpackTarget[] {
+    const targets: BackpackTarget[] = [{
         id: "user",
         name: "我的背包",
         rawName: "我的背包",
         isUser: true,
-        isGroup: false,
     }];
     try {
-        for (const session of loadChatSessions()) {
-            if (!session?.id) continue;
-            const isGroup = session.isGroup === true;
-            const rawName = isGroup
-                ? resolveGroupName(session)
-                : (resolveCharacterNameById(session.contactId) || "角色");
+        for (const char of loadCharacters()) {
+            if (!char?.id) continue;
+            const name = String(char.name ?? "").trim() || "角色";
             targets.push({
-                id: session.id,
-                name: isGroup ? `【${rawName}】的礼物堆` : `【${rawName}】的背包`,
-                rawName,
+                id: char.id,
+                name: `【${name}】的背包`,
+                rawName: name,
                 isUser: false,
-                isGroup,
-                sessionId: session.id,
+                characterId: char.id,
             });
         }
     } catch {
-        /* 会话读不出来就只留我的背包 */
+        /* 角色读不出来就只留我的背包 */
     }
     return targets;
 }
 
-/** 排除用户与群之后的角色目标，用于「送给…」弹窗 */
-export function loadCharacterBackpackTargets(excludeSessionId?: string): BackpackTransferTarget[] {
+/** 只要角色目标（用于「送给…」与标题选择弹窗） */
+export function loadCharacterTargets(excludeCharacterId?: string): BackpackTarget[] {
     return loadBackpackTargets().filter(t =>
-        !t.isUser && !t.isGroup && (!excludeSessionId || t.id !== excludeSessionId));
+        !t.isUser && (!excludeCharacterId || t.characterId !== excludeCharacterId));
+}
+
+export function findBackpackTarget(targetId: string): BackpackTarget | null {
+    return loadBackpackTargets().find(t => t.id === targetId) ?? null;
+}
+
+/** 按归属筛选：targetId 为 "user" 或角色 id */
+export function filterBackpackItems(items: BackpackItem[], targetId: string): BackpackItem[] {
+    if (targetId === "user") return items.filter(it => it.recipient === "user");
+    return items.filter(it => it.recipient === "character" && it.characterId === targetId);
 }
 
 // ── 转送白名单 ─────────────────────────────────────────────
@@ -338,31 +343,28 @@ export function saveTransferTargets(config: BackpackTransferTargets): void {
     emitChanged();
 }
 
-/** 某来源允许放入的目标 id 集合；没有显式配置时默认全部角色（不含群） */
+/** 某来源允许放入的角色 id 集合；没有显式配置时默认全部角色 */
 export function getEnabledTargetIdsForSource(sourceId: string): Set<string> {
     const config = loadTransferTargets();
     const key = String(sourceId || "");
     if (!UNSAFE_KEYS.has(key) && Array.isArray(config[key])) {
         return new Set(config[key].map(String));
     }
-    const all = loadBackpackTargets();
     const set = new Set<string>();
-    for (const t of all) {
-        if (t.isUser || t.isGroup) continue;
-        if (t.id === key) continue;
-        set.add(t.id);
+    for (const t of loadCharacterTargets(key)) {
+        if (t.characterId) set.add(t.characterId);
     }
     return set;
 }
 
-// ── 转送 ───────────────────────────────────────────────────
+// ── 移动 ───────────────────────────────────────────────────
 
 /**
- * 把物品放进另一个目标。
- * targetId 为 "user" 放进我的背包；为群会话放进群礼物堆；否则放进该角色背包。
+ * 把物品放到另一个目标：targetId 为 "user" 或角色 id。
+ * 返回更新后的物品；目标不存在返回 null。
  */
-export function transferBackpackItem(itemId: string, targetId: string, actorName = "用户"): BackpackItem | null {
-    const target = loadBackpackTargets().find(t => t.id === targetId);
+export function moveBackpackItem(itemId: string, targetId: string): BackpackItem | null {
+    const target = findBackpackTarget(targetId);
     if (!target) return null;
 
     let updated: BackpackItem | null = null;
@@ -370,51 +372,41 @@ export function transferBackpackItem(itemId: string, targetId: string, actorName
         const idx = items.findIndex(it => it.id === itemId);
         if (idx < 0) return;
         const prev = items[idx];
+        const isUserTarget = target.isUser;
         const next: BackpackItem = {
             ...prev,
-            recipient: target.isUser ? "user" : (target.isGroup ? "group" : "character"),
-            sessionId: target.isUser ? "" : targetId,
+            recipient: isUserTarget ? "user" : "character",
+            characterId: isUserTarget ? "" : (target.characterId ?? ""),
             visibleTo: [],
+            injected: !isUserTarget,
             timestamp: Date.now(),
         };
-        if (target.isGroup) {
-            next.giver = actorName;
-            next.giverRole = "user";
-        } else {
-            delete next.giver;
-            delete next.giverRole;
-        }
-        if (next.recipient === "user") {
-            next.injected = false;
-        } else if (next.recipient === "group") {
-            next.injected = false;
-        }
         items[idx] = next;
         updated = next;
     });
     return updated;
 }
 
-/** 按 id 前缀 / 归属筛选 */
-export function filterBackpackItems(items: BackpackItem[], targetId: string): BackpackItem[] {
-    if (targetId === "user") {
-        return items.filter(it => it.recipient === "user");
-    }
-    if (isGroupSessionId(targetId)) {
-        return items.filter(it => it.recipient === "group" && it.sessionId === targetId);
-    }
-    return items.filter(it => it.recipient === "character" && it.sessionId === targetId);
-}
+// ── 迁移调度 ───────────────────────────────────────────────
 
-// ── 迁移 ───────────────────────────────────────────────────
+/**
+ * 一次性迁移的 runner，由 lib/backpack-legacy.ts 在启动时注册。
+ * 放在这里是为了让本模块不依赖 chat-storage / shopping-gift-utils（见文件头说明）。
+ */
+type MigrationRunner = (fromVersion: number) => { pluginItems: number; shoppingItems: number } | void;
 
+let migrationRunner: MigrationRunner | null = null;
 let migrated = false;
 
-function readMigrationState(): MigrationState {
+export function registerBackpackMigrationRunner(runner: MigrationRunner): void {
+    migrationRunner = runner;
+}
+
+export function readBackpackMigrationState(): BackpackMigrationState {
     const raw = kvGet(MIGRATION_KEY);
     if (!raw) return { version: 0, pluginItems: 0, shoppingItems: 0, at: "" };
     try {
-        const parsed = JSON.parse(raw) as Partial<MigrationState>;
+        const parsed = JSON.parse(raw) as Partial<BackpackMigrationState>;
         return {
             version: Number(parsed.version) || 0,
             pluginItems: Number(parsed.pluginItems) || 0,
@@ -426,187 +418,48 @@ function readMigrationState(): MigrationState {
     }
 }
 
-function writeMigrationState(state: MigrationState): void {
+export function writeBackpackMigrationState(state: BackpackMigrationState): void {
     kvSet(MIGRATION_KEY, JSON.stringify(state));
 }
 
 /**
- * 从老插件的数据桶里把物品搬过来。
- * 桶结构：{ backpack_gifts_v1: BackpackItem[], backpack_transfer_targets_v2: {...} }
- * 只读，不删除，万一迁移逻辑有问题还能回退。
+ * 首次读背包时尝试跑迁移。runner 还没注册就跳过（下次读会再来一次），
+ * 不会把「没迁移」误记成「已迁移」。
  */
-function importLegacyPluginData(): number {
-    const raw = kvGet(LEGACY_PLUGIN_BUCKET);
-    if (!raw) return 0;
-
-    let bucket: Record<string, unknown>;
-    try {
-        const parsed: unknown = JSON.parse(raw);
-        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return 0;
-        bucket = parsed as Record<string, unknown>;
-    } catch {
-        return 0;
-    }
-
-    const legacyItems = bucket[LEGACY_PLUGIN_ITEMS];
-    if (!Array.isArray(legacyItems)) return 0;
-
-    const existing = new Set(readItemsRaw().map(it => it.id));
-    const incoming: BackpackItem[] = [];
-    for (const rawItem of legacyItems) {
-        if (!isValidItem(rawItem)) continue;
-        const item = normalizeItem(rawItem as BackpackItem);
-        if (existing.has(item.id)) continue;
-        // 老物品没有订单来源信息，标记为可自由编辑
-        existing.add(item.id);
-        incoming.push(item);
-    }
-
-    if (incoming.length > 0) {
-        mutateBackpackItems(items => {
-            items.push(...incoming);
-        });
-    }
-
-    // 转送白名单同样接管，否则用户的转送配置会退回默认
-    const legacyTargets = bucket[LEGACY_PLUGIN_TARGETS];
-    if (legacyTargets && typeof legacyTargets === "object" && !Array.isArray(legacyTargets)) {
-        const current = loadTransferTargets();
-        if (Object.keys(current).length === 0) {
-            const next: BackpackTransferTargets = Object.create(null);
-            for (const [key, value] of Object.entries(legacyTargets as Record<string, unknown>)) {
-                if (UNSAFE_KEYS.has(key)) continue;
-                if (Array.isArray(value)) next[key] = value.map(String);
-            }
-            if (Object.keys(next).length > 0) saveTransferTargets(next);
-        }
-    }
-
-    return incoming.length;
-}
-
-/**
- * 把购物订单里已到货的商品全量搬进「我的背包」。
- * 来源（店铺名）、购买时间、详情由订单锁定，界面上不可改。
- */
-function importShoppingOrders(): number {
-    let candidates;
-    try {
-        candidates = loadDeliveredShoppingGifts({ includeSent: true });
-    } catch {
-        return 0;
-    }
-    if (!Array.isArray(candidates) || candidates.length === 0) return 0;
-
-    const existing = readItemsRaw();
-    const bySignature = new Set(
-        existing
-            .filter(it => it.recipient === "user")
-            .map(it => `${it.title}::${it.source}`),
-    );
-    const byOrigin = new Set(
-        existing
-            .map(it => it.shopping)
-            .filter((s): s is BackpackShoppingOrigin => !!s)
-            .map(s => `${s.orderId}::${s.itemId}::${s.unitIndex}`),
-    );
-
-    // 已经在别处的同一件商品（老插件从礼物卡片扫到的、已经送出去的那件）：
-    // 它属于角色，不该再进「我的背包」变成重复的一份
-    const ownedElsewhere = new Set(
-        existing
-            .filter(it => it.recipient !== "user")
-            .map(it => `${it.title}::${it.source}`),
-    );
-
-    const incoming: BackpackItem[] = [];
-    for (const candidate of candidates) {
-        const originKey = `${candidate.orderId}::${candidate.itemId}::${candidate.unitIndex}`;
-        if (byOrigin.has(originKey)) continue;
-        // 插件可能已经从卡片里扫到过同一件商品，避免重复入包
-        if (bySignature.has(`${candidate.productName}::${candidate.merchantLabel}`)) continue;
-        if (ownedElsewhere.has(`${candidate.productName}::${candidate.merchantLabel}`)) continue;
-
-        const deliveredMs = candidate.deliveredAt ? new Date(candidate.deliveredAt).getTime() : 0;
-        const timestamp = Number.isFinite(deliveredMs) && deliveredMs > 0 ? deliveredMs : Date.now();
-
-        byOrigin.add(originKey);
-        incoming.push({
-            id: `shop_${originKey.replace(/::/g, "_")}`,
-            title: candidate.productName,
-            source: candidate.merchantLabel,
-            value: candidate.priceLabel || "--",
-            date: formatBackpackTime(timestamp),
-            note: "",
-            customImage: "",
-            previewIcon: candidate.previewIcon,
-            tone: candidate.tone,
-            recipient: "user",
-            sessionId: "",
-            injected: false,
-            visibleTo: [],
-            isManual: false,
-            isRoleAdded: false,
-            userEdited: false,
-            timestamp,
-            shopping: {
-                orderId: candidate.orderId,
-                itemId: candidate.itemId,
-                unitIndex: candidate.unitIndex,
-                merchantLabel: candidate.merchantLabel,
-                priceLabel: candidate.priceLabel,
-                detail: candidate.detail,
-                previewIcon: candidate.previewIcon,
-                tone: candidate.tone,
-                deliveredAt: candidate.deliveredAt,
-            },
-        });
-    }
-
-    if (incoming.length > 0) {
-        mutateBackpackItems(items => {
-            items.push(...incoming);
-        });
-    }
-    return incoming.length;
-}
-
-/** 首次读背包时跑一次迁移；标记写入后不再重复 */
 export function ensureBackpackMigrated(): void {
     if (migrated) return;
-    migrated = true;
-    const state = readMigrationState();
-    if (state.version >= MIGRATION_VERSION) return;
-
-    let pluginItems = state.pluginItems;
-    let shoppingItems = state.shoppingItems;
-    try {
-        if (state.version < 1) {
-            pluginItems = importLegacyPluginData();
-        }
-        if (state.version < 2) {
-            shoppingItems = importShoppingOrders();
-        }
-    } catch (e) {
-        console.warn("[backpack] 迁移失败，保留原数据下次重试", e);
-        migrated = false;
+    const state = readBackpackMigrationState();
+    if (state.version >= BACKPACK_MIGRATION_VERSION) {
+        migrated = true;
         return;
     }
+    if (!migrationRunner) return;
 
-    writeMigrationState({
-        version: MIGRATION_VERSION,
-        pluginItems,
-        shoppingItems,
-        at: new Date().toISOString(),
-    });
+    try {
+        const result = migrationRunner(state.version);
+        writeBackpackMigrationState({
+            version: BACKPACK_MIGRATION_VERSION,
+            pluginItems: result?.pluginItems ?? state.pluginItems,
+            shoppingItems: result?.shoppingItems ?? state.shoppingItems,
+            at: new Date().toISOString(),
+        });
+        migrated = true;
+    } catch (e) {
+        // 留在未迁移状态，下次读背包再试；已写入的部分物品不会重复（有去重）
+        console.warn("[backpack] 迁移失败，保留原数据下次重试", e);
+    }
 }
 
-/** 测试/重装场景：强制重跑迁移 */
+/** 测试 / 「重新扫描」：重置标记让迁移（及其去重逻辑）再跑一次 */
 export function resetBackpackMigrationFlag(): void {
     migrated = false;
 }
 
-/** 供设置页展示：这次迁移搬了多少东西 */
-export function readBackpackMigrationSummary(): MigrationState {
-    return readMigrationState();
+/** 迁移脚本内部用：直接拿到物品并写回，不触发迁移递归 */
+export function readBackpackItemsForMigration(): BackpackItem[] {
+    return readItemsRaw().slice();
+}
+
+export function writeBackpackItemsFromMigration(items: BackpackItem[]): void {
+    writeItems(items);
 }

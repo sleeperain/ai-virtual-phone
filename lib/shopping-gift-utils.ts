@@ -1,5 +1,5 @@
 import { loadChatMessages, loadChatSessions } from "./chat-storage";
-import { loadBackpackItems } from "./backpack-storage";
+import { kvGet } from "./kv-db";
 import { loadShoppingState } from "./shopping-storage";
 import type { ShoppingOrder } from "./shopping-types";
 import type { CheckPhoneShoppingTone } from "./checkphone-config";
@@ -67,6 +67,49 @@ function isOrderGiftable(order: ShoppingOrder, nowMs: number): boolean {
   return isOrderDelivered(order, nowMs);
 }
 
+const BACKPACK_ITEMS_KEY = "backpack_items_v1";
+
+/**
+ * 直接从 KV 里挑出背包物品，不走 lib/backpack-storage。
+ *
+ * 原因：backpack-storage 迁移时要调用本模块的 loadDeliveredShoppingGifts，
+ * 如果这里反过来 import backpack-storage 就成了循环依赖——迁移跑在模块
+ * 初始化早期，循环会让它取到还没初始化的函数。这里只读一个 key，字段也
+ * 只用得到几个，单独解析最稳。
+ */
+type BackpackSentEntry = {
+  recipient: string;
+  orderId?: string;
+  itemId?: string;
+  unitIndex?: number;
+};
+
+function readBackpackItemsForSentCheck(): BackpackSentEntry[] {
+  const raw = kvGet(BACKPACK_ITEMS_KEY);
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const entries: BackpackSentEntry[] = [];
+    for (const rawItem of parsed) {
+      if (!rawItem || typeof rawItem !== "object") continue;
+      const it = rawItem as Record<string, unknown>;
+      const shopping = it.shopping && typeof it.shopping === "object"
+        ? it.shopping as Record<string, unknown>
+        : null;
+      entries.push({
+        recipient: typeof it.recipient === "string" ? it.recipient : "user",
+        orderId: shopping && typeof shopping.orderId === "string" ? shopping.orderId : undefined,
+        itemId: shopping && typeof shopping.itemId === "string" ? shopping.itemId : undefined,
+        unitIndex: shopping && typeof shopping.unitIndex === "number" ? shopping.unitIndex : undefined,
+      });
+    }
+    return entries;
+  } catch {
+    return [];
+  }
+}
+
 /**
  * 已送出的礼物 id 集合。
  *
@@ -85,11 +128,10 @@ export function loadSentShoppingGiftIds(): Set<string> {
       if (giftId) sentIds.add(giftId);
     }
   }
-  for (const item of loadBackpackItems()) {
-    if (item.recipient === "user") continue;
-    const origin = item.shopping;
-    if (!origin) continue;
-    sentIds.add(`${origin.orderId}::${origin.itemId}::${origin.unitIndex}`);
+  for (const entry of readBackpackItemsForSentCheck()) {
+    if (entry.recipient === "user") continue;
+    if (!entry.orderId) continue;
+    sentIds.add(`${entry.orderId}::${entry.itemId ?? ""}::${entry.unitIndex ?? 1}`);
   }
   return sentIds;
 }
@@ -106,9 +148,9 @@ export function countSentGiftsForOrder(orderId: string): number {
     }
   }
   // 背包里的同一件商品已经转到角色那里，也算送出
-  for (const item of loadBackpackItems()) {
-    if (item.recipient === "user") continue;
-    if (item.shopping?.orderId === orderId) count += 1;
+  for (const entry of readBackpackItemsForSentCheck()) {
+    if (entry.recipient === "user") continue;
+    if (entry.orderId === orderId) count += 1;
   }
   return count;
 }

@@ -1107,14 +1107,14 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     const [showBackpack, setShowBackpack] = useState(false);
     /** 背包「送给…」：物品转到对方背包，并在本会话留一张礼物卡片 */
     const deliverBackpackItem = (request: BackpackDeliverRequest): boolean => {
-        const messageId = deliverBackpackItemToCharacter({
+        const result = deliverBackpackItemToCharacter({
             item: request.item,
-            targetSessionId: session.id,
+            targetCharacterId: request.targetCharacterId,
             targetName: request.targetName,
-            senderName: "你",
+            sessionId: session.id,
         });
-        if (!messageId) {
-            showChatToast("送出失败，请重试");
+        if (!result.ok) {
+            showChatToast(result.error || "送出失败，请重试");
             return false;
         }
         // 立刻把新卡片并进本地消息列表，不用等下一次整表同步
@@ -1123,7 +1123,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             const added = latest.filter(m => !prev.some(p => p.id === m.id));
             return added.length > 0 ? [...prev, ...added] : prev;
         });
-        showChatToast(`已送给 ${request.targetName}`);
+        showChatToast(result.error ? result.error : `已送给 ${request.targetName}`);
         return true;
     };
     const [offlineTurns, setOfflineTurns] = useState<ChatOfflineTurn[]>([]);
@@ -6718,10 +6718,8 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             {showBackpack && (
                 <BackpackModal
                     sessionId={session.id}
-                    onDeliver={(request) => {
-                        const sent = deliverBackpackItem(request);
-                        if (sent) setShowBackpack(false);
-                    }}
+                    currentCharacterId={session.isGroup ? undefined : session.contactId}
+                    onDeliver={(request) => deliverBackpackItem(request)}
                     onClose={() => setShowBackpack(false)}
                     toast={showChatToast}
                 />

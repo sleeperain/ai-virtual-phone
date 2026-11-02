@@ -12,6 +12,7 @@ import { loadCharacters } from "./character-storage";
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 import { emitChatPluginEvent, runChatPluginTransformSync } from "./chat-plugin-hooks";
 import { applyBackpackMarkers, hasBackpackMarker, stripBackpackMarkers } from "./backpack-markers";
+import { resolveCharacterName, type BackpackItem } from "./backpack-storage";
 import { parseAIResponse } from "./rich-message-parser";
 import { formatRichMediaForHistory } from "./llm-prompt-assembler";
 import { extractTextToolDirectiveText } from "./text-tool-protocol";
@@ -1176,13 +1177,23 @@ export function pushChatMessage(msg: Omit<ChatMessage, "id" | "createdAt" | "sta
 }): ChatMessage {
     // 背包标记：角色回复里的 [给予用户:…] 这类标记就地执行并抹掉，
     // 用户自己打的标记只抹除不执行（防止手写标记改背包）。
+    // 群聊里操作落在「说话的这个角色」自己的背包上。
+    let backpackGifts: BackpackItem[] = [];
+    let backpackActorId = "";
     if (typeof msg.content === "string" && hasBackpackMarker(msg.content)) {
-        msg = {
-            ...msg,
-            content: msg.role === "assistant"
-                ? applyBackpackMarkers(msg.content, msg.sessionId)
-                : stripBackpackMarkers(msg.content),
-        };
+        if (msg.role === "assistant") {
+            backpackActorId = resolveBackpackActor(msg);
+            if (backpackActorId) {
+                const result = applyBackpackMarkers(msg.content, backpackActorId);
+                msg = { ...msg, content: result.text };
+                backpackGifts = result.givenToUser;
+            } else {
+                // 认不出说话角色（历史数据缺 senderCharacterId）：只抹标记，避免误改别人的背包
+                msg = { ...msg, content: stripBackpackMarkers(msg.content) };
+            }
+        } else {
+            msg = { ...msg, content: stripBackpackMarkers(msg.content) };
+        }
     }
 
     let newMsg: ChatMessage = {
@@ -1230,7 +1241,75 @@ export function pushChatMessage(msg: Omit<ChatMessage, "id" | "createdAt" | "sta
     }
     emitChatPluginEvent("message.persisted", { message: newMsg });
 
+    // 角色送出了背包物品：延后一拍再推礼物卡片。
+    // 这里正在 push 过程中，直接再 push 会重入；卡片本身不含标记，延后也保证它排在本条之后。
+    if (backpackGifts.length > 0 && backpackActorId) {
+        queueBackpackGiftCards(newMsg.sessionId, backpackActorId, backpackGifts);
+    }
+
     return newMsg;
+}
+
+/** 找出这条回复的说话角色（背包操作全都落在他身上） */
+function resolveBackpackActor(msg: { sessionId: string; senderCharacterId?: string }): string {
+    if (msg.senderCharacterId) return String(msg.senderCharacterId);
+    const session = _sessionsCache.find(s => s.id === msg.sessionId);
+    if (session && session.isGroup !== true && session.contactId) return String(session.contactId);
+    return "";
+}
+
+/** 角色送出物品后在会话里补一张礼物卡片（放入/转送不产生卡片） */
+function queueBackpackGiftCards(sessionId: string, characterId: string, items: BackpackItem[]): void {
+    if (typeof window === "undefined") return;
+    const senderName = resolveCharacterName(characterId) || undefined;
+    const payload = items.map(item => ({
+        id: item.id,
+        title: item.title,
+        source: item.source,
+        value: item.value,
+        previewIcon: item.previewIcon,
+        tone: item.tone,
+        deliveredAt: item.shopping?.deliveredAt,
+        orderId: item.shopping?.orderId,
+        itemId: item.shopping?.itemId,
+    }));
+    window.setTimeout(() => {
+        for (const gift of payload) {
+            try {
+                pushChatMessage({
+                    sessionId,
+                    role: "assistant",
+                    content: "",
+                    mediaType: "gift",
+                    senderCharacterId: characterId,
+                    senderName,
+                    mediaData: {
+                        giftOrderId: gift.orderId,
+                        giftItemId: gift.itemId,
+                        giftName: gift.title,
+                        giftMerchantLabel: gift.source,
+                        giftPriceLabel: gift.value === "--" ? "" : gift.value,
+                        giftPreviewIcon: gift.previewIcon,
+                        giftTone: gift.tone,
+                        giftDeliveredAt: gift.deliveredAt,
+                        giftSentAt: formatRichTimeLabel(),
+                        senderName,
+                    },
+                });
+            } catch (e) {
+                console.warn("[backpack] 发送礼物卡片失败", e);
+            }
+        }
+    }, 0);
+}
+
+function formatRichTimeLabel(): string {
+    const now = new Date();
+    const mm = String(now.getMonth() + 1).padStart(2, "0");
+    const dd = String(now.getDate()).padStart(2, "0");
+    const hh = String(now.getHours()).padStart(2, "0");
+    const min = String(now.getMinutes()).padStart(2, "0");
+    return `${mm}/${dd} ${hh}:${min}`;
 }
 
 export function upsertImportedChatMessage(msg: ChatMessage): { message: ChatMessage; inserted: boolean } {

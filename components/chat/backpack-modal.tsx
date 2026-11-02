@@ -3,62 +3,68 @@
 // components/chat/backpack-modal.tsx
 // 原生背包 · 主界面
 //
-// 归属切换：我的背包 / 每个私聊角色的背包 / 每个群的礼物堆。
-// 「送给…」只出现在我的背包（列角色名）；角色背包与群礼物堆用「放入到…」。
+// 归属只有两种：我的背包 / 某个角色的背包（不含群聊）。
+// 顶部标题就是归属选择器，点一下弹角色列表；下面一行是搜索框。
+// 我的背包里点物品是「送给…」（列角色名，送出会发卡片），
+// 角色背包里是「放入到…」（转移，不发卡片）。
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
     Ban,
-    Eye,
+    Check,
     Gift,
     ListChecks,
     Package,
     Plus,
     RefreshCw,
+    Search,
     Sparkles,
     Trash2,
     X,
 } from "lucide-react";
 import {
-    ensureBackpackMigrated,
+    filterBackpackItems,
     loadBackpackItems,
     loadBackpackTargets,
     mutateBackpackItems,
     removeBackpackItems,
-    resetBackpackMigrationFlag,
-    updateBackpackItem,
 } from "@/lib/backpack-storage";
-import { BACKPACK_CHANGED_EVENT, type BackpackItem, type BackpackTransferTarget } from "@/lib/backpack-types";
+import { rescanShoppingOrders } from "@/lib/backpack-legacy";
+import { BACKPACK_CHANGED_EVENT, type BackpackItem, type BackpackTarget } from "@/lib/backpack-types";
 import { BackpackItemEditor } from "./backpack-item-editor";
 import { BackpackTransferPicker } from "./backpack-transfer-picker";
 
 export type BackpackDeliverRequest = {
     item: BackpackItem;
-    /** 目标角色会话 id */
-    targetSessionId: string;
-    /** 目标角色名，用于卡片标题与提示 */
+    /** 目标角色 id */
+    targetCharacterId: string;
+    /** 目标角色名，用于卡片与提示 */
     targetName: string;
 };
 
 type BackpackModalProps = {
-    /** 当前聊天会话，用于默认选中并决定送卡去向 */
+    /** 当前聊天会话，决定打开时默认查看谁的背包 */
     sessionId?: string;
+    /** 当前聊天的角色（私聊）——用于默认选中 */
+    currentCharacterId?: string;
     onClose: () => void;
-    /** 送出购物/背包物品给角色：由聊天室发一张礼物卡片 */
-    onDeliver?: (request: BackpackDeliverRequest) => void;
+    /** 送给角色：由聊天室转移归属并发送礼物卡片 */
+    onDeliver?: (request: BackpackDeliverRequest) => boolean;
     toast?: (text: string) => void;
 };
 
-function resolveDefaultTargetId(sessionId: string | undefined, targets: BackpackTransferTarget[]): string {
-    if (!sessionId) return "user";
-    const matched = targets.find(t => t.id === sessionId);
-    return matched ? matched.id : "user";
-}
-
-export function BackpackModal({ sessionId, onClose, onDeliver, toast }: BackpackModalProps) {
-    const [targets, setTargets] = useState<BackpackTransferTarget[]>([]);
+export function BackpackModal({
+    sessionId,
+    currentCharacterId,
+    onClose,
+    onDeliver,
+    toast,
+}: BackpackModalProps) {
+    const [targets, setTargets] = useState<BackpackTarget[]>([]);
     const [items, setItems] = useState<BackpackItem[]>([]);
     const [targetId, setTargetId] = useState<string>("user");
+    const [targetPickerOpen, setTargetPickerOpen] = useState(false);
+    const [query, setQuery] = useState("");
     const [menuOpen, setMenuOpen] = useState(false);
     const [manageMode, setManageMode] = useState(false);
     const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -66,7 +72,6 @@ export function BackpackModal({ sessionId, onClose, onDeliver, toast }: Backpack
     const [transferItem, setTransferItem] = useState<BackpackItem | null>(null);
     const [deliverItem, setDeliverItem] = useState<BackpackItem | null>(null);
     const [busy, setBusy] = useState(false);
-    const rootRef = useRef<HTMLDivElement>(null);
 
     const refresh = useCallback(() => {
         setItems(loadBackpackItems());
@@ -76,9 +81,12 @@ export function BackpackModal({ sessionId, onClose, onDeliver, toast }: Backpack
     useEffect(() => {
         const nextTargets = loadBackpackTargets();
         setTargets(nextTargets);
-        setTargetId(prev => (prev === "user" ? resolveDefaultTargetId(sessionId, nextTargets) : prev));
+        // 私聊进来默认看对方背包，其它情况看我的背包
+        setTargetId(currentCharacterId && nextTargets.some(t => t.id === currentCharacterId)
+            ? currentCharacterId
+            : "user");
         setItems(loadBackpackItems());
-    }, [sessionId]);
+    }, [currentCharacterId]);
 
     useEffect(() => {
         const handler = () => refresh();
@@ -90,15 +98,26 @@ export function BackpackModal({ sessionId, onClose, onDeliver, toast }: Backpack
         () => targets.find(t => t.id === targetId) ?? targets[0],
         [targets, targetId],
     );
-
     const viewingUser = targetId === "user";
-    const viewingGroup = currentTarget?.isGroup === true;
+    const targetTitle = currentTarget?.name ?? "我的背包";
 
     const visibleItems = useMemo(() => {
-        if (viewingUser) return items.filter(it => it.recipient === "user");
-        if (viewingGroup) return items.filter(it => it.recipient === "group" && it.sessionId === targetId);
-        return items.filter(it => it.recipient === "character" && it.sessionId === targetId);
-    }, [items, targetId, viewingUser, viewingGroup]);
+        const owned = filterBackpackItems(items, targetId);
+        const keyword = query.trim().toLowerCase();
+        if (!keyword) return owned;
+        return owned.filter(it => {
+            const haystack = [
+                it.title,
+                it.source,
+                it.note,
+                it.value,
+                it.date,
+                it.shopping?.merchantLabel,
+                it.shopping?.detail,
+            ].filter(Boolean).join(" ").toLowerCase();
+            return haystack.includes(keyword);
+        });
+    }, [items, targetId, query]);
 
     useEffect(() => {
         setSelected(new Set());
@@ -115,14 +134,12 @@ export function BackpackModal({ sessionId, onClose, onDeliver, toast }: Backpack
 
     const handleRescan = () => {
         setMenuOpen(false);
-        // 重新跑一遍迁移：把新到货的订单商品补进「我的背包」。
-        // 迁移按订单号+商品号去重，重复点不会产出重复物品。
+        // 把新到货的订单商品补进「我的背包」；按订单号+商品号去重，重复点不会重复入包
         setBusy(true);
         try {
-            resetBackpackMigrationFlag();
-            ensureBackpackMigrated();
+            const added = rescanShoppingOrders();
             refresh();
-            toast?.("已同步全部背包物品");
+            toast?.(added > 0 ? `收录了 ${added} 件新到货商品` : "已同步全部背包物品");
         } finally {
             setBusy(false);
         }
@@ -140,7 +157,9 @@ export function BackpackModal({ sessionId, onClose, onDeliver, toast }: Backpack
                 item.injected = inject;
             }
         });
-        toast?.(inject ? `已将选中的 ${selected.size} 件物品注入角色背包记忆` : `已取消选中的 ${selected.size} 件物品记忆`);
+        toast?.(inject
+            ? `已将选中的 ${selected.size} 件物品注入角色背包记忆`
+            : `已取消选中的 ${selected.size} 件物品记忆`);
         refresh();
     };
 
@@ -155,39 +174,27 @@ export function BackpackModal({ sessionId, onClose, onDeliver, toast }: Backpack
         refresh();
     };
 
-    const openDeliverPicker = (item: BackpackItem) => {
-        setDeliverItem(item);
-    };
-
-    const confirmDeliver = (target: BackpackTransferTarget) => {
-        if (!deliverItem || !onDeliver) return;
-        onDeliver({
+    const confirmDeliver = (target: BackpackTarget) => {
+        if (!deliverItem || !onDeliver) {
+            setDeliverItem(null);
+            return;
+        }
+        const ok = onDeliver({
             item: deliverItem,
-            targetSessionId: target.id,
+            targetCharacterId: target.id,
             targetName: target.rawName,
         });
-        setDeliverItem(null);
-        // 送出后物品转移到角色背包
-        updateBackpackItem(deliverItem.id, {
-            recipient: "character",
-            sessionId: target.id,
-            visibleTo: [],
-            injected: true,
-            timestamp: Date.now(),
-        });
+        if (ok) setDeliverItem(null);
         refresh();
     };
 
-    const emptyHint = viewingGroup
-        ? "群里还没有礼物。群成员送出的礼物会自动出现在这里"
+    const emptyHint = query.trim()
+        ? `没有找到与「${query.trim()}」相关的物品`
         : "背包空空如也，点左上菜单「添加物品」或「重新扫描」";
-
-    const batchOpColumns = viewingUser || viewingGroup ? 1 : 3;
 
     return (
         <div className="modal-overlay" data-ui="modal" onClick={onClose}>
             <div
-                ref={rootRef}
                 className="bp-modal"
                 onClick={e => {
                     e.stopPropagation();
@@ -206,7 +213,21 @@ export function BackpackModal({ sessionId, onClose, onDeliver, toast }: Backpack
                     >
                         <ListChecks />
                     </button>
-                    <span className="bp-header-title">背包</span>
+
+                    <button
+                        type="button"
+                        className="bp-title-btn"
+                        onClick={e => {
+                            e.stopPropagation();
+                            setTargetPickerOpen(true);
+                        }}
+                    >
+                        <span className="bp-header-title">{targetTitle}</span>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                    </button>
+
                     <button type="button" className="bp-icon-btn bp-header-right" aria-label="关闭" onClick={onClose}>
                         <X />
                     </button>
@@ -236,17 +257,19 @@ export function BackpackModal({ sessionId, onClose, onDeliver, toast }: Backpack
                     )}
                 </div>
 
-                <div className="bp-select-bar">
-                    <span className="bp-select-label">正在查看</span>
-                    <select
-                        className="bp-select"
-                        value={targetId}
-                        onChange={e => setTargetId(e.target.value)}
-                    >
-                        {targets.map(t => (
-                            <option key={t.id} value={t.id}>{t.name}</option>
-                        ))}
-                    </select>
+                <div className="bp-search-bar">
+                    <Search size={14} strokeWidth={1.8} className="bp-search-icon" />
+                    <input
+                        className="bp-search-input"
+                        value={query}
+                        onChange={e => setQuery(e.target.value)}
+                        placeholder={viewingUser ? "搜索我的物品" : "搜索他背包里的物品"}
+                    />
+                    {query && (
+                        <button type="button" className="bp-search-clear" onClick={() => setQuery("")} aria-label="清空搜索">
+                            <X size={13} strokeWidth={2.2} />
+                        </button>
+                    )}
                 </div>
 
                 <div className="bp-list">
@@ -259,27 +282,10 @@ export function BackpackModal({ sessionId, onClose, onDeliver, toast }: Backpack
                         visibleItems.map(item => {
                             const isSelected = selected.has(item.id);
                             const visCount = Array.isArray(item.visibleTo) ? item.visibleTo.filter(Boolean).length : 0;
-                            let badge: { kind?: string; text: string; title: string } | null = null;
-                            if (item.recipient === "character" && item.injected) {
-                                badge = { text: "✓", title: "已注入角色背包记忆" };
-                            } else if (item.recipient === "user" && visCount > 0) {
-                                badge = { kind: "eye", text: String(visCount), title: `${visCount} 个角色可见` };
-                            } else if (item.recipient === "group") {
-                                badge = {
-                                    kind: "group",
-                                    text: visCount > 0 ? String(visCount) : "群",
-                                    title: `群礼物堆${visCount > 0 ? ` · ${visCount} 个角色可见` : ""}`,
-                                };
-                            }
+                            const showBadge = item.recipient === "character" && item.injected;
 
                             const noteText = item.note && item.note.trim();
-                            let subText: string;
-                            if (item.recipient === "group") {
-                                const giver = item.giver || item.source || "群友";
-                                subText = noteText ? `由 ${giver} 赠予 · ${noteText}` : `由 ${giver} 赠予`;
-                            } else {
-                                subText = noteText || item.source || "未标注";
-                            }
+                            let subText = noteText || item.source || "未标注";
                             if (item.recipient === "user" && !manageMode && visCount === 0 && !noteText) {
                                 subText = "尚未让任何角色知道 · 点开可设置";
                             }
@@ -290,11 +296,8 @@ export function BackpackModal({ sessionId, onClose, onDeliver, toast }: Backpack
                                     className="bp-item"
                                     data-selected={isSelected ? "true" : undefined}
                                     onClick={() => {
-                                        if (manageMode) {
-                                            toggleSelect(item.id);
-                                        } else {
-                                            setEditorState({ item });
-                                        }
+                                        if (manageMode) toggleSelect(item.id);
+                                        else setEditorState({ item });
                                     }}
                                 >
                                     {manageMode && (
@@ -314,10 +317,8 @@ export function BackpackModal({ sessionId, onClose, onDeliver, toast }: Backpack
                                         ) : (
                                             <Gift size={18} strokeWidth={1.6} />
                                         )}
-                                        {badge && (
-                                            <span className="bp-item-badge" data-kind={badge.kind} title={badge.title}>
-                                                {badge.text}
-                                            </span>
+                                        {showBadge && (
+                                            <span className="bp-item-badge" title="已注入角色背包记忆">✓</span>
                                         )}
                                     </div>
                                     <div className="bp-item-body">
@@ -358,8 +359,8 @@ export function BackpackModal({ sessionId, onClose, onDeliver, toast }: Backpack
                                 退出管理
                             </button>
                         </div>
-                        <div className="bp-batch-ops" style={{ gridTemplateColumns: `repeat(${batchOpColumns}, 1fr)` }}>
-                            {!viewingUser && !viewingGroup && (
+                        <div className="bp-batch-ops" style={{ gridTemplateColumns: `repeat(${viewingUser ? 1 : 3}, 1fr)` }}>
+                            {!viewingUser && (
                                 <>
                                     <button
                                         type="button"
@@ -381,23 +382,6 @@ export function BackpackModal({ sessionId, onClose, onDeliver, toast }: Backpack
                                     </button>
                                 </>
                             )}
-                            {(viewingUser || viewingGroup) && (
-                                <button
-                                    type="button"
-                                    className="bp-batch-op"
-                                    style={{ background: "color-mix(in srgb, #3b82f6 12%, transparent)", color: "#3b82f6" }}
-                                    onClick={() => {
-                                        if (selected.size === 0) {
-                                            toast?.("未勾选任何物品");
-                                            return;
-                                        }
-                                        toast?.("可见范围设置请在物品详情里逐件调整");
-                                    }}
-                                >
-                                    <Eye />
-                                    <span>可见角色</span>
-                                </button>
-                            )}
                             <button
                                 type="button"
                                 className="bp-batch-op"
@@ -417,7 +401,6 @@ export function BackpackModal({ sessionId, onClose, onDeliver, toast }: Backpack
                         isNew={editorState.item === null}
                         targetId={targetId}
                         targetName={currentTarget?.rawName ?? ""}
-                        isGroupTarget={viewingGroup}
                         isUserTarget={viewingUser}
                         onClose={() => setEditorState(null)}
                         onSaved={() => {
@@ -425,7 +408,9 @@ export function BackpackModal({ sessionId, onClose, onDeliver, toast }: Backpack
                             refresh();
                         }}
                         onTransfer={item => {
-                            setTransferItem(item);
+                            // 我的背包 → 「送给…」（发卡片）；角色背包 → 「放入到…」（纯转移）
+                            if (item.recipient === "user") setDeliverItem(item);
+                            else setTransferItem(item);
                         }}
                         toast={toast}
                     />
@@ -456,8 +441,48 @@ export function BackpackModal({ sessionId, onClose, onDeliver, toast }: Backpack
                     />
                 )}
 
-                {/* 首屏无物品时给个进入点，避免用户以为坏了 */}
-                {visibleItems.length === 0 && !manageMode && (
+                {targetPickerOpen && (
+                    <div className="bp-sub-overlay" onClick={() => setTargetPickerOpen(false)}>
+                        <div className="bp-sub-panel" onClick={e => e.stopPropagation()}>
+                            <div className="bp-sub-head">
+                                <div>
+                                    <div className="bp-sub-title">查看谁的背包</div>
+                                    <div className="bp-sub-hint">群聊不在其中，礼物一律归到具体角色</div>
+                                </div>
+                            </div>
+                            <div className="bp-sub-list">
+                                {targets.map(t => (
+                                    <div
+                                        key={t.id}
+                                        className="bp-pick-row"
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={() => {
+                                            setTargetId(t.id);
+                                            setTargetPickerOpen(false);
+                                        }}
+                                        onKeyDown={e => {
+                                            if (e.key === "Enter" || e.key === " ") {
+                                                setTargetId(t.id);
+                                                setTargetPickerOpen(false);
+                                            }
+                                        }}
+                                    >
+                                        <span className="bp-pick-name">{t.name}</span>
+                                        {t.id === targetId && <Check size={14} strokeWidth={2.2} className="bp-pick-check-mark" />}
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="bp-sub-foot">
+                                <button type="button" className="bp-btn" data-variant="ghost" onClick={() => setTargetPickerOpen(false)}>
+                                    关闭
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {visibleItems.length === 0 && !manageMode && !query.trim() && (
                     <div style={{ display: "flex", justifyContent: "center", padding: "0 16px 14px" }}>
                         <button
                             type="button"
@@ -470,9 +495,22 @@ export function BackpackModal({ sessionId, onClose, onDeliver, toast }: Backpack
                         </button>
                     </div>
                 )}
+
+                {visibleItems.length === 0 && !manageMode && query.trim() && (
+                    <div style={{ display: "flex", justifyContent: "center", padding: "0 16px 14px" }}>
+                        <button type="button" className="bp-btn" data-variant="ghost" onClick={() => setQuery("")}>
+                            清空搜索
+                        </button>
+                    </div>
+                )}
+
             </div>
         </div>
     );
 }
 
-
+/** 供物品详情弹窗决定底部按钮文案 */
+export function resolveTransferButtonLabel(item: BackpackItem, viewingUser: boolean): string {
+    if (viewingUser || item.recipient === "user") return "送给…";
+    return "放入到…";
+}

@@ -218,12 +218,93 @@
   z-index: 2;
 }
 
-.bp-item-badge[data-kind="eye"] {
-  background: #3b82f6;
+/* 标题即归属选择器 */
+.bp-title-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  justify-self: center;
+  max-width: 100%;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--c-text-title);
+  cursor: pointer;
 }
 
-.bp-item-badge[data-kind="group"] {
-  background: #8b5cf6;
+.bp-title-btn:active {
+  background: var(--c-input);
+}
+
+.bp-title-btn svg {
+  flex-shrink: 0;
+  opacity: 0.55;
+}
+
+.bp-title-btn .bp-header-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 搜索框 */
+.bp-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 16px 4px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--c-input);
+  border: 0.5px solid var(--c-panel-border);
+}
+
+.bp-search-icon {
+  flex-shrink: 0;
+  width: calc(12.6px * var(--app-text-scale, 1));
+  height: calc(12.6px * var(--app-text-scale, 1));
+  color: var(--c-icon);
+}
+
+.bp-search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--c-text);
+  font-size: calc(11.7px * var(--app-text-scale, 1));
+  font-family: inherit;
+  outline: none;
+}
+
+.bp-search-input::placeholder {
+  color: var(--c-icon);
+}
+
+.bp-search-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--c-icon);
+  cursor: pointer;
+}
+
+.bp-search-clear svg {
+  width: calc(11.7px * var(--app-text-scale, 1));
+  height: calc(11.7px * var(--app-text-scale, 1));
+}
+
+.bp-pick-check-mark {
+  flex-shrink: 0;
+  color: var(--c-success);
+  width: calc(12.6px * var(--app-text-scale, 1));
+  height: calc(12.6px * var(--app-text-scale, 1));
 }
 
 .bp-item-body {

@@ -17,7 +17,7 @@ import { formatCharacterRelationsForPrompt } from "./character-world-storage";
 import { buildCharacterTimeContext, buildGroupTimeContext, type CharacterTimeContext } from "./character-time";
 import { formatShoppingPaymentRequestHistory } from "./shopping-payment-request";
 import { buildGroupAdminBracketText } from "./group-admin";
-import { buildBackpackPromptForSession } from "./backpack-prompt";
+import { buildBackpackPromptForCharacter } from "./backpack-prompt";
 
 export type LLMMessageRole = "system" | "user" | "assistant" | "tool";
 export type LLMToolCallPayload = { id: string; name: string; args: Record<string, unknown>; thoughtSignature?: string };
@@ -967,13 +967,12 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
     }
 
     // --- 随身背包（物品清单 + 角色可写入的操作标记）---
-    // 不绑定预设条目：物品是会话状态，预设里没有对应宏也该让角色知道。
-    // 调用方不传 sessionId 时从历史推断——历史为空的新会话本来也没有背包内容可注入。
+    // 不绑定预设条目：物品是角色状态，预设里没有对应宏也该让角色知道。
+    // 按「当前说话的角色」取一份：群聊里每个成员各自拿到自己那份（见群聊分支）。
     let backpackContext = input.backpackContext;
     if (backpackContext === undefined) {
-        const resolvedSessionId = input.sessionId ?? history[0]?.sessionId ?? "";
         try {
-            backpackContext = resolvedSessionId ? buildBackpackPromptForSession(resolvedSessionId) : "";
+            backpackContext = character?.id ? buildBackpackPromptForCharacter(character.id) : "";
         } catch {
             backpackContext = "";
         }
@@ -2090,7 +2089,17 @@ export function assembleGroupPromptPayload(input: GroupAssemblerInput): LLMMessa
             `当前该角色状态值：${formatStateValuesForPrompt(m.currentStateValues)}`,
             "</current_state>",
         ].join("\n");
-        const memberContent = postProcessTrim([stateSection, ...sections].filter(Boolean).join("\n\n")).trim();
+        // 背包按成员逐份注入：每个角色只看到自己的物品与「他知道的用户物品」，
+        // 群聊里没有公共礼物堆，避免模型把别人的东西当成自己的。
+        let backpackSection = "";
+        if (input.backpackContext === undefined) {
+            try {
+                backpackSection = buildBackpackPromptForCharacter(char.id, { memberName: char.name });
+            } catch {
+                backpackSection = "";
+            }
+        }
+        const memberContent = postProcessTrim([stateSection, ...sections, backpackSection].filter(Boolean).join("\n\n")).trim();
         if (memberContent) {
             blocks.push({
                 text: `<member name="${char.name}">\n${memberContent}\n</member>`,
