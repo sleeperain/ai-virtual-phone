@@ -233,16 +233,26 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
         return () => window.removeEventListener("chat-hide-tabbar", onHide);
     }, []);
 
-    // 系统返回手势：打开的会话房间算一层，退它回会话列表（再退一层由桌面负责关掉微信）
+    // ── 系统返回手势的层级（先注册的在栈底）──
+    // 1) 不在会话里但停在别的 tab 上：先回「消息」列表，而不是直接退出微信
+    const inRoom = Boolean(activeSession || activeMascot);
     useEffect(() => {
-        if (!activeSession && !activeMascot) return;
+        // 房间层和 tab 层互斥，避免两层叠在一起导致滑一次退两层
+        if (inRoom) return;
+        if (activeTab === "messages") return;
+        return registerBackLayer(() => setActiveTab("messages"));
+    }, [inRoom, activeTab]);
+
+    // 2) 打开的会话房间：退它回会话列表（再退一层由桌面负责关掉微信）
+    useEffect(() => {
+        if (!inRoom) return;
         return registerBackLayer(() => {
             setActiveSession(null);
             setActiveMascot(false);
         });
         // activeSession 对象每次加载都可能是新引用，按 id 判断即可
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeSession?.id, activeMascot]);
+    }, [inRoom, activeSession?.id, activeMascot]);
 
     // Wait for IndexedDB hydration before rendering
     if (!dbReady) return null;
