@@ -164,7 +164,30 @@ function syncSentinel(): void {
   else dropSentinel();
 }
 
-/** 延后到 React commit 之后再对齐哨兵，避免读到过期的组件状态 */
+/**
+ * 立刻对齐哨兵（同步执行）。
+ * popstate 里退完一层必须用这个，不能用 scheduleSync：layers / base 是我们自己的
+ * 模块级数据，popstate 那一刻就已经是最新值，不依赖 React 重渲染，所以同步补哨兵是安全的；
+ * 而 setTimeout(0) 在系统后退手势收尾的时机里会被明显推迟甚至不执行，
+ * 一旦没补上，用户下一次滑动就是浏览器真实后退 → 整页大退（现象：只能退两级）。
+ */
+function syncNow(): void {
+  window.clearTimeout(syncTimer);
+  syncTimer = 0;
+
+  // 第一次立刻对齐：只依赖我们的模块级栈，保证哨兵绝不缺席（这是防大退的底线）
+  syncSentinel();
+
+  // 第二次延后再对齐：退完一层时 DOM 还停留在旧页面，上面的兜底选择器可能
+  // 误判出「还有返回箭头」而多压一条哨兵。等 React 提交完再对一次，
+  // 把可能多压的那条撤掉。两次都幂等，重复调用没有副作用。
+  syncTimer = window.setTimeout(() => {
+    syncTimer = 0;
+    syncSentinel();
+  }, 0);
+}
+
+/** 延后到 React commit 之后再对齐（供 effect 触发的场景用，react 状态可能还没提交） */
 function scheduleSync(): void {
   window.clearTimeout(syncTimer);
   syncTimer = window.setTimeout(() => {
@@ -177,11 +200,14 @@ function handlePopState(): void {
   const state = getBackState();
 
   if (state.releasing) {
-    // 这次后退是我们自己撤哨兵引起的，不是用户手势
+    // 这次后退是我们自己撤哨兵引起的，不是用户手势。
+    // 但撤哨兵期间如果又有新的可退目标出现（比如刚好打开了 APP），
+    // 补哨兵会被 releasing 拦下 —— 所以这里必须再对齐一次，否则哨兵就永久丢了。
     state.releasing = false;
     window.clearTimeout(releasingTimer);
     releasingTimer = 0;
     debug("忽略自撤哨兵的 popstate");
+    syncNow();
     return;
   }
 
@@ -190,23 +216,25 @@ function handlePopState(): void {
     base: Boolean(state.base),
   });
 
+  // 注意：这里全部用 syncNow() 同步补哨兵，绝不能用延时版本。
+  // 延时版本会在系统手势里丢时机，导致下一次滑动直接大退。
   const layer = state.layers.pop();
   if (layer) {
     runHandler(layer.handler);
-    scheduleSync();
+    syncNow();
     return;
   }
 
   const backButton = findVisibleBackButton();
   if (backButton) {
     backButton.click();
-    scheduleSync();
+    syncNow();
     return;
   }
 
   if (state.base) {
     runHandler(state.base);
-    scheduleSync();
+    syncNow();
     return;
   }
 
