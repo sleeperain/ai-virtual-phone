@@ -39,6 +39,8 @@ export type MemoryEventBox = {
     note?: string;
     status: EventBoxStatus;
     keywords?: string[];
+    /** 事件盒重要性（0-1，界面显示为 1-10） */
+    importance?: number;
     createdAt: string;
     updatedAt: string;
     /** 摘要记忆条目在 memories 表里的 id */
@@ -72,6 +74,9 @@ function normalizeBox(raw: unknown, characterId: string): MemoryEventBox | null 
     if (typeof item.id !== "string" || !item.id) return null;
     if (typeof item.title !== "string" || !item.title.trim()) return null;
     const now = new Date().toISOString();
+    const rawImp = typeof item.importance === "number" && Number.isFinite(item.importance)
+        ? (item.importance > 1 ? Math.max(0.1, Math.min(1, item.importance / 10)) : Math.max(0.1, Math.min(1, item.importance)))
+        : undefined;
     return {
         id: item.id,
         characterId,
@@ -79,6 +84,7 @@ function normalizeBox(raw: unknown, characterId: string): MemoryEventBox | null 
         note: typeof item.note === "string" && item.note.trim() ? item.note.trim() : undefined,
         status: normalizeStatus(item.status),
         keywords: Array.isArray(item.keywords) ? item.keywords.map(String).map(s => s.trim()).filter(Boolean) : undefined,
+        ...(rawImp !== undefined ? { importance: Number(rawImp.toFixed(2)) } : {}),
         createdAt: typeof item.createdAt === "string" ? item.createdAt : now,
         updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : now,
         digestEntryId: typeof item.digestEntryId === "string" && item.digestEntryId ? item.digestEntryId : undefined,
@@ -115,9 +121,13 @@ export function createEventBox(
     status: EventBoxStatus = "active",
     note?: string,
     keywords?: string[],
+    importance?: number,
 ): MemoryEventBox {
     const now = new Date().toISOString();
     const cleanKws = Array.isArray(keywords) ? keywords.map(s => s.trim()).filter(Boolean) : [];
+    const normImp = typeof importance === "number" && Number.isFinite(importance)
+        ? Number((importance > 1 ? Math.max(0.1, Math.min(1, importance / 10)) : Math.max(0.1, Math.min(1, importance))).toFixed(2))
+        : 0.8;
     const box: MemoryEventBox = {
         id: `box_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         characterId,
@@ -125,6 +135,7 @@ export function createEventBox(
         note: note?.trim() || undefined,
         status,
         ...(cleanKws.length > 0 ? { keywords: cleanKws } : {}),
+        importance: normImp,
         createdAt: now,
         updatedAt: now,
     };
@@ -136,7 +147,7 @@ export function createEventBox(
 export function updateEventBox(
     characterId: string,
     boxId: string,
-    patch: Partial<Pick<MemoryEventBox, "title" | "note" | "status" | "keywords" | "digestEntryId" | "digestHistory">>,
+    patch: Partial<Pick<MemoryEventBox, "title" | "note" | "status" | "keywords" | "importance" | "digestEntryId" | "digestHistory">>,
 ): MemoryEventBox[] {
     const now = new Date().toISOString();
     const next = loadEventBoxes(characterId).map(box =>
@@ -288,23 +299,30 @@ export async function unarchiveSingleBoxEntry(entry: MemoryEntry): Promise<Memor
 
 // ── 手动总结事件盒（生成/更新「先前事件的总结」+ 自动向量化 + 原记忆归档）──
 
-export const DEFAULT_EVENT_BOX_SUMMARY_PROMPT = `你是一个角色记忆整理助手。下面是{{char}}与用户围绕同一事件脉络的记忆记录。
-请将它们整合总结为一段脉络清晰、事实准确的阶段性事件总结，并根据整合后的完整事件进展更新一个精准的事件盒标题。
+export const DEFAULT_EVENT_BOX_SUMMARY_PROMPT = `你是一个擅长梳理叙事脉络的角色记忆整理专家。下面是{{char}}与用户围绕同一事件脉络的记忆记录。
+请对这些记录进行**深度提炼与因果重构**，写成一段逻辑连贯、主线清晰的事件总结，并根据完整脉络更新精准的事件盒标题与重要性评分。
 
 角色：{{char}}
 当前事件盒名称：{{title}}
 时间跨度：{{earliest}} 至 {{latest}}
 {{previousDigestSection}}
-本次需要并入的事件记录（按时间从早到晚）：
+本次需要整合的事件记录（按时间从早到晚）：
 {{events}}
 
-严格要求：
-1. **融合先前总结与新进展**：如果有「先前事件的总结」，必须保留其中的关键背景、约定与结论，并将新事件的发展自然衔接进去；若新进展推翻或改变了旧状态，以最新进展为准。
-2. **同步更新事件标题**：根据整合后的前因后果与最新进展，提炼一个 5～14 字的中文事件标题（必须用动宾短语或主谓短语点明具体发生了什么事，如“筹备海边生日惊喜”、“胃痛急诊与悉心照料”；**严禁使用“XX与XX”、“XX和XX”、“关于XX”这种名词堆砌格式**，不要带人名作并列主语，不要加引号或书名号）。
-3. **严禁编造**：只整合已有记录，绝不虚构任何未发生的细节。
-4. **正文不写具体日期时间戳**（系统会自动标注时间跨度）。
-5. **第三人称客观叙述**，控制在 100～260 字之间，一段话讲清楚前因后果与当前状态。
-6. **末尾固定输出三行元数据**（用于更新标题、检索与向量化）：
+严格要求（核心铁律）：
+1. **严禁机械拼接与原样复述**：
+   - 绝对禁止把各条记录里的句子按顺序抄写或生硬拼接在一起！
+   - 必须先通读全部记录，找出「这条事件的核心主线是什么」，用统一的叙事语言**重写整合**，合并重复动作与反复拉扯的过程，压缩为精炼的叙事脉络。
+2. **串联前因后果（起因 → 经过/转折 → 结果与当前状态）**：
+   - 明确交代事情因何而起（起因/背景）、中间经历了怎样的推进或转折（关键行动、分歧或互动）、最终达成了什么结果或约定（当前定论与后续影响）。
+   - 如果有「先前事件的总结」，需将其与新进展打通重构为一篇完整的连贯脉络；若新进展推翻或改变了旧状态，直接以最新进展修正结论。
+3. **果断剔除无关枝节与噪音**：
+   - 单条日常记忆中往往夹杂着顺带提及的闲聊、与本事件主线无关的琐碎插曲、一时的情绪寒暄或场景枝节（例如：讨论正事时顺便聊起晚饭吃什么、随口开的一句无关玩笑等）。
+   - **凡是不影响该事件核心起因、推进转折与最终结果的支线细节，必须彻底剔除**，只保留推动主线发展的关键事实、核心约定与实质性的情感/关系变化。
+4. **同步更新事件标题**：根据重构后的核心主线，提炼一个 5～14 字的中文事件标题（必须用动宾短语或主谓短语点明具体发生了什么事，如“筹备海边生日惊喜”、“胃痛急诊与悉心照料”；**严禁使用“XX与XX”、“XX和XX”、“关于XX”这种名词堆砌格式**，不要带人名作并列主语，不要加引号或书名号）。
+5. **重新评估重要性（1-10整数）**：根据该事件整条脉络对角色关系、核心设定或关键约定的实际影响程度，客观给出 1-10 的重要性评分（日常小事推进 5-6，重要约定/深层互动 7-8，关系重大转折/关键里程碑 9-10）。
+6. **严禁编造 & 不写具体时间戳**：只基于已有记录提炼，绝不虚构未发生的细节；正文中不要出现具体日期或时间字样（系统会自动记录时间跨度）；使用第三人称客观叙述，控制在 100～240 字之间，一段话讲透前因后果。
+7. **末尾固定输出三行元数据**（用于同步更新标题、重要性与检索向量）：
 **事件标题**：更新后的事件标题
 **重要性**：（1-10的整数）
 **检索关键词**：关键词1、关键词2、关键词3、关键词4`;
@@ -432,12 +450,15 @@ export async function summarizeEventBoxManually(
         ...allMemberEntries.flatMap(readEntryKeywords),
     ]).slice(0, 10);
 
-    // 重要性取盒内最高重要性与模型评分的较大值
+    // 每次重新总结都对应生成并修改重要性：优先采用本次模型根据完整事件脉络评估出的重要性，缺失时才回退盒内成员最高值
     const maxMemberImp = allMemberEntries.reduce(
         (m, e) => Math.max(m, Number.isFinite(e.importance) ? e.importance : 0.8),
         0.8,
     );
-    const finalImportance = Math.max(maxMemberImp, parsedMeta.importance ?? 0.85);
+    const rawFinalImp = typeof parsedMeta.importance === "number" && Number.isFinite(parsedMeta.importance)
+        ? parsedMeta.importance
+        : (typeof box.importance === "number" && Number.isFinite(box.importance) ? box.importance : maxMemberImp);
+    const finalImportance = Math.max(0.1, Math.min(1, Number(rawFinalImp.toFixed(2))));
 
     // 自动做好向量化（Embedding）
     const embeddingInput = combinedKeywords.length > 0
@@ -517,6 +538,7 @@ export async function summarizeEventBoxManually(
 
     updateEventBox(characterId, box.id, {
         title: resolvedTitle,
+        importance: finalImportance,
         digestEntryId: digestId,
         digestHistory: nextHistory,
         keywords: combinedKeywords,

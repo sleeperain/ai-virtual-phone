@@ -393,6 +393,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const [boxDialog, setBoxDialog] = useState<{
         boxId?: string;
         title: string;
+        importance: number; // 1-10
         keywordsText: string;
         summaryText?: string;
         pendingEntryId?: string;
@@ -573,6 +574,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             .map(s => s.trim())
             .filter(Boolean);
         const cleanSummary = (boxDialog.summaryText ?? "").trim();
+        const normalizedBoxImp = Math.max(0.1, Math.min(1, Number(((boxDialog.importance || 8) / 10).toFixed(2))));
         const pendingEntryId = boxDialog.pendingEntryId;
         setSavingBoxDialog(true);
         try {
@@ -618,7 +620,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                             type: "long_term",
                             content: finalBody,
                             embedding,
-                            importance: digestEntry?.importance ?? 0.85,
+                            importance: normalizedBoxImp,
                             accessCount: digestEntry?.accessCount ?? 0,
                             createdAt: digestEntry?.createdAt ?? chronologicAll[0]?.createdAt ?? now,
                             updatedAt: now,
@@ -658,6 +660,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
 
                 const next = updateEventBox(selectedCharId, boxDialog.boxId, {
                     title: cleanTitle,
+                    importance: normalizedBoxImp,
                     keywords: parsedKws,
                     ...(nextDigestId ? { digestEntryId: nextDigestId } : {}),
                 });
@@ -665,7 +668,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                 await loadDetailData(selectedCharId);
                 showNotice("事件盒与总结内容已更新");
             } else {
-                const created = createEventBox(selectedCharId, cleanTitle, "active", undefined, parsedKws);
+                const created = createEventBox(selectedCharId, cleanTitle, "active", undefined, parsedKws, normalizedBoxImp);
                 setBoxes(loadEventBoxes(selectedCharId));
                 if (pendingEntryId) {
                     const target = longTermEntries.find(e => e.id === pendingEntryId);
@@ -1974,7 +1977,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                         <div className="mem-entry-toolbar" style={{ flexWrap: "wrap" }}>
                                             <button
                                                 className="mem-entry-add-btn"
-                                                onClick={() => setBoxDialog({ title: "", keywordsText: "" })}
+                                                onClick={() => setBoxDialog({ title: "", importance: 8, keywordsText: "" })}
                                             >
                                                 <Plus size={15} strokeWidth={1.8} />
                                                 <span>新建事件盒</span>
@@ -2014,7 +2017,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                             <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
                                                 <button
                                                     className="mem-empty-add-btn"
-                                                    onClick={() => setBoxDialog({ title: "", keywordsText: "" })}
+                                                    onClick={() => setBoxDialog({ title: "", importance: 8, keywordsText: "" })}
                                                 >
                                                     <Plus size={14} />
                                                     <span>新建事件盒</span>
@@ -2045,6 +2048,24 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                     ? (digestEntry.metadata.keywords as unknown[]).map(String)
                                                     : []);
                                             const boxSpan = formatBoxSpan(allMemberEntries);
+                                            const maxMemberImp = allMemberEntries.reduce(
+                                                (m, e) => Math.max(m, Number.isFinite(e.importance) ? e.importance : 0.8),
+                                                0.8,
+                                            );
+                                            const rawBoxImp = digestEntry && Number.isFinite(digestEntry.importance)
+                                                ? digestEntry.importance
+                                                : (typeof box.importance === "number" && Number.isFinite(box.importance) ? box.importance : maxMemberImp);
+                                            const boxImportanceScore = Math.max(1, Math.min(10, Math.round(rawBoxImp * 10)));
+                                            const boxAccessCount = digestEntry
+                                                ? (typeof digestEntry.accessCount === "number"
+                                                    ? digestEntry.accessCount
+                                                    : (typeof digestEntry.metadata?.accessCount === "number" ? Number(digestEntry.metadata.accessCount) : 0))
+                                                : allMemberEntries.reduce((sum, e) => {
+                                                    const c = typeof e.accessCount === "number"
+                                                        ? e.accessCount
+                                                        : (typeof e.metadata?.accessCount === "number" ? Number(e.metadata.accessCount) : 0);
+                                                    return sum + c;
+                                                }, 0);
 
                                             return (
                                                 <div
@@ -2110,6 +2131,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                                                 setBoxDialog({
                                                                                     boxId: box.id,
                                                                                     title: box.title,
+                                                                                    importance: boxImportanceScore,
                                                                                     keywordsText: boxKeywords.join("、"),
                                                                                     summaryText: digestClean,
                                                                                 });
@@ -2143,17 +2165,30 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                         </div>
                                                     )}
 
-                                                    {/* 第四行：罗列检索关键词（无“检索关键词：”前缀） */}
-                                                    {boxKeywords.length > 0 && (
-                                                        <div className="mem-keywords-row">
-                                                            {boxKeywords.map((kw, idx) => (
-                                                                <span key={idx} className="mem-keyword-chip" style={{ borderRadius: 5 }}>{kw}</span>
-                                                            ))}
+                                                    {/* 第四行：重要性 + 访问次数 + 罗列检索关键词 */}
+                                                    <div className="mem-structured-footer">
+                                                        <div
+                                                            className="mem-stats-row"
+                                                            style={{ display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 10 }}
+                                                        >
+                                                            <span className="mem-stat-pill" style={{ background: "transparent", border: "none", padding: 0 }}>
+                                                                重要性 <strong>{boxImportanceScore}/10</strong>
+                                                            </span>
+                                                            <span className="mem-stat-pill" style={{ background: "transparent", border: "none", padding: 0 }}>
+                                                                访问 <strong>{boxAccessCount}</strong> 次
+                                                            </span>
                                                         </div>
-                                                    )}
+                                                        {boxKeywords.length > 0 && (
+                                                            <div className="mem-keywords-row">
+                                                                {boxKeywords.map((kw, idx) => (
+                                                                    <span key={idx} className="mem-keyword-chip" style={{ borderRadius: 5 }}>{kw}</span>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </div>
 
                                                     {/* 第五行：点击展开/收起 {{条数}} 条关联事件（使用 ChevronRight ">" SVG 图标） */}
-                                                    <div className="mem-structured-footer" style={{ paddingTop: 4 }}>
+                                                    <div className="mem-structured-footer" style={{ paddingTop: 2 }}>
                                                         <div className="mem-stats-row" style={{ display: "flex", alignItems: "center", justifyContent: "flex-start" }}>
                                                             <span
                                                                 className="mem-stat-pill"
@@ -2616,7 +2651,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                                 type="button"
                                                                 className="ui-chip"
                                                                 style={{ fontSize: 11, padding: "4px 10px" }}
-                                                                onClick={() => setBoxDialog({ title: "", keywordsText: "" })}
+                                                                onClick={() => setBoxDialog({ title: "", importance: 8, keywordsText: "" })}
                                                             >
                                                                 + 新建事件盒
                                                             </button>
@@ -2643,7 +2678,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                     );
                 })()}
 
-                {/* 事件盒：新建 / 编辑弹窗（支持修改事件盒标题、阶段总结正文与检索关键词） */}
+                {/* 事件盒：新建 / 编辑弹窗（支持修改事件盒标题、阶段总结正文、重要性与检索关键词） */}
                 {boxDialog && (
                     <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={() => !savingBoxDialog && setBoxDialog(null)}>
                         <div className="modal-sheet mem-edit-sheet" data-ui="modal-sheet" onClick={ev => ev.stopPropagation()}>
@@ -2689,6 +2724,19 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                         />
                                     </div>
                                 )}
+                                <div className="mem-edit-field-row">
+                                    <label className="mem-edit-field-label">重要性：{boxDialog.importance}/10</label>
+                                    <input
+                                        type="range"
+                                        min={1}
+                                        max={10}
+                                        step={1}
+                                        value={boxDialog.importance}
+                                        disabled={savingBoxDialog}
+                                        onChange={e => setBoxDialog(prev => prev ? { ...prev, importance: Number(e.target.value) } : prev)}
+                                        className="ui-slider"
+                                    />
+                                </div>
                                 <div className="mem-edit-field-row">
                                     <label className="mem-edit-field-label">检索关键词</label>
                                     <input
@@ -2753,7 +2801,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                             onClick={() => {
                                                 const pid = boxMoveEntryId;
                                                 setBoxMoveEntryId(null);
-                                                setBoxDialog({ title: "", keywordsText: "", pendingEntryId: pid });
+                                                setBoxDialog({ title: "", importance: 8, keywordsText: "", pendingEntryId: pid });
                                             }}
                                         >
                                             <Plus size={18} />
