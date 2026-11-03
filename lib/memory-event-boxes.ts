@@ -652,7 +652,29 @@ export type SmartBoxSuggestion = {
     latest: string;
 };
 
-function calcEntryPairSimilarity(a: MemoryEntry, b: MemoryEntry): number {
+/** 泛化日常词过滤：这些词几乎每条日常互动都会出现，绝不能当成“同一具体事件”的判定依据 */
+const GENERIC_DAILY_KEYWORDS = new Set([
+    "睡觉", "休息", "晚安", "早安", "午睡", "困倦", "熬夜", "起床",
+    "生气", "哄人", "撒娇", "委屈", "吃醋", "退让", "心软", "调侃", "拌嘴", "打趣", "安慰", "关心", "心疼", "嫌弃", "烦躁",
+    "聊天", "日常", "消息", "微信", "关心", "陪伴", "思念", "想念", "亲密", "暧昧", "互动",
+    "吃饭", "喝水", "外卖", "下课", "下班", "上课", "上班",
+]);
+
+function filterSpecificKeywords(kws: string[], characterName?: string): string[] {
+    const charClean = (characterName ?? "").trim();
+    return kws.filter(k => {
+        const t = k.trim();
+        if (t.length < 2) return false;
+        if (GENERIC_DAILY_KEYWORDS.has(t)) return false;
+        if (charClean && (t === charClean || charClean.includes(t))) return false;
+        return true;
+    });
+}
+
+function stripNamesAndGenericWords(text: string, characterName?: string): string {
+    let out = stripMemoryStructuredSections(text) || text;
+    if (characterName && characterName.trim().length >= 2) {
+        const escaped = characterName.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\function calcEntryPairSimilarity(a: MemoryEntry, b: MemoryEntry): number {
     const embA = Array.isArray(a.embedding) && a.embedding.length > 0 ? a.embedding : null;
     const embB = Array.isArray(b.embedding) && b.embedding.length > 0 ? b.embedding : null;
     if (embA && embB && embA.length === embB.length) {
@@ -813,4 +835,260 @@ ${blocks}`.replace(/\{\{char\}\}/gi, characterName || "角色");
     }
 
     return [...suggestions, ...newSuggestions];
+}");
+        out = out.replace(new RegExp(escaped, "g"), "");
+    }
+    for (const gw of GENERIC_DAILY_KEYWORDS) {
+        out = out.replace(new RegExp(gw, "g"), " ");
+    }
+    return out;
+}
+
+function dayDiffBetween(dateA: string, dateB: string): number {
+    const tA = new Date(dateA).getTime();
+    const tB = new Date(dateB).getTime();
+    if (isNaN(tA) || isNaN(tB)) return 0;
+    return Math.abs(tA - tB) / 86400000;
+}
+
+/**
+ * 判断两条记忆是否在讲「同一件具体事件」：
+ * - 剔除角色名和泛化日常词（如“睡觉”、“撒娇”、“生气”）后，必须仍有具体事件锚点重合；
+ * - 跨度越远（如相隔超过 3 天、7 天），对向量和字面重合的要求越严苛，杜绝把不同时期偶然都提到“去睡觉/拌嘴”的日常硬塞进同一个事件盒。
+ */
+function areEntriesSameConcreteEvent(
+    a: MemoryEntry,
+    b: MemoryEntry,
+    characterName?: string,
+): { matched: boolean; score: number } {
+    const daysApart = dayDiffBetween(entryDateKey(a), entryDateKey(b));
+    // 相隔超过 21 天的零散日常，除非手动归盒，否则不自动聚成新事件盒
+    if (daysApart > 21) return { matched: false, score: 0 };
+
+    const kwA = filterSpecificKeywords(readEntryKeywords(a), characterName);
+    const kwB = filterSpecificKeywords(readEntryKeywords(b), characterName);
+    const setB = new Set(kwB);
+    const sharedSpecificKws = kwA.filter(k => setB.has(k));
+
+    const cleanTextA = stripNamesAndGenericWords(a.content, characterName);
+    const cleanTextB = stripNamesAndGenericWords(b.content, characterName);
+    const lexicalOverlap = keywordOverlapRatio(cleanTextA, cleanTextB);
+
+    const embA = Array.isArray(a.embedding) && a.embedding.length > 0 ? a.embedding : null;
+    const embB = Array.isArray(b.embedding) && b.embedding.length > 0 ? b.embedding : null;
+    const hasVec = Boolean(embA && embB && embA.length === embB.length);
+    const vecSim = hasVec ? cosineSimilarity(embA!, embB!) : 0;
+
+    // 跨天数惩罚：间隔 > 2 天起逐步提高门槛
+    const spanPenalty = daysApart <= 2 ? 0 : Math.min(0.12, (daysApart - 2) * 0.015);
+
+    if (hasVec) {
+        // 哪怕向量相似度因为同角色同文风偏高（0.74~0.80），也必须有具体关键词重合或去噪后字面重合 >= 0.22
+        const hasConcreteAnchor = sharedSpecificKws.length >= 1 || lexicalOverlap >= 0.22;
+        if (!hasConcreteAnchor) return { matched: false, score: vecSim };
+        const requiredVec = (sharedSpecificKws.length >= 2 ? 0.78 : 0.83) + spanPenalty;
+        return { matched: vecSim >= requiredVec, score: vecSim };
+    }
+
+    // 无向量时：必须至少有 2 个具体事件关键词重合，或 1 个具体关键词 + 高字面重合
+    const kwUnion = new Set([...kwA, ...kwB]).size || 1;
+    const kwJaccard = sharedSpecificKws.length / kwUnion;
+    const combined = kwJaccard * 0.6 + lexicalOverlap * 0.4;
+    const matched = (sharedSpecificKws.length >= 2 && combined >= 0.42 + spanPenalty)
+        || (sharedSpecificKws.length >= 1 && lexicalOverlap >= 0.45 + spanPenalty);
+    return { matched, score: combined };
+}
+
+/**
+ * 智能检索相关记忆归盒方案（宁缺毋滥，绝不强行凑盒）：
+ * 1. 先检查未归盒记忆是否与某个「已有事件盒」存在明确的具体事件延续关系；
+ * 2. 剩余未归盒记忆用严格完全连接团（Complete-linkage）初筛；
+ * 3. 初筛候选交给 LLM 做「是否为同一具体事件主线」的淘汰校验——日常拌嘴、各自催睡觉等非同一事件直接剔除或整组放弃！
+ */
+export async function buildSmartBoxSuggestions(
+    characterId: string,
+    characterName: string,
+    allLongTermEntries: MemoryEntry[],
+    existingBoxes: MemoryEventBox[],
+): Promise<SmartBoxSuggestion[]> {
+    const ungrouped = allLongTermEntries.filter(e => !getEntryBoxId(e) && !isEntryBoxDigest(e));
+    if (ungrouped.length === 0) return [];
+
+    const suggestions: SmartBoxSuggestion[] = [];
+    const assignedIds = new Set<string>();
+
+    // 第一步：尝试匹配进已有的事件盒（作为该盒的新事件进展）
+    for (const box of existingBoxes) {
+        if (box.status === "settled") continue;
+        const { digestEntry, allMemberEntries } = getBoxLayers(allLongTermEntries, box);
+        const anchors = digestEntry ? [digestEntry, ...allMemberEntries] : allMemberEntries;
+        if (anchors.length === 0) continue;
+
+        const matchedForBox: MemoryEntry[] = [];
+        for (const candidate of ungrouped) {
+            if (assignedIds.has(candidate.id)) continue;
+            const fitsAnchor = anchors.some(anchor => areEntriesSameConcreteEvent(candidate, anchor, characterName).matched);
+            if (fitsAnchor) {
+                matchedForBox.push(candidate);
+                assignedIds.add(candidate.id);
+            }
+        }
+
+        if (matchedForBox.length > 0) {
+            const dates = matchedForBox.map(entryDateKey).sort();
+            suggestions.push({
+                key: `existing_${box.id}`,
+                targetBoxId: box.id,
+                title: box.title,
+                entries: matchedForBox,
+                earliest: dates[0],
+                latest: dates[dates.length - 1],
+            });
+        }
+    }
+
+    // 第二步：把剩余未归盒记忆按严格完全连接团（Complete-linkage）初筛候选簇
+    const pool = ungrouped.filter(e => !assignedIds.has(e.id)).slice(0, 300);
+    const usedInPool = new Set<string>();
+    const rawNewClusters: MemoryEntry[][] = [];
+
+    for (let i = 0; i < pool.length; i++) {
+        const seed = pool[i];
+        if (usedInPool.has(seed.id)) continue;
+        const cluster: MemoryEntry[] = [seed];
+
+        for (let j = i + 1; j < pool.length; j++) {
+            const cand = pool[j];
+            if (usedInPool.has(cand.id)) continue;
+
+            // 要求 cand 与当前 cluster 内所有成员都满足「同一具体事件」判定，且整组最大时间跨度不超过 14 天
+            const fitsAll = cluster.every(member => {
+                if (dayDiffBetween(entryDateKey(member), entryDateKey(cand)) > 14) return false;
+                return areEntriesSameConcreteEvent(member, cand, characterName).matched;
+            });
+            if (fitsAll) {
+                cluster.push(cand);
+            }
+        }
+
+        if (cluster.length >= 2) {
+            for (const item of cluster) usedInPool.add(item.id);
+            rawNewClusters.push(cluster);
+        }
+    }
+
+    const draftSuggestions: SmartBoxSuggestion[] = rawNewClusters.map((members, idx) => {
+        const sorted = [...members].sort((a, b) => entryDateKey(a).localeCompare(entryDateKey(b)));
+        const dates = sorted.map(entryDateKey);
+        const firstClean = (stripMemoryStructuredSections(sorted[0].content) || sorted[0].content)
+            .replace(/\s*\n+\s*/g, " ")
+            .trim();
+        const kws = filterSpecificKeywords(uniqueKeywords(sorted.flatMap(readEntryKeywords)), characterName).slice(0, 2);
+        const fallbackTitle = firstClean.split(/[，。；！？,.;!?]/)[0]?.slice(0, 14)
+            || (kws.length > 0 ? `${kws[0]}事件` : "关联事件");
+        return {
+            key: `new_${idx}_${sorted[0].id}`,
+            title: fallbackTitle,
+            entries: sorted,
+            earliest: dates[0],
+            latest: dates[dates.length - 1],
+        };
+    });
+
+    // 第三步：交给 LLM 做「宁缺毋滥」的事件同一性审核 + 精准起名
+    // 如果某组只是不同时候的日常拌嘴/哄睡觉/情绪互动，并非围绕同一件具体事务的连续进展，直接返回 SKIP 丢弃该组，或只保留真正同属一件事的子集编号！
+    let verifiedNewSuggestions = draftSuggestions;
+    if (draftSuggestions.length > 0) {
+        const apiConfig = resolveSummarizationApiConfig(characterId);
+        if (apiConfig) {
+            try {
+                const blocks = draftSuggestions.map((s, i) => {
+                    const lines = s.entries
+                        .map((e, eIdx) => `  [${eIdx + 1}] (${entryDateKey(e)}) ${(stripMemoryStructuredSections(e.content) || e.content).replace(/\s*\n+\s*/g, " ").trim().slice(0, 110)}`)
+                        .join("\n");
+                    return `【候选第${i + 1}组】\n${lines}`;
+                }).join("\n\n");
+                const prompt = `你是一个严格的记忆归档审核助手。下面是系统初筛出的几组候选记忆，请判断每组记忆是否真正围绕「同一件具体事件/同一个连续事项」展开，并过滤掉强行拼凑的组。
+
+审核与命名铁律（宁缺毋滥！）：
+1. **什么才算同一件具体事件**：必须是有明确因果承接或同一具体事务的连续推进（例如：都在筹备同一次生日、同一场生病照料、同一个约定/旅行的前后进展）。
+2. **什么必须直接淘汰（输出 SKIP）**：
+   - 只是情绪/相处模式相似的日常互动（比如：一次是因为天热嫌烦让对方睡觉，另一次是试探生没生气带撒娇让对方去睡——这只是两次普通的日常拌嘴/哄睡，根本不是同一件连续事件！）；
+   - 时间跨度较大、字面和具体事情关联很弱，只是恰好都提到了“睡觉”、“买东西”、“生气”、“撒娇”等日常词；
+   - 强行归纳反而显得生硬的零散日常，**一律输出 SKIP，绝不要为了凑数而归纳！**
+3. **如果组内只有部分条目属于同一具体事件**（至少 2 条），只保留那几条的序号（如 \`1,2\`），剔除混入的无关条目。
+4. **合格组的标题要求（5～14个字）**：
+   - 必须用动宾短语或主谓短语点明“具体发生了什么事”（如“筹备海边生日惊喜”、“胃痛急诊与照料”）；
+   - **严禁使用“XX与XX”、“XX和XX”、“关于XX”这种名词拼接格式**，严禁把人名放进标题。
+
+输出格式（每组严格占一行，不要有任何多余解释）：
+- 若该组不适合合并：\`组号. SKIP\`
+- 若该组适合合并：\`组号. 保留的条目序号(逗号分隔) | 事件盒标题\`
+示例：
+1. SKIP
+2. 1,2,3 | 筹备海边生日惊喜
+
+待审核候选组：
+${blocks}`.replace(/\{\{char\}\}/gi, characterName || "角色");
+
+                const res = await simpleLLMCall(apiConfig, [{ role: "user", content: prompt }], { temperature: 0.2 });
+                if (res.content) {
+                    const nextVerified: SmartBoxSuggestion[] = [];
+                    const decisionMap = new Map<number, { skip: boolean; keepIndices?: number[]; title?: string }>();
+
+                    for (const rawLine of res.content.split("\n")) {
+                        const line = rawLine.trim();
+                        const m = line.match(/^(\d+)\s*[.、．:：]\s*(.+)$/);
+                        if (!m) continue;
+                        const groupIdx = Number(m[1]) - 1;
+                        const rest = m[2].trim();
+                        if (/^SKIP\b/i.test(rest) || rest.includes("不合并") || rest.includes("淘汰")) {
+                            decisionMap.set(groupIdx, { skip: true });
+                            continue;
+                        }
+                        const pipeParts = rest.split(/\s*[|｜]\s*/);
+                        let keepIndices: number[] | undefined;
+                        let rawTitle = rest;
+                        if (pipeParts.length >= 2) {
+                            const nums = (pipeParts[0].match(/\d+/g) ?? []).map(n => Number(n) - 1);
+                            if (nums.length > 0) keepIndices = nums;
+                            rawTitle = pipeParts.slice(1).join(" ");
+                        }
+                        let cleanTitle = rawTitle.replace(/[《》「」"“”*]/g, "").trim();
+                        if (/^[\u4e00-\u9fa5]{1,5}[与和及][\u4e00-\u9fa5]{1,5}$/.test(cleanTitle)) {
+                            cleanTitle = cleanTitle.replace(/[与和及]/, "");
+                        }
+                        decisionMap.set(groupIdx, { skip: false, keepIndices, title: cleanTitle });
+                    }
+
+                    for (let i = 0; i < draftSuggestions.length; i++) {
+                        const item = draftSuggestions[i];
+                        const dec = decisionMap.get(i);
+                        if (dec?.skip) continue;
+                        let finalEntries = item.entries;
+                        if (dec?.keepIndices && dec.keepIndices.length >= 2) {
+                            const filtered = dec.keepIndices
+                                .filter(idx => idx >= 0 && idx < item.entries.length)
+                                .map(idx => item.entries[idx]);
+                            if (filtered.length >= 2) finalEntries = filtered;
+                        }
+                        if (finalEntries.length < 2) continue;
+                        const dates = finalEntries.map(entryDateKey).sort();
+                        nextVerified.push({
+                            ...item,
+                            title: dec?.title ? dec.title.slice(0, 20) : item.title,
+                            entries: finalEntries,
+                            earliest: dates[0],
+                            latest: dates[dates.length - 1],
+                        });
+                    }
+                    verifiedNewSuggestions = nextVerified;
+                }
+            } catch {
+                // fallback to strict rule-based draftSuggestions
+            }
+        }
+    }
+
+    return [...suggestions, ...verifiedNewSuggestions];
 }

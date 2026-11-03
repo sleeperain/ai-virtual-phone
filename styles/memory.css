@@ -106,3 +106,31 @@
   font-size: 11px;
 }
 
+/* ══════════════════════════════════════════
+   跨条目/跨事件盒跳转定位高亮闪烁动画
+   ══════════════════════════════════════════ */
+
+@keyframes mem-jump-flash-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--c-icon-active, #7359e6) 65%, transparent);
+    background-color: color-mix(in srgb, var(--c-icon-active, #7359e6) 18%, var(--c-card, transparent));
+  }
+  35% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--c-icon-active, #7359e6) 55%, transparent);
+    background-color: color-mix(in srgb, var(--c-icon-active, #7359e6) 22%, var(--c-card, transparent));
+  }
+  70% {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--c-icon-active, #7359e6) 30%, transparent);
+    background-color: color-mix(in srgb, var(--c-icon-active, #7359e6) 10%, var(--c-card, transparent));
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+.mem-jump-flash {
+  animation: mem-jump-flash-pulse 1.8s cubic-bezier(0.22, 1, 0.36, 1);
+  border-color: color-mix(in srgb, var(--c-icon-active, #7359e6) 65%, transparent) !important;
+  transition: border-color 0.4s ease, box-shadow 0.4s ease;
+}
+

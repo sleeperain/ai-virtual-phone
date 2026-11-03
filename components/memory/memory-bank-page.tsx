@@ -384,6 +384,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     // ── 事件盒（位于「长期」与「核心」之间）──
     const [boxes, setBoxes] = useState<MemoryEventBox[]>([]);
     const [activeBoxId, setActiveBoxId] = useState<string | null>(null);
+    const [flashTargetId, setFlashTargetId] = useState<string | null>(null);
     const [boxSummarizing, setBoxSummarizing] = useState(false);
     const [batchBoxSummarizing, setBatchBoxSummarizing] = useState(false);
     const [batchBoxProgress, setBatchBoxProgress] = useState("");
@@ -542,6 +543,20 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const showNotice = (msg: string) => {
         onNotice?.(msg);
     };
+
+    /** 滚动到指定 DOM 元素并触发 1.8s 高亮呼吸闪烁 */
+    const scrollToAndFlash = useCallback((domId: string, highlightKey: string) => {
+        setFlashTargetId(highlightKey);
+        setTimeout(() => {
+            const el = document.getElementById(domId);
+            if (el) {
+                el.scrollIntoView({ behavior: "smooth", block: "center" });
+            }
+        }, 80);
+        setTimeout(() => {
+            setFlashTargetId(prev => (prev === highlightKey ? null : prev));
+        }, 1900);
+    }, []);
 
     // ── 事件盒操作 ──
     const handleSaveBoxDialog = async () => {
@@ -1613,15 +1628,16 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                             ? entries.some(item => item.id === revisionSourceId)
                             : false;
 
-                        const entryBoxId = getEntryBoxId(entry);
-                        const boxOfEntry = entryBoxId ? boxes.find(b => b.id === entryBoxId) : undefined;
                         const entryIsDigest = isEntryBoxDigest(entry);
+                        const entryBoxId = getEntryBoxId(entry) || (entryIsDigest ? String(entry.metadata?.eventBoxDigestOf ?? "") : "");
+                        const boxOfEntry = entryBoxId ? boxes.find(b => b.id === entryBoxId) : undefined;
                         const entryArchived = isEntryArchived(entry);
 
                         return (
                             <div
                                 key={entry.id}
-                                className={`g-card memory-report-card${entryMenuId === entry.id ? " is-menu-open" : ""}`}
+                                id={`mem-entry-card-${entry.id}`}
+                                className={`g-card memory-report-card${entryMenuId === entry.id ? " is-menu-open" : ""}${flashTargetId === entry.id ? " mem-jump-flash" : ""}`}
                                 onClick={() => {
                                     if (entryMenuId) {
                                         setEntryMenuId(null);
@@ -1761,7 +1777,10 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                 className="mem-superseded-jump"
                                                 onClick={(event) => {
                                                     event.stopPropagation();
+                                                    if (searchQuery) setSearchQuery("");
+                                                    if (searchScoreMap) setSearchScoreMap(null);
                                                     setExpandedId(revisionSourceId);
+                                                    scrollToAndFlash(`mem-entry-card-${revisionSourceId}`, revisionSourceId);
                                                 }}
                                             >
                                                 查看新版本
@@ -1779,6 +1798,11 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                 event.stopPropagation();
                                                 setActiveBoxId(boxOfEntry.id);
                                                 setActiveTab("boxes");
+                                                const targetDomId = entryIsDigest
+                                                    ? `mem-box-card-${boxOfEntry.id}`
+                                                    : `mem-box-item-${entry.id}`;
+                                                const highlightKey = entryIsDigest ? boxOfEntry.id : entry.id;
+                                                scrollToAndFlash(targetDomId, highlightKey);
                                             }}
                                         >
                                             展开关联事件
@@ -1954,7 +1978,8 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                             return (
                                                 <div
                                                     key={box.id}
-                                                    className={`g-card memory-report-card${entryMenuId === menuKey ? " is-menu-open" : ""}`}
+                                                    id={`mem-box-card-${box.id}`}
+                                                    className={`g-card memory-report-card${entryMenuId === menuKey ? " is-menu-open" : ""}${flashTargetId === box.id ? " mem-jump-flash" : ""}`}
                                                     onClick={() => {
                                                         if (entryMenuId) {
                                                             setEntryMenuId(null);
@@ -2096,10 +2121,27 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                                         const itemBody = stripMemoryStructuredSections(item.content) || item.content;
                                                                         const itemDate = formatEntryDateLines(item)[0];
                                                                         return (
-                                                                            <div key={item.id} className="mem-box-chain-item">
+                                                                            <div
+                                                                                key={item.id}
+                                                                                id={`mem-box-item-${item.id}`}
+                                                                                className={`mem-box-chain-item${flashTargetId === item.id ? " mem-jump-flash" : ""}`}
+                                                                            >
                                                                                 <div className="mem-box-chain-head">
                                                                                     <span>{itemDate}</span>
                                                                                     <div style={{ display: "flex", gap: 8 }}>
+                                                                                        <button
+                                                                                            type="button"
+                                                                                            className="mem-superseded-jump"
+                                                                                            onClick={() => {
+                                                                                                if (searchQuery) setSearchQuery("");
+                                                                                                if (searchScoreMap) setSearchScoreMap(null);
+                                                                                                setActiveTab("long");
+                                                                                                setExpandedId(item.id);
+                                                                                                scrollToAndFlash(`mem-entry-card-${item.id}`, item.id);
+                                                                                            }}
+                                                                                        >
+                                                                                            原条目
+                                                                                        </button>
                                                                                         <button
                                                                                             type="button"
                                                                                             className="mem-superseded-jump"
@@ -2138,10 +2180,27 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                                             const itemBody = stripMemoryStructuredSections(item.content) || item.content;
                                                                             const itemDate = formatEntryDateLines(item)[0];
                                                                             return (
-                                                                                <div key={item.id} className="mem-box-chain-item is-archived">
+                                                                                <div
+                                                                                    key={item.id}
+                                                                                    id={`mem-box-item-${item.id}`}
+                                                                                    className={`mem-box-chain-item is-archived${flashTargetId === item.id ? " mem-jump-flash" : ""}`}
+                                                                                >
                                                                                     <div className="mem-box-chain-head">
                                                                                         <span>{itemDate}</span>
                                                                                         <div style={{ display: "flex", gap: 8 }}>
+                                                                                            <button
+                                                                                                type="button"
+                                                                                                className="mem-superseded-jump"
+                                                                                                onClick={() => {
+                                                                                                    if (searchQuery) setSearchQuery("");
+                                                                                                    if (searchScoreMap) setSearchScoreMap(null);
+                                                                                                    setActiveTab("long");
+                                                                                                    setExpandedId(item.id);
+                                                                                                    scrollToAndFlash(`mem-entry-card-${item.id}`, item.id);
+                                                                                                }}
+                                                                                            >
+                                                                                                原条目
+                                                                                            </button>
                                                                                             <button
                                                                                                 type="button"
                                                                                                 className="mem-superseded-jump"
