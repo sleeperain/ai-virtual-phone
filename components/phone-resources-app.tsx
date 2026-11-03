@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Brain, MoreHorizontal, Sparkles } from "lucide-react";
+import { Brain, Folder, MoreHorizontal, Sparkles } from "lucide-react";
 import { MemoryBankPage } from "./memory/memory-bank-page";
 import { VnAssetPage } from "./vn/vn-asset-page";
 import { loadCharacters } from "@/lib/character-storage";
@@ -10,7 +10,7 @@ import { FeaturedCard, type FeaturedCardItem } from "./ui/card-grid";
 import { BINDING_ACCENTS, CONTENT_APP_ACCENTS } from "@/lib/ui-accent-colors";
 
 export type ResourceSubPage = "main" | "memory" | "vn_assets";
-type MemoryView = "list" | "detail" | "settings";
+type MemoryView = "list" | "detail" | "settings" | "boxes";
 
 const RESOURCE_MENU: Omit<FeaturedCardItem, "onClick">[] = [
     {
@@ -46,6 +46,9 @@ export function PhoneResourcesApp({ onClose, onNotice, initialPage }: { onClose:
         if (currentPage === "memory") {
             if (memoryView === "settings") {
                 setMemoryView(prevMemoryView);
+            } else if (memoryView === "boxes") {
+                // 事件盒是从某个角色的长期记忆进来的，退回去还是那个角色
+                setMemoryView(memoryCharId ? "detail" : "list");
             } else if (memoryView === "detail") {
                 setMemoryView("list");
             } else {
@@ -75,26 +78,47 @@ export function PhoneResourcesApp({ onClose, onNotice, initialPage }: { onClose:
         : currentPage === "memory"
             ? (memoryView === "settings" ? "记忆设置"
                 : memoryView === "detail" ? (memoryCharName || "记忆详情")
-                    : "记忆库")
+                    : memoryView === "boxes" ? "事件盒"
+                        : "记忆库")
             : currentPage === "vn_assets" ? "漫卷资源"
                 : "资源库";
 
     const showSettingsIcon = currentPage === "memory" && memoryView !== "settings";
+    // 事件盒只对某个角色的长期记忆有意义：没选角色时不给入口
+    const showBoxIcon = currentPage === "memory"
+        && Boolean(memoryCharId)
+        && (memoryView === "detail" || memoryView === "boxes");
 
     return (
         <PageShell
             title={title}
             onBack={handleBack}
             className={currentPage === "memory" && memoryView === "detail" ? "mem-detail" : undefined}
-            rightAction={showSettingsIcon ? (
-                <button
-                    onClick={() => { setPrevMemoryView(memoryView); setMemoryView("settings"); }}
-                    className="page-back-btn"
-                    type="button"
-                    aria-label="更多"
-                >
-                    <MoreHorizontal size={22} strokeWidth={1.5} />
-                </button>
+            rightAction={showSettingsIcon || showBoxIcon ? (
+                <>
+                    {showBoxIcon && (
+                        <button
+                            onClick={() => setMemoryView(memoryView === "boxes" ? "detail" : "boxes")}
+                            className="page-back-btn"
+                            type="button"
+                            aria-label={memoryView === "boxes" ? "回到记忆列表" : "事件盒"}
+                            aria-pressed={memoryView === "boxes"}
+                            data-active={memoryView === "boxes" ? "" : undefined}
+                        >
+                            <Folder size={21} strokeWidth={1.5} />
+                        </button>
+                    )}
+                    {showSettingsIcon && (
+                        <button
+                            onClick={() => { setPrevMemoryView(memoryView); setMemoryView("settings"); }}
+                            className="page-back-btn"
+                            type="button"
+                            aria-label="更多"
+                        >
+                            <MoreHorizontal size={22} strokeWidth={1.5} />
+                        </button>
+                    )}
+                </>
             ) : undefined}
         >
             <div
@@ -129,6 +153,7 @@ export function PhoneResourcesApp({ onClose, onNotice, initialPage }: { onClose:
                 {currentPage === "memory" && (
                     <MemoryBankPage
                         view={memoryView}
+                        onExitBoxes={() => setMemoryView("detail")}
                         selectedCharId={memoryCharId}
                         onSelectChar={handleSelectChar}
                         onNotice={onNotice}

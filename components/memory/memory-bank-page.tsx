@@ -80,10 +80,15 @@ import {
     runEventBoxDigest,
 } from "@/lib/memory-event-box-digest";
 import {
-    EventBoxConfirm,
-    EventBoxDetailHeader,
-    EventBoxGrid,
+    buildAutoClusterPlan,
+    type AutoClusterCandidate,
+} from "@/lib/memory-event-box-auto";
+import {
+    AutoClusterPreview,
+    EventBoxConfirmDialog,
+    EventBoxList,
     EventBoxNameDialog,
+    EventBoxPanel,
     EventBoxPicker,
 } from "./memory-event-boxes";
 
@@ -337,9 +342,11 @@ type Props = {
     selectedCharId?: string;
     onSelectChar: (charId: string) => void;
     onNotice?: (msg: string) => void;
+    /** 从事件盒页面退回记忆列表（返回箭头由外层 PageShell 管，这里只处理页内跳转） */
+    onExitBoxes?: () => void;
 };
 
-export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }: Props) {
+export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice, onExitBoxes }: Props) {
     const [config, setConfig] = useState<MemoryConfig>(loadMemoryConfig);
     const [characters, setCharacters] = useState<CharacterMemoryInfo[]>([]);
     const [activeTab, setActiveTab] = useState<MemoryTab>("short");
@@ -380,9 +387,12 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const [appBudgetOpen, setAppBudgetOpen] = useState(false);
 
     // ── 事件盒 ──
-    /** 长期记忆页的「条目 / 事件盒」视图开关；盒子只对长期记忆有意义 */
-    const [boxView, setBoxView] = useState(false);
     const [boxes, setBoxes] = useState<MemoryEventBox[]>([]);
+    /** 自动归纳算出的候选，确认前只存在内存里，不落库 */
+    const [autoCandidates, setAutoCandidates] = useState<AutoClusterCandidate[]>([]);
+    const [autoSelected, setAutoSelected] = useState<Record<string, boolean>>({});
+    const [autoBusy, setAutoBusy] = useState(false);
+    const [autoBusyLabel, setAutoBusyLabel] = useState("");
     const [activeBoxId, setActiveBoxId] = useState<string | null>(null);
     /** 正在选择归属盒子的条目 id（⋯ 菜单 → 移入事件盒） */
     const [boxMoveEntryId, setBoxMoveEntryId] = useState<string | null>(null);
@@ -554,6 +564,94 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
 
     const openCreateBoxDialog = () => {
         setBoxNameDialog({ title: "新建事件盒", boxTitle: "", status: "active", note: "" });
+    };
+
+    /** 未分组、且不是摘要条目的长期记忆（自动归纳的输入） */
+    const ungroupedEntries = longTermEntries.filter(entry => !getEntryBoxId(entry) && !isEntryBoxDigest(entry));
+
+    /**
+     * 自动归纳第一步：算候选。纯计算 + 一次命名请求，不落库。
+     * 上百条记忆只看不确认就直接改库风险太高，先出方案给用户过一眼。
+     */
+    const handleAutoCluster = async () => {
+        if (!selectedCharId || autoBusy) return;
+        if (ungroupedEntries.length < 2) {
+            showNotice("未分组的记忆不足 2 条，不用归纳");
+            return;
+        }
+        setAutoBusy(true);
+        setAutoBusyLabel("分析中...");
+        try {
+            const candidates = await buildAutoClusterPlan(
+                selectedCharId,
+                selectedChar?.name ?? "",
+                ungroupedEntries,
+            );
+            if (candidates.length === 0) {
+                showNotice("没有找到明显属于同一件事的记忆，可以手动新建盒子归组");
+                return;
+            }
+            setAutoCandidates(candidates);
+            setAutoSelected({});
+        } catch (err) {
+            console.error("[MemoryBank] Auto cluster failed:", err);
+            showNotice("自动归纳失败: " + String(err));
+        } finally {
+            setAutoBusy(false);
+            setAutoBusyLabel("");
+        }
+    };
+
+    /** 自动归纳第二步：确认后建盒 + 归档。一组失败不影响其它组。 */
+    const handleConfirmAutoCluster = async () => {
+        if (!selectedCharId || autoBusy) return;
+        const chosen = autoCandidates.filter(item => autoSelected[item.key] !== false);
+        if (chosen.length === 0) return;
+
+        setAutoBusy(true);
+        let created = 0;
+        let digested = 0;
+        try {
+            let workingEntries = [...longTermEntries];
+            for (let index = 0; index < chosen.length; index += 1) {
+                const candidate = chosen[index];
+                setAutoBusyLabel(`归档中 ${index + 1}/${chosen.length}`);
+                const box: MemoryEventBox = createEventBox(selectedCharId, candidate.title);
+                saveEventBoxes(selectedCharId, [...loadEventBoxes(selectedCharId), box]);
+                created += 1;
+
+                // 逐条改归属，workingEntries 同步更新，后面的组才能看到最新状态
+                for (const entry of candidate.entries) {
+                    const moved = await moveEntryToBox(entry, box.id);
+                    workingEntries = workingEntries.map(item => (item.id === moved.id ? moved : item));
+                }
+
+                const result = await runEventBoxDigest(
+                    selectedCharId,
+                    selectedChar?.name ?? "",
+                    box.id,
+                    workingEntries,
+                );
+                if (result.success) digested += 1;
+                else console.warn("[MemoryBank] Auto digest skipped:", candidate.title, result.error);
+            }
+
+            setAutoCandidates([]);
+            setAutoSelected({});
+            await loadDetailData(selectedCharId);
+            showNotice(
+                digested === created
+                    ? `已整理 ${created} 个事件盒并完成归档`
+                    : `已建 ${created} 个事件盒，${digested} 个完成归档（其余可在盒子里手动总结）`,
+            );
+        } catch (err) {
+            console.error("[MemoryBank] Confirm auto cluster failed:", err);
+            showNotice("自动整理失败: " + String(err));
+            await loadDetailData(selectedCharId);
+        } finally {
+            setAutoBusy(false);
+            setAutoBusyLabel("");
+        }
     };
 
     const openRenameBoxDialog = (box: MemoryEventBox) => {
@@ -1363,18 +1461,12 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
 
         // 盒内视图：在搜索 / 相关度排序之后再过一层盒子筛选，
         // 这样搜索框的语义仍然是「在这个盒子里搜」，而不是把盒子作用域丢掉
-        const activeBox = type === "long_term" && boxView && activeBoxId
+        const activeBox = type === "long_term" && activeBoxId
             ? boxes.find(box => box.id === activeBoxId) ?? null
             : null;
         if (activeBox) {
             const boxEntryIds = new Set(getBoxEntries(entries, activeBox.id).map(item => item.id));
             displayEntries = displayEntries.filter(item => boxEntryIds.has(item.id));
-        }
-        const showBoxGrid = type === "long_term" && boxView && !activeBox;
-        // 事件盒视图下，网格下面继续列出「还没归组」的记忆：
-        // 否则打开事件盒视图就像记忆全丢了，而且新记忆也没有入口归组
-        if (showBoxGrid) {
-            displayEntries = displayEntries.filter(item => !getEntryBoxId(item));
         }
 
         return (
@@ -1413,22 +1505,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                 >
                                     <Zap size={14} strokeWidth={1.8} />
                                     <span>{embeddingAll ? "向量化中..." : `补全向量(${missingVectorCount})`}</span>
-                                </button>
-                            )}
-                            {type === "long_term" && (
-                                <button
-                                    className="ui-chip"
-                                    style={{ fontSize: 11, padding: "4px 10px", flexShrink: 0 }}
-                                    data-selected={boxView ? "" : undefined}
-                                    onClick={() => {
-                                        setBoxView(prev => !prev);
-                                        setActiveBoxId(null);
-                                        setEntryMenuId(null);
-                                    }}
-                                    title="把围绕同一件事的记忆归到一起，按事件翻找"
-                                >
-                                    <Folder size={13} strokeWidth={1.8} style={{ marginRight: 4, verticalAlign: -2 }} />
-                                    事件盒{boxes.length > 0 ? `(${boxes.length})` : ""}
                                 </button>
                             )}
                             <button
@@ -1487,31 +1563,12 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                         </div>
                     </>
                 )}
-                {/* 事件盒网格：只替换列表区，上面的工具栏和搜索框照旧 */}
-                {showBoxGrid ? (
-                    <EventBoxGrid
-                        boxes={boxes}
-                        entries={entries}
-                        onOpen={boxId => {
-                            setActiveBoxId(boxId);
-                            setExpandedId(null);
-                            setEntryMenuId(null);
-                        }}
-                        onCreate={openCreateBoxDialog}
-                        onRename={openRenameBoxDialog}
-                        onDelete={box => setBoxConfirm({ kind: "delete", boxId: box.id })}
-                    />
-                ) : null}
-                {/* 盒内页头：摘要、总结 / 恢复、状态，下面沿用同一套条目卡片 */}
+                {/* 盒内页的操作区：摘要 + 总结 / 恢复，下面沿用同一套条目卡片 */}
                 {activeBox ? (
-                    <EventBoxDetailHeader
+                    <EventBoxPanel
                         box={activeBox}
                         entries={entries}
                         busy={boxBusy}
-                        onBack={() => {
-                            setActiveBoxId(null);
-                            setExpandedId(null);
-                        }}
                         onDigest={() => void handleDigestActiveBox()}
                         onRestore={() => setBoxConfirm({ kind: "restore", boxId: activeBox.id })}
                         onRename={() => openRenameBoxDialog(activeBox)}
@@ -1525,9 +1582,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                         onClick={() => setEntryMenuId(null)}
                     />
                 )}
-                {showBoxGrid && displayEntries.length > 0 ? (
-                    <p className="mem-box-section-title">未分组的{label}</p>
-                ) : null}
                 {entries.length === 0 ? (
                     <div className="mem-empty-card">
                         <p>{emptyText}</p>
@@ -1538,7 +1592,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                     </div>
                 ) : displayEntries.length === 0 ? (
                     <div className="mem-empty-card">
-                        <p>{showBoxGrid ? `所有${label}都已归组` : `未找到匹配的${label}`}</p>
+                        <p>{activeBox ? "这个事件盒里还没有记忆" : `未找到匹配的${label}`}</p>
                     </div>
                 ) : (
                     displayEntries.map(entry => {
@@ -2148,21 +2202,15 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                     const targetBox = boxes.find(box => box.id === boxConfirm.boxId);
                     if (!targetBox) return null;
                     const boxEntries = getBoxEntries(longTermEntries, targetBox.id);
-                    return boxConfirm.kind === "delete" ? (
-                        <EventBoxConfirm
-                            title="删除这个事件盒？"
-                            message={`盒子里的 ${boxEntries.length} 条记忆不会被删除，会恢复成独立记忆继续参与召回。${targetBox.archived ? "归档状态也会一并解除。" : ""}`}
-                            confirmLabel="删除盒子"
-                            danger
-                            onConfirm={() => void handleDeleteBox(targetBox.id)}
-                            onCancel={() => setBoxConfirm(null)}
-                        />
-                    ) : (
-                        <EventBoxConfirm
-                            title="恢复原始记忆？"
-                            message={`会删掉这次生成的摘要，把 ${boxEntries.filter(isEntryArchived).length} 条原始记忆恢复为独立召回。盒子本身保留。`}
-                            confirmLabel="恢复"
-                            onConfirm={() => void handleRestoreBox(targetBox.id)}
+                    return (
+                        <EventBoxConfirmDialog
+                            kind={boxConfirm.kind}
+                            entryCount={boxEntries.length}
+                            archivedCount={boxEntries.filter(isEntryArchived).length}
+                            onConfirm={() => {
+                                if (boxConfirm.kind === "delete") void handleDeleteBox(targetBox.id);
+                                else void handleRestoreBox(targetBox.id);
+                            }}
                             onCancel={() => setBoxConfirm(null)}
                         />
                     );
@@ -2197,6 +2245,112 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                             setConfirmClearAll(false);
                         }}
                         onCancel={() => setConfirmClearAll(false)}
+                    />
+                )}
+            </div>
+        );
+    }
+
+    // ── Event Boxes View ──
+    // 独立一页（入口在标题栏文件夹按钮），不再嵌在长期记忆列表里：
+    // 列表页保持原来的条目视图不变，盒子有自己的层级和返回路径。
+    if (view === "boxes" && selectedChar) {
+        const activeBox = activeBoxId ? boxes.find(box => box.id === activeBoxId) ?? null : null;
+        return (
+            <div className="flex flex-col absolute inset-0 overflow-hidden" style={{ padding: "0 0 12px" }}>
+                <div className="memory-detail-scroll flex-1 overflow-y-auto flex flex-col gap-2 min-h-0">
+                    {loading ? (
+                        <p className="text-center ts-14 mt-10 text-secondary">加载中...</p>
+                    ) : activeBox ? (
+                        <>
+                            <div style={{ padding: "0 16px" }}>
+                                <button
+                                    type="button"
+                                    className="ui-bare-btn ts-12 text-secondary"
+                                    style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "6px 0" }}
+                                    onClick={() => {
+                                        setActiveBoxId(null);
+                                        setExpandedId(null);
+                                    }}
+                                >
+                                    <ChevronLeft size={14} />
+                                    事件盒
+                                </button>
+                            </div>
+                            <div style={{ padding: "0 16px" }}>
+                                <EventBoxPanel
+                                    box={activeBox}
+                                    entries={longTermEntries}
+                                    busy={boxBusy}
+                                    onDigest={() => void handleDigestActiveBox()}
+                                    onRestore={() => setBoxConfirm({ kind: "restore", boxId: activeBox.id })}
+                                    onRename={() => openRenameBoxDialog(activeBox)}
+                                    onDelete={() => setBoxConfirm({ kind: "delete", boxId: activeBox.id })}
+                                />
+                            </div>
+                            <div style={{ padding: "0 16px" }}>
+                                {renderMemoryEntries("long_term", longTermEntries, "这个事件盒里还没有记忆")}
+                            </div>
+                        </>
+                    ) : (
+                        <EventBoxList
+                            boxes={boxes}
+                            entries={longTermEntries}
+                            busy={autoBusy}
+                            ungroupedCount={ungroupedEntries.length}
+                            onOpen={boxId => {
+                                setActiveBoxId(boxId);
+                                setExpandedId(null);
+                                setEntryMenuId(null);
+                            }}
+                            onCreate={openCreateBoxDialog}
+                            onAutoCluster={() => void handleAutoCluster()}
+                        />
+                    )}
+                </div>
+
+                {/* 事件盒页里的弹层 */}
+                {boxNameDialog && (
+                    <EventBoxNameDialog
+                        title={boxNameDialog.title}
+                        initialTitle={boxNameDialog.boxTitle}
+                        initialStatus={boxNameDialog.status}
+                        initialNote={boxNameDialog.note}
+                        confirmLabel={boxNameDialog.boxId ? "保存" : "创建"}
+                        onConfirm={value => void handleBoxNameConfirm(value)}
+                        onCancel={() => setBoxNameDialog(null)}
+                    />
+                )}
+                {boxConfirm && (() => {
+                    const targetBox = boxes.find(box => box.id === boxConfirm.boxId);
+                    if (!targetBox) return null;
+                    const boxEntries = getBoxEntries(longTermEntries, targetBox.id);
+                    return (
+                        <EventBoxConfirmDialog
+                            kind={boxConfirm.kind}
+                            entryCount={boxEntries.length}
+                            archivedCount={boxEntries.filter(isEntryArchived).length}
+                            onConfirm={() => {
+                                if (boxConfirm.kind === "delete") void handleDeleteBox(targetBox.id);
+                                else void handleRestoreBox(targetBox.id);
+                            }}
+                            onCancel={() => setBoxConfirm(null)}
+                        />
+                    );
+                })()}
+                {autoCandidates.length > 0 && (
+                    <AutoClusterPreview
+                        candidates={autoCandidates}
+                        selected={autoSelected}
+                        busy={autoBusy}
+                        busyLabel={autoBusyLabel}
+                        onToggle={key => setAutoSelected(prev => ({ ...prev, [key]: prev[key] === false }))}
+                        onConfirm={() => void handleConfirmAutoCluster()}
+                        onCancel={() => {
+                            if (autoBusy) return;
+                            setAutoCandidates([]);
+                            setAutoSelected({});
+                        }}
                     />
                 )}
             </div>

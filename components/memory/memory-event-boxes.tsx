@@ -1,24 +1,25 @@
 "use client";
 
-// 事件盒的界面零件：盒子网格、盒内页头、条目归盒弹层、盒子命名弹窗。
-// 条目卡片的渲染留在 memory-bank-page 里复用同一套（盒内列表 = 加了筛选条件的条目列表），
-// 避免再写一份长得不一样的卡片。
+// 事件盒的界面零件。刻意只用仓库里已有的视觉语言：
+//   - 列表 = page-menu / menu-group / menu-item（和「记忆设置」页同构）
+//   - 左侧图标 = card-icon + BINDING_ACCENTS.memory（和设置页图标同构）
+//   - 摘要与空态 = g-card / mem-empty-card
+//   - 确认 = 全局 ConfirmDialog
+// 不再另造一套卡片样式，否则一眼就能看出是后来贴上去的。
 
 import { useState } from "react";
 import {
     Folder,
     FolderPlus,
-    ArrowLeft,
-    MoreHorizontal,
-    Trash2,
-    Edit3,
+    FolderOpen,
+    ChevronRight,
     Sparkles,
     RotateCcw,
-    AlertCircle,
-    X,
-    Check,
+    Wand2,
     History,
 } from "lucide-react";
+import { ConfirmDialog } from "@/components/ui/modal";
+import { AlertCircle } from "lucide-react";
 import type { MemoryEntry } from "@/lib/memory-types";
 import {
     EVENT_BOX_STATUS_META,
@@ -26,143 +27,123 @@ import {
     getBoxEntries,
     getEntryBoxId,
     isEntryArchived,
-    isEntryBoxDigest,
     type MemoryEventBox,
 } from "@/lib/memory-event-boxes";
 import { eventBoxNeedsRedigest } from "@/lib/memory-event-box-digest";
+import { BINDING_ACCENTS } from "@/lib/ui-accent-colors";
+import type { AutoClusterCandidate } from "@/lib/memory-event-box-auto";
 
-/** 盒子卡片的 ⋯ 菜单：重命名 / 删除 */
-function BoxCardMenu({
-    onRename,
-    onDelete,
-}: {
-    onRename: () => void;
-    onDelete: () => void;
-}) {
-    const [open, setOpen] = useState(false);
+const boxIconStyle = { "--icon-color": BINDING_ACCENTS.memory } as React.CSSProperties;
+
+function BoxIcon({ open }: { open?: boolean }) {
+    const Icon = open ? FolderOpen : Folder;
     return (
-        <div className="mem-entry-menu-wrap">
-            <button
-                className="mem-entry-menu-btn"
-                title="更多"
-                onClick={event => {
-                    event.stopPropagation();
-                    setOpen(prev => !prev);
-                }}
-            >
-                <MoreHorizontal size={16} />
-            </button>
-            {open && (
-                <>
-                    <button
-                        className="mem-entry-menu-backdrop"
-                        aria-label="关闭菜单"
-                        onClick={event => {
-                            event.stopPropagation();
-                            setOpen(false);
-                        }}
-                    />
-                    <div className="mem-entry-menu" onClick={event => event.stopPropagation()}>
-                        <button onClick={() => { setOpen(false); onRename(); }}>
-                            <Edit3 size={13} />
-                            <span>重命名</span>
-                        </button>
-                        <button className="is-danger" onClick={() => { setOpen(false); onDelete(); }}>
-                            <Trash2 size={13} />
-                            <span>删除盒子</span>
-                        </button>
-                    </div>
-                </>
-            )}
-        </div>
+        <span className="card-icon" style={boxIconStyle}>
+            <Icon size={22} strokeWidth={1.75} />
+        </span>
     );
 }
 
-export function EventBoxGrid({
+/**
+ * 事件盒列表：和记忆设置页一模一样的 page-menu 结构。
+ * 每行：图标 + 标题 + 副标题（条数 / 日期 / 状态） + 右侧箭头。
+ */
+export function EventBoxList({
     boxes,
     entries,
+    busy,
     onOpen,
     onCreate,
-    onRename,
-    onDelete,
+    onAutoCluster,
+    ungroupedCount,
 }: {
     boxes: MemoryEventBox[];
     entries: MemoryEntry[];
+    busy: boolean;
     onOpen: (boxId: string) => void;
     onCreate: () => void;
-    onRename: (box: MemoryEventBox) => void;
-    onDelete: (box: MemoryEventBox) => void;
+    onAutoCluster: () => void;
+    ungroupedCount: number;
 }) {
     return (
-        <div className="mem-box-view">
-            <div className="mem-entry-toolbar" style={{ flexWrap: "wrap" }}>
-                <button className="mem-entry-add-btn" onClick={onCreate}>
-                    <FolderPlus size={15} strokeWidth={1.8} />
-                    <span>新建事件盒</span>
+        <div className="page-menu">
+            <p className="menu-group-desc mx-2">自动整理</p>
+            <div className="menu-group">
+                <div className="menu-item">
+                    <BoxIcon />
+                    <div className="menu-label-group">
+                        <span className="menu-label">自动归纳</span>
+                        <span className="menu-desc">
+                            {ungroupedCount > 0
+                                ? `把 ${ungroupedCount} 条未分组记忆按「同一件事」聚到一起，先给你看方案`
+                                : "没有待分组的记忆"}
+                        </span>
+                    </div>
+                    <div className="menu-right">
+                        <button
+                            className="ui-btn ui-btn-outline py-1 px-3 ts-12"
+                            onClick={onAutoCluster}
+                            disabled={busy || ungroupedCount < 2}
+                        >
+                            <Wand2 size={12} className="mr-1" />
+                            {busy ? "分析中..." : "开始"}
+                        </button>
+                    </div>
+                </div>
+                <button className="menu-item" onClick={onCreate}>
+                    <BoxIcon />
+                    <div className="menu-label-group">
+                        <span className="menu-label">新建事件盒</span>
+                        <span className="menu-desc">手动建一个空盒子，之后把记忆放进去</span>
+                    </div>
+                    <div className="menu-right">
+                        <FolderPlus size={16} strokeWidth={1.6} className="text-secondary" />
+                    </div>
                 </button>
-                <span className="mem-box-toolbar-hint">
-                    {boxes.length} 个盒子 · 共 {entries.filter(entry => !isEntryArchived(entry) && !isEntryBoxDigest(entry)).length} 条记忆
-                </span>
             </div>
 
-            {boxes.length === 0 ? (
-                <div className="mem-empty-card">
-                    <p>还没有事件盒。围绕同一件事的记忆可以归到一个盒子里，翻起来不用一路下滑。</p>
-                    <button className="mem-empty-add-btn" onClick={onCreate}>
-                        <FolderPlus size={14} />
-                        <span>新建事件盒</span>
-                    </button>
-                </div>
-            ) : (
-                <div className="mem-box-grid">
-                    {boxes.map(box => {
-                        const boxEntries = getBoxEntries(entries, box.id);
-                        const needsRedigest = eventBoxNeedsRedigest(box, entries);
-                        return (
-                            <div
-                                key={box.id}
-                                className="g-card mem-box-card"
-                                onClick={() => onOpen(box.id)}
-                            >
-                                <div className="mem-box-card-head">
-                                    <span className="mem-box-icon" aria-hidden>
-                                        <Folder size={20} strokeWidth={1.75} />
-                                    </span>
-                                    <BoxCardMenu
-                                        onRename={() => onRename(box)}
-                                        onDelete={() => onDelete(box)}
-                                    />
-                                </div>
-                                <span className="mem-box-title">{box.title}</span>
-                                <span className="mem-box-meta">
-                                    {boxEntries.length} 条
-                                    {boxEntries.length > 0 ? ` · ${formatBoxSpan(boxEntries)}` : ""}
-                                </span>
-                                <div className="mem-box-flags">
-                                    <span className="mem-box-status" data-status={box.status}>
-                                        {EVENT_BOX_STATUS_META[box.status].label}
-                                    </span>
-                                    {box.archived ? (
-                                        <span className="mem-box-flag">已归档</span>
-                                    ) : null}
-                                    {needsRedigest ? (
-                                        <span className="mem-box-flag is-warn">有新记忆</span>
-                                    ) : null}
-                                </div>
+            <p className="menu-group-desc mx-2">事件盒（{boxes.length}）</p>
+            <div className="menu-group">
+                {boxes.length === 0 ? (
+                    <div className="menu-item">
+                        <div className="menu-label-group">
+                            <span className="menu-label">还没有事件盒</span>
+                            <span className="menu-desc">点上面的「自动归纳」，或手动新建一个</span>
+                        </div>
+                    </div>
+                ) : boxes.map(box => {
+                    const boxEntries = getBoxEntries(entries, box.id);
+                    const needsRedigest = eventBoxNeedsRedigest(box, entries);
+                    const meta = [
+                        `${boxEntries.length} 条`,
+                        boxEntries.length > 0 ? formatBoxSpan(boxEntries) : "",
+                        EVENT_BOX_STATUS_META[box.status].label,
+                        box.archived ? "已归档" : "",
+                        needsRedigest ? "有新记忆" : "",
+                    ].filter(Boolean).join(" · ");
+                    return (
+                        <button key={box.id} className="menu-item" onClick={() => onOpen(box.id)}>
+                            <BoxIcon open={box.archived} />
+                            <div className="menu-label-group">
+                                <span className="menu-label">{box.title}</span>
+                                <span className="menu-desc">{meta}</span>
                             </div>
-                        );
-                    })}
-                </div>
-            )}
+                            <div className="menu-right">
+                                <ChevronRight size={16} />
+                            </div>
+                        </button>
+                    );
+                })}
+            </div>
         </div>
     );
 }
 
-export function EventBoxDetailHeader({
+/** 盒内页的操作区：摘要 + 总结 / 恢复。放在条目列表上方，用 menu-group 承载按钮。 */
+export function EventBoxPanel({
     box,
     entries,
     busy,
-    onBack,
     onDigest,
     onRestore,
     onRename,
@@ -171,7 +152,6 @@ export function EventBoxDetailHeader({
     box: MemoryEventBox;
     entries: MemoryEntry[];
     busy: boolean;
-    onBack: () => void;
     onDigest: () => void;
     onRestore: () => void;
     onRename: () => void;
@@ -185,32 +165,7 @@ export function EventBoxDetailHeader({
     const versions = box.digest?.versions ?? [];
 
     return (
-        <div className="mem-box-detail-head">
-            <div className="mem-box-detail-title-row">
-                <button className="mem-box-back" onClick={onBack} title="返回事件盒">
-                    <ArrowLeft size={16} />
-                </button>
-                <span className="mem-box-detail-title">{box.title}</span>
-                <span className="mem-box-status" data-status={box.status}>
-                    {EVENT_BOX_STATUS_META[box.status].label}
-                </span>
-                <div className="mem-entry-menu-wrap" style={{ marginLeft: "auto" }}>
-                    <button className="mem-entry-menu-btn" onClick={onRename} title="重命名">
-                        <Edit3 size={15} />
-                    </button>
-                    <button className="mem-entry-menu-btn" onClick={onDelete} title="删除盒子（记忆会保留）">
-                        <Trash2 size={15} />
-                    </button>
-                </div>
-            </div>
-
-            <p className="mem-box-detail-meta">
-                {boxEntries.length} 条
-                {boxEntries.length > 0 ? ` · ${formatBoxSpan(boxEntries)}` : ""}
-                {box.archived ? ` · 已归档 ${archivedCount} 条` : ""}
-                {box.archived && pendingCount > 0 ? ` · ${pendingCount} 条待总结` : ""}
-            </p>
-
+        <>
             {box.archived && box.digest?.current ? (
                 <div className="g-card mem-box-digest">
                     <div className="mem-box-digest-head">
@@ -218,7 +173,7 @@ export function EventBoxDetailHeader({
                         {versions.length > 1 ? (
                             <button className="mem-superseded-jump" onClick={() => setHistoryOpen(prev => !prev)}>
                                 <History size={12} style={{ marginRight: 3, verticalAlign: -2 }} />
-                                历史 {versions.length} 版
+                                {historyOpen ? "收起" : `历史 ${versions.length} 版`}
                             </button>
                         ) : null}
                     </div>
@@ -238,44 +193,79 @@ export function EventBoxDetailHeader({
                 </div>
             ) : null}
 
-            <div className="mem-box-actions">
-                <button
-                    className="ui-chip"
-                    style={{ fontSize: 11, padding: "4px 10px" }}
-                    disabled={busy || boxEntries.length === 0}
-                    onClick={onDigest}
-                >
-                    <Sparkles size={12} style={{ marginRight: 4, verticalAlign: -2 }} />
-                    {busy ? "处理中..." : box.archived ? "重新总结并归档" : "总结并归档"}
-                </button>
+            <div className="menu-group">
+                <div className="menu-item">
+                    <BoxIcon open={box.archived} />
+                    <div className="menu-label-group">
+                        <span className="menu-label">{box.archived ? "重新总结" : "总结并归档"}</span>
+                        <span className="menu-desc">
+                            {box.archived
+                                ? (pendingCount > 0 ? `有 ${pendingCount} 条新记忆待并入摘要` : "摘要已是最新")
+                                : "压成一条摘要代表这组记忆，原文保留可恢复"}
+                        </span>
+                    </div>
+                    <div className="menu-right">
+                        <button
+                            className="ui-btn ui-btn-outline py-1 px-3 ts-12"
+                            onClick={onDigest}
+                            disabled={busy || boxEntries.length === 0}
+                        >
+                            <Sparkles size={12} className="mr-1" />
+                            {busy ? "处理中..." : "总结"}
+                        </button>
+                    </div>
+                </div>
                 {box.archived ? (
-                    <button
-                        className="ui-chip"
-                        style={{ fontSize: 11, padding: "4px 10px" }}
-                        disabled={busy}
-                        onClick={onRestore}
-                    >
-                        <RotateCcw size={12} style={{ marginRight: 4, verticalAlign: -2 }} />
-                        恢复原始记忆
-                    </button>
+                    <div className="menu-item">
+                        <BoxIcon />
+                        <div className="menu-label-group">
+                            <span className="menu-label">恢复原始记忆</span>
+                            <span className="menu-desc">删掉摘要，{archivedCount} 条原文恢复独立参与召回</span>
+                        </div>
+                        <div className="menu-right">
+                            <button
+                                className="ui-btn ui-btn-outline py-1 px-3 ts-12"
+                                onClick={onRestore}
+                                disabled={busy}
+                            >
+                                <RotateCcw size={12} className="mr-1" />
+                                恢复
+                            </button>
+                        </div>
+                    </div>
                 ) : null}
+                <button className="menu-item" onClick={onRename}>
+                    <BoxIcon />
+                    <div className="menu-label-group">
+                        <span className="menu-label">重命名与状态</span>
+                        <span className="menu-desc">当前：{EVENT_BOX_STATUS_META[box.status].label}{box.note ? ` · ${box.note}` : ""}</span>
+                    </div>
+                    <div className="menu-right">
+                        <ChevronRight size={16} />
+                    </div>
+                </button>
+                <button className="menu-item" onClick={onDelete}>
+                    <BoxIcon />
+                    <div className="menu-label-group">
+                        <span className="menu-label menu-label-danger">删除这个盒子</span>
+                        <span className="menu-desc">盒内 {boxEntries.length} 条记忆全部保留为独立记忆</span>
+                    </div>
+                    <div className="menu-right">
+                        <ChevronRight size={16} />
+                    </div>
+                </button>
             </div>
 
             {needsRedigest ? (
                 <p className="mem-box-hint">
-                    归档后又进来了 {pendingCount} 条新记忆，它们现在仍会单独参与召回。点「重新总结并归档」把它们并进摘要。
+                    归档后又进来了 {pendingCount} 条新记忆，它们目前仍会单独参与召回。点「总结」把新内容并进摘要。
                 </p>
             ) : null}
-            {!box.archived && boxEntries.length > 0 ? (
-                <p className="mem-box-hint">
-                    归档后这组记忆由一条摘要代表参与召回，原始条目不会再单独发给模型，随时可以用「恢复原始记忆」撤回。
-                </p>
-            ) : null}
-        </div>
+        </>
     );
 }
 
-/** 条目 ⋯ 菜单里的「移入事件盒」弹层 */
+/** 条目 ⋯ 菜单里的「移入事件盒」弹层：沿用 modal-sheet + menu-item 结构 */
 export function EventBoxPicker({
     boxes,
     entry,
@@ -294,50 +284,58 @@ export function EventBoxPicker({
     const currentBoxId = getEntryBoxId(entry);
     return (
         <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={onClose}>
-            <div className="modal-sheet mem-box-picker" data-ui="modal-sheet" onClick={event => event.stopPropagation()}>
+            <div className="modal-sheet" data-ui="modal-sheet" onClick={event => event.stopPropagation()}>
                 <div className="modal-header" data-ui="modal-header">
                     <span style={{ width: 28 }} />
                     <h3 className="modal-title">移入事件盒</h3>
                     <button className="modal-header-btn modal-header-btn-muted" onClick={onClose}>
-                        <X size={18} />
+                        <span style={{ fontSize: 18, lineHeight: 1 }}>×</span>
                     </button>
                 </div>
-                <div className="modal-body" data-ui="modal-body">
-                    <p className="mem-box-picker-hint">把围绕同一件事的记忆放进同一个盒子，列表就不会散落各处。</p>
-                    <div className="mem-box-picker-list">
-                        {boxes.map(box => {
-                            const active = box.id === currentBoxId;
-                            return (
-                                <button
-                                    key={box.id}
-                                    className="mem-box-picker-item"
-                                    data-active={active ? "" : undefined}
-                                    onClick={() => onPick(box.id)}
-                                >
-                                    <Folder size={16} strokeWidth={1.75} />
-                                    <span className="mem-box-picker-name">{box.title}</span>
-                                    <span className="mem-box-picker-status">{EVENT_BOX_STATUS_META[box.status].label}</span>
-                                    {active ? <Check size={15} /> : null}
-                                </button>
-                            );
-                        })}
-                        <button className="mem-box-picker-item is-new" onClick={onPickNew}>
-                            <FolderPlus size={16} strokeWidth={1.75} />
-                            <span className="mem-box-picker-name">新建事件盒并放入</span>
+                <div className="modal-body" data-ui="modal-body" style={{ paddingBottom: 20 }}>
+                    <div className="menu-group" style={{ marginTop: 8 }}>
+                        {boxes.map(box => (
+                            <button key={box.id} className="menu-item" onClick={() => onPick(box.id)}>
+                                <BoxIcon open={box.id === currentBoxId} />
+                                <div className="menu-label-group">
+                                    <span className="menu-label">{box.title}</span>
+                                    <span className="menu-desc">{EVENT_BOX_STATUS_META[box.status].label}</span>
+                                </div>
+                                <div className="menu-right">
+                                    {box.id === currentBoxId ? <span className="menu-desc">当前</span> : <ChevronRight size={16} />}
+                                </div>
+                            </button>
+                        ))}
+                        <button className="menu-item" onClick={onPickNew}>
+                            <BoxIcon />
+                            <div className="menu-label-group">
+                                <span className="menu-label">新建事件盒</span>
+                                <span className="menu-desc">建好后这条记忆直接放进去</span>
+                            </div>
+                            <div className="menu-right">
+                                <FolderPlus size={16} strokeWidth={1.6} className="text-secondary" />
+                            </div>
                         </button>
+                        {currentBoxId ? (
+                            <button className="menu-item" onClick={onRemove}>
+                                <BoxIcon />
+                                <div className="menu-label-group">
+                                    <span className="menu-label menu-label-danger">移出事件盒</span>
+                                    <span className="menu-desc">恢复为独立记忆，重新单独参与召回</span>
+                                </div>
+                                <div className="menu-right">
+                                    <ChevronRight size={16} />
+                                </div>
+                            </button>
+                        ) : null}
                     </div>
-                    {currentBoxId ? (
-                        <button className="mem-box-picker-remove" onClick={onRemove}>
-                            从这个事件盒移出（恢复为独立记忆）
-                        </button>
-                    ) : null}
                 </div>
             </div>
         </div>
     );
 }
 
-/** 新建 / 重命名盒子。status 一起改，省得再开一个弹窗。 */
+/** 新建 / 重命名：沿用记忆编辑弹层的字段行样式 */
 export function EventBoxNameDialog({
     title,
     initialTitle,
@@ -362,21 +360,19 @@ export function EventBoxNameDialog({
 
     return (
         <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={onCancel}>
-            <div className="modal-sheet mem-box-name-sheet" data-ui="modal-sheet" onClick={event => event.stopPropagation()}>
+            <div className="modal-sheet mem-edit-sheet" data-ui="modal-sheet" onClick={event => event.stopPropagation()}>
                 <div className="modal-header" data-ui="modal-header">
-                    <button className="modal-header-btn modal-header-btn-muted" onClick={onCancel}>
-                        <X size={18} />
-                    </button>
+                    <button className="modal-header-btn modal-header-btn-muted" onClick={onCancel}>×</button>
                     <h3 className="modal-title">{title}</h3>
                     <button
                         className="modal-header-btn modal-header-btn-action"
                         disabled={!canSave}
                         onClick={() => canSave && onConfirm({ title: name.trim(), status, note: note.trim() })}
                     >
-                        <Check size={18} />
+                        <span style={{ fontSize: 18, lineHeight: 1 }}>✓</span>
                     </button>
                 </div>
-                <div className="modal-body" data-ui="modal-body">
+                <div className="modal-body mem-edit-body" data-ui="modal-body">
                     <div className="mem-edit-field-row">
                         <label className="mem-edit-field-label">盒子名称</label>
                         <input
@@ -389,15 +385,15 @@ export function EventBoxNameDialog({
                     </div>
                     <div className="mem-edit-field-row">
                         <label className="mem-edit-field-label">状态</label>
-                        <div className="mem-box-status-options">
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                             {(Object.keys(EVENT_BOX_STATUS_META) as MemoryEventBox["status"][]).map(key => (
                                 <button
                                     key={key}
+                                    type="button"
                                     className="ui-chip"
                                     style={{ fontSize: 11, padding: "4px 10px" }}
                                     data-selected={status === key ? "" : undefined}
                                     onClick={() => setStatus(key)}
-                                    title={EVENT_BOX_STATUS_META[key].hint}
                                 >
                                     {EVENT_BOX_STATUS_META[key].label}
                                 </button>
@@ -413,57 +409,121 @@ export function EventBoxNameDialog({
                             onChange={event => setNote(event.target.value)}
                         />
                     </div>
-                    <p className="mem-box-picker-hint" style={{ marginTop: 8 }}>
-                        {confirmLabel === "创建" ? "盒子建好后，在记忆条目的 ⋯ 菜单里选「移入事件盒」就能放进去。" : ""}
-                    </p>
+                    <button
+                        className="ui-btn ui-btn-primary mem-edit-save-btn"
+                        disabled={!canSave}
+                        onClick={() => canSave && onConfirm({ title: name.trim(), status, note: note.trim() })}
+                    >
+                        {confirmLabel}
+                    </button>
                 </div>
             </div>
         </div>
     );
 }
 
-/** 删除盒子 / 恢复归档的确认提示（复用 ConfirmDialog 的外观太重，这里用轻量弹层） */
-export function EventBoxConfirm({
-    title,
-    message,
-    confirmLabel,
-    danger,
+/**
+ * 自动归纳的方案预览：算出候选后先给用户过一眼，误判成本远高于这一眼。
+ * 支持逐组取消，剩下的点「全部整理」一次性建盒 + 归档。
+ */
+export function AutoClusterPreview({
+    candidates,
+    selected,
+    busy,
+    busyLabel,
+    onToggle,
     onConfirm,
     onCancel,
 }: {
-    title: string;
-    message: string;
-    confirmLabel: string;
-    danger?: boolean;
+    candidates: AutoClusterCandidate[];
+    selected: Record<string, boolean>;
+    busy: boolean;
+    busyLabel?: string;
+    onToggle: (key: string) => void;
     onConfirm: () => void;
     onCancel: () => void;
 }) {
+    const chosenCount = candidates.filter(item => selected[item.key] !== false).length;
     return (
-        <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={onCancel}>
-            <div className="modal-sheet mem-box-name-sheet" data-ui="modal-sheet" onClick={event => event.stopPropagation()}>
+        <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={busy ? undefined : onCancel}>
+            <div className="modal-sheet" data-ui="modal-sheet" onClick={event => event.stopPropagation()}>
                 <div className="modal-header" data-ui="modal-header">
                     <span style={{ width: 28 }} />
-                    <h3 className="modal-title">{title}</h3>
-                    <button className="modal-header-btn modal-header-btn-muted" onClick={onCancel}>
-                        <X size={18} />
-                    </button>
+                    <h3 className="modal-title">归纳方案（{candidates.length} 组）</h3>
+                    <button className="modal-header-btn modal-header-btn-muted" onClick={onCancel} disabled={busy}>×</button>
                 </div>
-                <div className="modal-body" data-ui="modal-body">
-                    <p className="mem-box-confirm-text">
-                        <AlertCircle size={14} className={danger ? "mem-box-confirm-icon is-danger" : "mem-box-confirm-icon"} />
-                        <span>{message}</span>
+                <div className="modal-body" data-ui="modal-body" style={{ maxHeight: "62vh", overflowY: "auto", paddingBottom: 16 }}>
+                    <p className="menu-group-desc mx-2" style={{ marginBottom: 8 }}>
+                        取消勾选不需要的组。确认后会建盒、生成摘要并归档，原始记忆始终保留。
                     </p>
-                    <div className="mem-box-confirm-actions">
-                        <button className="ui-btn ui-btn-outline" onClick={onCancel}>取消</button>
-                        <button
-                            className={danger ? "ui-btn ui-btn-danger" : "ui-btn ui-btn-primary"}
-                            onClick={onConfirm}
-                        >
-                            {confirmLabel}
-                        </button>
+                    <div className="menu-group">
+                        {candidates.map(candidate => {
+                            const checked = selected[candidate.key] !== false;
+                            return (
+                                <button
+                                    key={candidate.key}
+                                    className="menu-item"
+                                    onClick={() => onToggle(candidate.key)}
+                                    disabled={busy}
+                                >
+                                    <span className="card-icon" style={{ "--icon-color": checked ? BINDING_ACCENTS.memory : "var(--c-icon)" } as React.CSSProperties}>
+                                        {checked ? <Folder size={22} strokeWidth={1.75} /> : <FolderOpen size={22} strokeWidth={1.75} />}
+                                    </span>
+                                    <div className="menu-label-group">
+                                        <span className="menu-label" style={{ opacity: checked ? 1 : 0.5 }}>{candidate.title}</span>
+                                        <span className="menu-desc">
+                                            {candidate.entries.length} 条 · {candidate.earliest} ~ {candidate.latest} · {Math.round(candidate.cohesion * 100)}% 相关
+                                        </span>
+                                    </div>
+                                </button>
+                            );
+                        })}
                     </div>
+                    <button
+                        className="ui-btn ui-btn-primary mem-edit-save-btn"
+                        disabled={busy || chosenCount === 0}
+                        onClick={onConfirm}
+                    >
+                        {busy ? (busyLabel || "处理中...") : `整理 ${chosenCount} 组`}
+                    </button>
                 </div>
             </div>
         </div>
+    );
+}
+
+/** 删除 / 恢复确认：直接用全局 ConfirmDialog，和记忆库其它危险操作一致 */
+export function EventBoxConfirmDialog({
+    kind,
+    entryCount,
+    archivedCount,
+    onConfirm,
+    onCancel,
+}: {
+    kind: "delete" | "restore";
+    entryCount: number;
+    archivedCount: number;
+    onConfirm: () => void;
+    onCancel: () => void;
+}) {
+    return kind === "delete" ? (
+        <ConfirmDialog
+            title="删除这个事件盒？"
+            message={`盒内 ${entryCount} 条记忆不会被删除，会恢复成独立记忆继续参与召回。${archivedCount > 0 ? "归档状态也会一并解除。" : ""}`}
+            icon={AlertCircle}
+            variant="danger"
+            confirmLabel="删除盒子"
+            onConfirm={onConfirm}
+            onCancel={onCancel}
+        />
+    ) : (
+        <ConfirmDialog
+            title="恢复原始记忆？"
+            message={`会删掉这次生成的摘要，把 ${archivedCount} 条原始记忆恢复为独立召回。盒子本身保留。`}
+            icon={AlertCircle}
+            confirmLabel="恢复"
+            onConfirm={onConfirm}
+            onCancel={onCancel}
+        />
     );
 }
