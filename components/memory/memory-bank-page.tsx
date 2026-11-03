@@ -394,8 +394,10 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         boxId?: string;
         title: string;
         keywordsText: string;
+        summaryText?: string;
         pendingEntryId?: string;
     } | null>(null);
+    const [savingBoxDialog, setSavingBoxDialog] = useState(false);
     const [boxConfirm, setBoxConfirm] = useState<{ kind: "delete" | "restore"; boxId: string } | null>(null);
     const [boxAddPickerOpen, setBoxAddPickerOpen] = useState(false);
     const [boxAddSelectedIds, setBoxAddSelectedIds] = useState<Record<string, boolean>>({});
@@ -560,7 +562,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
 
     // ── 事件盒操作 ──
     const handleSaveBoxDialog = async () => {
-        if (!selectedCharId || !boxDialog) return;
+        if (!selectedCharId || !boxDialog || savingBoxDialog) return;
         const cleanTitle = boxDialog.title.trim();
         if (!cleanTitle) {
             showNotice("请输入事件盒名称");
@@ -570,48 +572,117 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             .split(/[、，,；;|/\s]+/)
             .map(s => s.trim())
             .filter(Boolean);
+        const cleanSummary = (boxDialog.summaryText ?? "").trim();
         const pendingEntryId = boxDialog.pendingEntryId;
-        if (boxDialog.boxId) {
-            const next = updateEventBox(selectedCharId, boxDialog.boxId, {
-                title: cleanTitle,
-                keywords: parsedKws,
-            });
-            setBoxes(next);
-            // 同步更新该盒子的总结条目关键词
-            const targetBox = next.find(b => b.id === boxDialog.boxId);
-            if (targetBox) {
-                const { digestEntry } = getBoxLayers(longTermEntries, targetBox);
-                if (digestEntry) {
-                    const updatedDigest: MemoryEntry = {
-                        ...digestEntry,
-                        updatedAt: new Date().toISOString(),
-                        metadata: {
-                            ...(digestEntry.metadata ?? {}),
-                            eventBoxTitle: cleanTitle,
-                            keywords: parsedKws,
-                        },
-                    };
-                    await saveMemoryEntry(updatedDigest);
-                    setLongTermEntries(prev => prev.map(item => (item.id === updatedDigest.id ? updatedDigest : item)));
+        setSavingBoxDialog(true);
+        try {
+            if (boxDialog.boxId) {
+                const targetBoxBefore = boxes.find(b => b.id === boxDialog.boxId);
+                const { digestEntry, allMemberEntries } = targetBoxBefore
+                    ? getBoxLayers(longTermEntries, targetBoxBefore)
+                    : { digestEntry: undefined, allMemberEntries: [] as MemoryEntry[] };
+                const now = new Date().toISOString();
+                let nextDigestId = targetBoxBefore?.digestEntryId;
+
+                if (digestEntry || cleanSummary) {
+                    const finalBody = cleanSummary || (digestEntry ? (stripMemoryStructuredSections(digestEntry.content) || digestEntry.content).trim() : "");
+                    if (finalBody) {
+                        const prevClean = digestEntry ? (stripMemoryStructuredSections(digestEntry.content) || digestEntry.content).trim() : "";
+                        const prevKws = Array.isArray(digestEntry?.metadata?.keywords)
+                            ? (digestEntry!.metadata!.keywords as unknown[]).map(String).join(",")
+                            : "";
+                        const bodyOrKwsChanged = !digestEntry || finalBody !== prevClean || parsedKws.join(",") !== prevKws;
+
+                        let embedding = digestEntry?.embedding;
+                        if (bodyOrKwsChanged || !embedding?.length) {
+                            const embInput = parsedKws.length > 0 ? `关键词：${parsedKws.join("、")}\n${finalBody}` : finalBody;
+                            const newEmb = await maybeBuildManualMemoryEmbedding("long_term", embInput);
+                            if (newEmb) embedding = newEmb;
+                        }
+
+                        const chronologicAll = [...allMemberEntries].sort((a, b) =>
+                            String(a.metadata?.eventDate ?? a.createdAt).localeCompare(String(b.metadata?.eventDate ?? b.createdAt))
+                        );
+                        const earliest = chronologicAll[0]
+                            ? String(chronologicAll[0].metadata?.eventDate ?? chronologicAll[0].createdAt.slice(0, 10))
+                            : now.slice(0, 10);
+                        const latest = chronologicAll[chronologicAll.length - 1]
+                            ? String(chronologicAll[chronologicAll.length - 1].metadata?.eventDate ?? chronologicAll[chronologicAll.length - 1].createdAt.slice(0, 10))
+                            : now.slice(0, 10);
+
+                        nextDigestId = digestEntry?.id ?? `mem_lt_boxdigest_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                        const updatedDigest: MemoryEntry = {
+                            id: nextDigestId,
+                            characterId: selectedCharId,
+                            sourceApp: digestEntry?.sourceApp ?? chronologicAll[0]?.sourceApp ?? "chat",
+                            type: "long_term",
+                            content: finalBody,
+                            embedding,
+                            importance: digestEntry?.importance ?? 0.85,
+                            accessCount: digestEntry?.accessCount ?? 0,
+                            createdAt: digestEntry?.createdAt ?? chronologicAll[0]?.createdAt ?? now,
+                            updatedAt: now,
+                            metadata: {
+                                ...(digestEntry?.metadata ?? {}),
+                                origin: "event_box_digest",
+                                editedByUser: true,
+                                eventBoxId: boxDialog.boxId,
+                                eventBoxDigestOf: boxDialog.boxId,
+                                eventBoxTitle: cleanTitle,
+                                eventDate: latest,
+                                timeSpan: earliest === latest ? earliest : `${earliest} ~ ${latest}`,
+                                keywords: parsedKws,
+                                sourceEntryCount: allMemberEntries.length,
+                                topicSplitV2: true,
+                                resplitDone: true,
+                                ...(embedding ? { embeddingDim: embedding.length } : {}),
+                            },
+                        };
+                        await saveMemoryEntry(updatedDigest);
+                    }
                 }
-            }
-            showNotice("事件盒已更新");
-        } else {
-            const created = createEventBox(selectedCharId, cleanTitle, "active", undefined, parsedKws);
-            setBoxes(loadEventBoxes(selectedCharId));
-            if (pendingEntryId) {
-                const target = longTermEntries.find(e => e.id === pendingEntryId);
-                if (target) {
-                    const updated = await moveEntryToBox(target, created.id);
-                    setLongTermEntries(prev => prev.map(item => (item.id === updated.id ? updated : item)));
+
+                // 同步更新盒内所有关联条目的 eventBoxTitle
+                for (const member of allMemberEntries) {
+                    if (member.metadata?.eventBoxTitle !== cleanTitle) {
+                        await saveMemoryEntry({
+                            ...member,
+                            updatedAt: now,
+                            metadata: {
+                                ...(member.metadata ?? {}),
+                                eventBoxTitle: cleanTitle,
+                            },
+                        });
+                    }
                 }
-                setBoxMoveEntryId(null);
-                showNotice(`已创建事件盒「${created.title}」并放入记忆`);
+
+                const next = updateEventBox(selectedCharId, boxDialog.boxId, {
+                    title: cleanTitle,
+                    keywords: parsedKws,
+                    ...(nextDigestId ? { digestEntryId: nextDigestId } : {}),
+                });
+                setBoxes(next);
+                await loadDetailData(selectedCharId);
+                showNotice("事件盒与总结内容已更新");
             } else {
-                showNotice(`已创建事件盒「${created.title}」`);
+                const created = createEventBox(selectedCharId, cleanTitle, "active", undefined, parsedKws);
+                setBoxes(loadEventBoxes(selectedCharId));
+                if (pendingEntryId) {
+                    const target = longTermEntries.find(e => e.id === pendingEntryId);
+                    if (target) {
+                        const updated = await moveEntryToBox(target, created.id);
+                        setLongTermEntries(prev => prev.map(item => (item.id === updated.id ? updated : item)));
+                    }
+                    setBoxMoveEntryId(null);
+                    showNotice(`已创建事件盒「${created.title}」并放入记忆`);
+                } else {
+                    showNotice(`已创建事件盒「${created.title}」`);
+                }
             }
+            setBoxDialog(null);
+        } finally {
+            setSavingBoxDialog(false);
         }
-        setBoxDialog(null);
     };
 
     const handleMoveSingleEntryToBox = async (boxId: string) => {
@@ -2040,6 +2111,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                                                     boxId: box.id,
                                                                                     title: box.title,
                                                                                     keywordsText: boxKeywords.join("、"),
+                                                                                    summaryText: digestClean,
                                                                                 });
                                                                             }}
                                                                         >
@@ -2571,18 +2643,22 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                     );
                 })()}
 
-                {/* 事件盒：新建 / 编辑弹窗（删掉事件状态和备注，新增检索关键词填写） */}
+                {/* 事件盒：新建 / 编辑弹窗（支持修改事件盒标题、阶段总结正文与检索关键词） */}
                 {boxDialog && (
-                    <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={() => setBoxDialog(null)}>
+                    <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={() => !savingBoxDialog && setBoxDialog(null)}>
                         <div className="modal-sheet mem-edit-sheet" data-ui="modal-sheet" onClick={ev => ev.stopPropagation()}>
                             <div className="modal-header" data-ui="modal-header">
-                                <button className="modal-header-btn modal-header-btn-muted" onClick={() => setBoxDialog(null)}>
+                                <button
+                                    className="modal-header-btn modal-header-btn-muted"
+                                    disabled={savingBoxDialog}
+                                    onClick={() => setBoxDialog(null)}
+                                >
                                     <X size={18} />
                                 </button>
-                                <h3 className="modal-title">{boxDialog.boxId ? "编辑事件盒" : "新建事件盒"}</h3>
+                                <h3 className="modal-title">{boxDialog.boxId ? "编辑事件盒与总结" : "新建事件盒"}</h3>
                                 <button
                                     className="modal-header-btn modal-header-btn-action"
-                                    disabled={!boxDialog.title.trim()}
+                                    disabled={savingBoxDialog || !boxDialog.title.trim()}
                                     onClick={() => void handleSaveBoxDialog()}
                                 >
                                     <Check size={18} />
@@ -2590,31 +2666,46 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                             </div>
                             <div className="modal-body mem-edit-body" data-ui="modal-body">
                                 <div className="mem-edit-field-row">
-                                    <label className="mem-edit-field-label">事件盒名称</label>
+                                    <label className="mem-edit-field-label">事件盒标题</label>
                                     <input
                                         type="text"
                                         className="ui-input ts-12"
                                         placeholder="例如：筹备生日礼物、学法语的约定"
+                                        disabled={savingBoxDialog}
                                         value={boxDialog.title}
                                         onChange={e => setBoxDialog(prev => prev ? { ...prev, title: e.target.value } : prev)}
                                     />
                                 </div>
+                                {boxDialog.boxId && (
+                                    <div className="mem-edit-field-row">
+                                        <label className="mem-edit-field-label">事件阶段总结</label>
+                                        <textarea
+                                            className="ui-textarea ts-12"
+                                            style={{ minHeight: 110, lineHeight: 1.65 }}
+                                            placeholder="在此直接编写或修改该事件盒的阶段总结内容（保存后将同步更新记忆条目与向量）"
+                                            disabled={savingBoxDialog}
+                                            value={boxDialog.summaryText ?? ""}
+                                            onChange={e => setBoxDialog(prev => prev ? { ...prev, summaryText: e.target.value } : prev)}
+                                        />
+                                    </div>
+                                )}
                                 <div className="mem-edit-field-row">
                                     <label className="mem-edit-field-label">检索关键词</label>
                                     <input
                                         type="text"
                                         className="ui-input ts-12"
                                         placeholder="用顿号或逗号分隔（生成总结时也会自动生成）"
+                                        disabled={savingBoxDialog}
                                         value={boxDialog.keywordsText}
                                         onChange={e => setBoxDialog(prev => prev ? { ...prev, keywordsText: e.target.value } : prev)}
                                     />
                                 </div>
                                 <button
                                     className="ui-btn ui-btn-primary mem-edit-save-btn"
-                                    disabled={!boxDialog.title.trim()}
+                                    disabled={savingBoxDialog || !boxDialog.title.trim()}
                                     onClick={() => void handleSaveBoxDialog()}
                                 >
-                                    {boxDialog.boxId ? "保存修改" : "创建事件盒"}
+                                    {savingBoxDialog ? "保存中..." : boxDialog.boxId ? "保存修改" : "创建事件盒"}
                                 </button>
                             </div>
                         </div>

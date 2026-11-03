@@ -288,11 +288,11 @@ export async function unarchiveSingleBoxEntry(entry: MemoryEntry): Promise<Memor
 
 // ── 手动总结事件盒（生成/更新「先前事件的总结」+ 自动向量化 + 原记忆归档）──
 
-export const DEFAULT_EVENT_BOX_SUMMARY_PROMPT = `你是一个角色记忆整理助手。下面是{{char}}与用户围绕「{{title}}」这件事的记忆记录。
-请将它们整合总结为一段脉络清晰、事实准确的阶段性事件总结。
+export const DEFAULT_EVENT_BOX_SUMMARY_PROMPT = `你是一个角色记忆整理助手。下面是{{char}}与用户围绕同一事件脉络的记忆记录。
+请将它们整合总结为一段脉络清晰、事实准确的阶段性事件总结，并根据整合后的完整事件进展更新一个精准的事件盒标题。
 
 角色：{{char}}
-事件主题：{{title}}
+当前事件盒名称：{{title}}
 时间跨度：{{earliest}} 至 {{latest}}
 {{previousDigestSection}}
 本次需要并入的事件记录（按时间从早到晚）：
@@ -300,10 +300,12 @@ export const DEFAULT_EVENT_BOX_SUMMARY_PROMPT = `你是一个角色记忆整理�
 
 严格要求：
 1. **融合先前总结与新进展**：如果有「先前事件的总结」，必须保留其中的关键背景、约定与结论，并将新事件的发展自然衔接进去；若新进展推翻或改变了旧状态，以最新进展为准。
-2. **严禁编造**：只整合已有记录，绝不虚构任何未发生的细节。
-3. **正文不写具体日期时间戳**（系统会自动标注时间跨度）。
-4. **第三人称客观叙述**，控制在 100～260 字之间，一段话讲清楚前因后果与当前状态。
-5. **末尾固定输出两行元数据**（用于检索与向量化）：
+2. **同步更新事件标题**：根据整合后的前因后果与最新进展，提炼一个 5～14 字的中文事件标题（必须用动宾短语或主谓短语点明具体发生了什么事，如“筹备海边生日惊喜”、“胃痛急诊与悉心照料”；**严禁使用“XX与XX”、“XX和XX”、“关于XX”这种名词堆砌格式**，不要带人名作并列主语，不要加引号或书名号）。
+3. **严禁编造**：只整合已有记录，绝不虚构任何未发生的细节。
+4. **正文不写具体日期时间戳**（系统会自动标注时间跨度）。
+5. **第三人称客观叙述**，控制在 100～260 字之间，一段话讲清楚前因后果与当前状态。
+6. **末尾固定输出三行元数据**（用于更新标题、检索与向量化）：
+**事件标题**：更新后的事件标题
 **重要性**：（1-10的整数）
 **检索关键词**：关键词1、关键词2、关键词3、关键词4`;
 
@@ -401,7 +403,24 @@ export async function summarizeEventBoxManually(
 
     const rawOutput = result.content.trim();
     const parsedMeta = extractMemoryStructuredMeta(rawOutput);
-    const cleanSummaryBody = stripMemoryStructuredSections(rawOutput) || rawOutput;
+
+    // 提取模型生成的更新标题（**事件标题**：...），并从总结正文中剥离该元数据行
+    const titleMatch = rawOutput.match(/(?:\*\*事件标题\*\*|事件标题|更新标题)\s*[：:]\s*([^\n]+)/i);
+    let resolvedTitle = box.title;
+    if (titleMatch?.[1]) {
+        let candidateTitle = titleMatch[1].replace(/[《》「」"“”*`]/g, "").trim();
+        if (/^[\u4e00-\u9fa5]{1,5}[与和及][\u4e00-\u9fa5]{1,5}$/.test(candidateTitle)) {
+            candidateTitle = candidateTitle.replace(/[与和及]/, "");
+        }
+        if (candidateTitle.length >= 2) {
+            resolvedTitle = candidateTitle.slice(0, 20);
+        }
+    }
+
+    const strippedOutput = rawOutput
+        .replace(/^\s*(?:\*\*事件标题\*\*|事件标题|更新标题)\s*[：:][^\n]*\n*/gim, "")
+        .trim();
+    const cleanSummaryBody = stripMemoryStructuredSections(strippedOutput) || strippedOutput;
     if (!cleanSummaryBody) {
         return { success: false, error: "总结内容为空" };
     }
@@ -455,7 +474,7 @@ export async function summarizeEventBoxManually(
             origin: "event_box_digest",
             [EVENT_BOX_META_KEYS.boxId]: box.id,
             [EVENT_BOX_META_KEYS.digestOf]: box.id,
-            eventBoxTitle: box.title,
+            eventBoxTitle: resolvedTitle,
             eventDate: latest,
             timeSpan: earliest === latest ? earliest : `${earliest} ~ ${latest}`,
             keywords: combinedKeywords,
@@ -467,9 +486,9 @@ export async function summarizeEventBoxManually(
     };
     await saveMemoryEntry(digestEntry);
 
-    // 将盒内所有成员条目打上「已归档」标记，显示在事件盒下方的「已归档事件」区
+    // 将盒内所有成员条目打上「已归档」标记，并同步更新最新事件盒标题
     for (const member of allMemberEntries) {
-        if (isEntryArchived(member) && member.metadata?.[EVENT_BOX_META_KEYS.archivedInto] === box.id && member.metadata?.eventBoxTitle === box.title) {
+        if (isEntryArchived(member) && member.metadata?.[EVENT_BOX_META_KEYS.archivedInto] === box.id && member.metadata?.eventBoxTitle === resolvedTitle) {
             continue;
         }
         await saveMemoryEntry({
@@ -478,7 +497,7 @@ export async function summarizeEventBoxManually(
             metadata: {
                 ...(member.metadata ?? {}),
                 [EVENT_BOX_META_KEYS.boxId]: box.id,
-                eventBoxTitle: box.title,
+                eventBoxTitle: resolvedTitle,
                 [EVENT_BOX_META_KEYS.archivedInto]: box.id,
                 [EVENT_BOX_META_KEYS.archivedAt]: now,
             },
@@ -497,6 +516,7 @@ export async function summarizeEventBoxManually(
     ];
 
     updateEventBox(characterId, box.id, {
+        title: resolvedTitle,
         digestEntryId: digestId,
         digestHistory: nextHistory,
         keywords: combinedKeywords,
@@ -615,6 +635,9 @@ export async function summarizeAllPendingEventBoxes(
             currentEntries = hasDigest
                 ? currentEntries.map(e => (e.id === digest.id ? digest : e))
                 : [digest, ...currentEntries];
+            const latestBoxTitle = typeof digest.metadata?.eventBoxTitle === "string" && digest.metadata.eventBoxTitle
+                ? digest.metadata.eventBoxTitle
+                : box.title;
             currentEntries = currentEntries.map(e => {
                 if (getEntryBoxId(e) === box.id && !isEntryBoxDigest(e)) {
                     return {
@@ -623,7 +646,7 @@ export async function summarizeAllPendingEventBoxes(
                         metadata: {
                             ...(e.metadata ?? {}),
                             [EVENT_BOX_META_KEYS.boxId]: box.id,
-                            eventBoxTitle: box.title,
+                            eventBoxTitle: latestBoxTitle,
                             [EVENT_BOX_META_KEYS.archivedInto]: box.id,
                             [EVENT_BOX_META_KEYS.archivedAt]: now,
                         },
