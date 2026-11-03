@@ -1,7 +1,7 @@
 "use client";
 
 import { Component, useState, useEffect, useCallback, type CSSProperties, type ReactNode } from "react";
-import { Trash2, Zap, Clock, Users, Archive, AlertCircle, Search, Brain, FileText, MoreHorizontal, Plus, Edit3, X, Check, ChevronRight, Filter, SlidersHorizontal, Sparkles, Heart, Folder, type LucideIcon } from "lucide-react";
+import { Trash2, Zap, Clock, Users, Archive, AlertCircle, Search, Brain, FileText, MoreHorizontal, Plus, Edit3, X, Check, ChevronLeft, ChevronRight, Filter, SlidersHorizontal, Sparkles, Heart, Folder, type LucideIcon } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { MemoryTimeline } from "./memory-timeline";
 import { Toggle } from "@/components/ui/form";
@@ -92,7 +92,7 @@ import {
     EventBoxPicker,
 } from "./memory-event-boxes";
 
-type MemoryView = "list" | "detail" | "settings";
+type MemoryView = "list" | "detail" | "settings" | "boxes";
 type MemoryTab = "short" | "shared" | "core" | "long";
 type MemoryBudgetKey = "shortTermTokenBudget" | "coreMemoryTokenBudget" | "longTermTokenBudget";
 
@@ -342,11 +342,9 @@ type Props = {
     selectedCharId?: string;
     onSelectChar: (charId: string) => void;
     onNotice?: (msg: string) => void;
-    /** 从事件盒页面退回记忆列表（返回箭头由外层 PageShell 管，这里只处理页内跳转） */
-    onExitBoxes?: () => void;
 };
 
-export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice, onExitBoxes }: Props) {
+export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }: Props) {
     const [config, setConfig] = useState<MemoryConfig>(loadMemoryConfig);
     const [characters, setCharacters] = useState<CharacterMemoryInfo[]>([]);
     const [activeTab, setActiveTab] = useState<MemoryTab>("short");
@@ -512,11 +510,21 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice, o
             setExpandedId(null);
             setSearchQuery("");
             setSearchScoreMap(null);
-            // 换角色时退回条目列表：否则会停在上一个角色某个盒子的盒内页，看着像少了记忆
-            setBoxView(false);
+            // 换角色时退回盒列表：否则会停在上一个角色某个盒子的盒内页，看着像少了记忆
             setActiveBoxId(null);
             loadDetailData(selectedCharId);
         }
+    }, [view, selectedCharId, loadDetailData]);
+
+    // 进入事件盒页：退回盒列表（不要停在上次打开的盒内页），并刷新一次数据
+    useEffect(() => {
+        if (view !== "boxes" || !selectedCharId) return;
+        setActiveBoxId(null);
+        setExpandedId(null);
+        setEntryMenuId(null);
+        setSearchQuery("");
+        setSearchScoreMap(null);
+        void loadDetailData(selectedCharId);
     }, [view, selectedCharId, loadDetailData]);
 
     // Reset editing prompt when leaving settings
@@ -1433,7 +1441,8 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice, o
         }
     };
 
-    const renderMemoryEntries = (type: MemoryEntry["type"], entries: MemoryEntry[], emptyText: string) => {
+    /** compact=true 用在事件盒页：藏掉「清除全部长期记忆」这类批量危险操作 */
+    const renderMemoryEntries = (type: MemoryEntry["type"], entries: MemoryEntry[], emptyText: string, compact = false) => {
         const label = type === "core" ? "核心记忆" : "长期记忆";
         const missingVectorCount = type === "long_term"
             ? entries.filter(e => !isEntryVectorValid(e)).length
@@ -1507,13 +1516,15 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice, o
                                     <span>{embeddingAll ? "向量化中..." : `补全向量(${missingVectorCount})`}</span>
                                 </button>
                             )}
-                            <button
-                                className="mem-entry-clear-btn"
-                                onClick={() => setConfirmClearAll(true)}
-                            >
-                                <Trash2 size={15} strokeWidth={1.8} />
-                                <span>清除{label}</span>
-                            </button>
+                            {compact ? null : (
+                                <button
+                                    className="mem-entry-clear-btn"
+                                    onClick={() => setConfirmClearAll(true)}
+                                >
+                                    <Trash2 size={15} strokeWidth={1.8} />
+                                    <span>清除{label}</span>
+                                </button>
+                            )}
                         </div>
 
                         <div className="g-card" style={{ padding: "8px 12px", flexDirection: "row", alignItems: "center", gap: 8 }}>
@@ -2289,7 +2300,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice, o
                                 />
                             </div>
                             <div style={{ padding: "0 16px" }}>
-                                {renderMemoryEntries("long_term", longTermEntries, "这个事件盒里还没有记忆")}
+                                {renderMemoryEntries("long_term", longTermEntries, "这个事件盒里还没有记忆", true)}
                             </div>
                         </>
                     ) : (

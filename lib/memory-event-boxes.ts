@@ -11,7 +11,7 @@
 // 需要模型参与的重总结在 lib/memory-event-box-digest.ts。
 
 import type { MemoryEntry } from "./memory-types";
-import { kvGet, kvSet, kvRemove, registerDynamicPrefix } from "./kv-db";
+import { kvGet, kvSet, registerDynamicPrefix } from "./kv-db";
 
 /** 每个角色一份盒子表，跟着角色走（记忆是角色私有的，盒子也不跨角色共享） */
 export const EVENT_BOX_KV_PREFIX = "ai_phone_memory_boxes_";

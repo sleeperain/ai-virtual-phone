@@ -9,7 +9,6 @@
 // 失败就用关键词兜底，不阻塞流程。
 
 import type { MemoryEntry } from "./memory-types";
-import { resolveAuxiliaryApiConfig } from "./settings-storage";
 import { cosineSimilarity, keywordOverlapRatio } from "./memory-embedding";
 import { resolveSummarizationApiConfig } from "./memory-summarizer";
 import { simpleLLMCall } from "./api-helpers";
@@ -123,10 +122,6 @@ export function clusterMemories(entries: MemoryEntry[]): AutoClusterCandidate[] 
                 dsu.union(i, j);
                 pairScores.set(`${i}:${j}`, score);
             }
-        }
-        // 每处理完一行让出主线程，避免上百条记忆时页面卡住
-        if (i % 40 === 39) {
-            // 同步函数里没法 await，这里只做规模控制：AUTO_CLUSTER_ENTRY_LIMIT 已封顶
         }
     }
 

@@ -7,19 +7,19 @@
 //   - 确认 = 全局 ConfirmDialog
 // 不再另造一套卡片样式，否则一眼就能看出是后来贴上去的。
 
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import {
-    Folder,
-    FolderPlus,
-    FolderOpen,
+    AlertCircle,
     ChevronRight,
-    Sparkles,
-    RotateCcw,
-    Wand2,
+    Folder,
+    FolderOpen,
+    FolderPlus,
     History,
+    RotateCcw,
+    Sparkles,
+    Wand2,
 } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/modal";
-import { AlertCircle } from "lucide-react";
 import type { MemoryEntry } from "@/lib/memory-types";
 import {
     EVENT_BOX_STATUS_META,
@@ -33,7 +33,7 @@ import { eventBoxNeedsRedigest } from "@/lib/memory-event-box-digest";
 import { BINDING_ACCENTS } from "@/lib/ui-accent-colors";
 import type { AutoClusterCandidate } from "@/lib/memory-event-box-auto";
 
-const boxIconStyle = { "--icon-color": BINDING_ACCENTS.memory } as React.CSSProperties;
+const boxIconStyle = { "--icon-color": BINDING_ACCENTS.memory } as CSSProperties;
 
 function BoxIcon({ open }: { open?: boolean }) {
     const Icon = open ? FolderOpen : Folder;
@@ -466,7 +466,7 @@ export function AutoClusterPreview({
                                     onClick={() => onToggle(candidate.key)}
                                     disabled={busy}
                                 >
-                                    <span className="card-icon" style={{ "--icon-color": checked ? BINDING_ACCENTS.memory : "var(--c-icon)" } as React.CSSProperties}>
+                                    <span className="card-icon" style={{ "--icon-color": checked ? BINDING_ACCENTS.memory : "var(--c-icon)" } as CSSProperties}>
                                         {checked ? <Folder size={22} strokeWidth={1.75} /> : <FolderOpen size={22} strokeWidth={1.75} />}
                                     </span>
                                     <div className="menu-label-group">

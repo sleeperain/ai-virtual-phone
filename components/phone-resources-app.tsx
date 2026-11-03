@@ -153,7 +153,6 @@ export function PhoneResourcesApp({ onClose, onNotice, initialPage }: { onClose:
                 {currentPage === "memory" && (
                     <MemoryBankPage
                         view={memoryView}
-                        onExitBoxes={() => setMemoryView("detail")}
                         selectedCharId={memoryCharId}
                         onSelectChar={handleSelectChar}
                         onNotice={onNotice}
