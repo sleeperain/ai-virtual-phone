@@ -75,6 +75,7 @@ import {
     moveEntryToBox,
     removeEntryFromBox,
     restoreEventBoxArchivedEntries,
+    summarizeAllPendingEventBoxes,
     summarizeEventBoxManually,
     unarchiveSingleBoxEntry,
     updateEventBox,
@@ -384,6 +385,8 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const [boxes, setBoxes] = useState<MemoryEventBox[]>([]);
     const [activeBoxId, setActiveBoxId] = useState<string | null>(null);
     const [boxSummarizing, setBoxSummarizing] = useState(false);
+    const [batchBoxSummarizing, setBatchBoxSummarizing] = useState(false);
+    const [batchBoxProgress, setBatchBoxProgress] = useState("");
     const [digestHistoryOpen, setDigestHistoryOpen] = useState(false);
     const [boxMoveEntryId, setBoxMoveEntryId] = useState<string | null>(null);
     const [boxDialog, setBoxDialog] = useState<{
@@ -715,17 +718,53 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         }
     };
 
-    const handleConfirmSmartSuggestions = async () => {
+    /** 批量总结所有含「新事件」或待总结内容的事件盒 */
+    const handleBatchSummarizeBoxes = async (targetBoxIds?: string[]) => {
+        if (!selectedCharId || batchBoxSummarizing || boxSummarizing) return;
+        setBatchBoxSummarizing(true);
+        setBatchBoxProgress("准备中");
+        try {
+            const latestEntries = await loadMemoryEntriesByType(selectedCharId, "long_term");
+            const res = await summarizeAllPendingEventBoxes(
+                selectedCharId,
+                selectedChar?.name ?? "角色",
+                latestEntries,
+                targetBoxIds,
+                (done, total) => setBatchBoxProgress(`${done}/${total}`),
+            );
+            await loadDetailData(selectedCharId);
+            if (res.summarizedCount > 0) {
+                showNotice(
+                    res.failedCount > 0
+                        ? `已完成 ${res.summarizedCount} 个事件盒总结（${res.failedCount} 个失败：${res.lastError ?? ""}）`
+                        : `已批量完成 ${res.summarizedCount} 个事件盒的总结与归档`
+                );
+            } else if (res.failedCount > 0) {
+                showNotice(res.lastError || "批量总结失败");
+            } else {
+                showNotice("当前没有需要更新总结的事件盒");
+            }
+        } catch (err) {
+            showNotice("批量总结出错: " + String(err));
+        } finally {
+            setBatchBoxSummarizing(false);
+            setBatchBoxProgress("");
+        }
+    };
+
+    const handleConfirmSmartSuggestions = async (autoSummarize = false) => {
         if (!selectedCharId || smartBusy) return;
         const chosen = smartSuggestions.filter(s => smartSelected[s.key]);
         if (chosen.length === 0) return;
         setSmartBusy(true);
         try {
             let totalMoved = 0;
+            const touchedBoxIds: string[] = [];
             for (const group of chosen) {
                 const targetBoxId = group.targetBoxId
                     ? group.targetBoxId
                     : createEventBox(selectedCharId, group.title, "active").id;
+                touchedBoxIds.push(targetBoxId);
                 for (const entry of group.entries) {
                     await moveEntryToBox(entry, targetBoxId);
                     totalMoved += 1;
@@ -734,7 +773,12 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             setSmartSuggestions([]);
             setSmartSelected({});
             await loadDetailData(selectedCharId);
-            showNotice(`已将 ${totalMoved} 条记忆放入事件盒，请点进对应事件盒手动点击「总结」`);
+            if (autoSummarize && touchedBoxIds.length > 0) {
+                setSmartBusy(false);
+                await handleBatchSummarizeBoxes(touchedBoxIds);
+            } else {
+                showNotice(`已将 ${totalMoved} 条记忆放入事件盒，可点击顶栏「批量总结」或点开事件盒总结`);
+            }
         } catch (err) {
             showNotice("归入事件盒出错: " + String(err));
         } finally {
@@ -1815,9 +1859,13 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                             />
                         )
                     ) : activeTab === "boxes" ? (
-                        /* ── Event Boxes: 严格按五层行序渲染 + 点击卡片展开近期事件与已归档事件 ── */
+                        /* ── Event Boxes: 标题+日期同在分割线之上 + 支持一键批量总结 + 点击展开关联事件 ── */
                         (() => {
                             const ungroupedCount = longTermEntries.filter(e => !getEntryBoxId(e) && !isEntryBoxDigest(e)).length;
+                            const pendingSummarizeBoxCount = boxes.filter(b => {
+                                const { digestEntry, newEntries, allMemberEntries } = getBoxLayers(longTermEntries, b);
+                                return newEntries.length > 0 || (!digestEntry && allMemberEntries.length > 0);
+                            }).length;
                             return (
                                 <>
                                     {entryMenuId && (
@@ -1840,11 +1888,26 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                 <button
                                                     className="mem-entry-add-btn"
                                                     onClick={() => void handleRunSmartBoxSuggest()}
-                                                    disabled={smartBusy}
-                                                    title="识别同一件事的相关记忆并推荐放入事件盒（仅归盒，不自动总结）"
+                                                    disabled={smartBusy || batchBoxSummarizing}
+                                                    title="识别同一件事的相关记忆并推荐放入事件盒"
                                                 >
                                                     <Sparkles size={14} strokeWidth={1.8} />
                                                     <span>{smartBusy ? "识别中..." : `智能关联记忆(${ungroupedCount})`}</span>
+                                                </button>
+                                            )}
+                                            {pendingSummarizeBoxCount > 0 && (
+                                                <button
+                                                    className="mem-entry-add-btn"
+                                                    onClick={() => void handleBatchSummarizeBoxes()}
+                                                    disabled={batchBoxSummarizing || boxSummarizing}
+                                                    title="一键批量总结所有包含新事件的事件盒并自动向量化"
+                                                >
+                                                    <Zap size={14} strokeWidth={1.8} />
+                                                    <span>
+                                                        {batchBoxSummarizing
+                                                            ? `批量总结中(${batchBoxProgress})...`
+                                                            : `批量总结(${pendingSummarizeBoxCount})`}
+                                                    </span>
                                                 </button>
                                             )}
                                         </div>
@@ -1852,7 +1915,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
 
                                     {boxes.length === 0 ? (
                                         <div className="mem-empty-card">
-                                            <p>暂无事件盒。将围绕同一件事的记忆关联到一起，点击卡片即可展开关联事件并手动总结。</p>
+                                            <p>暂无事件盒。将围绕同一件事的记忆关联到一起，点击卡片即可展开关联事件并总结。</p>
                                             <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
                                                 <button
                                                     className="mem-empty-add-btn"
@@ -1886,6 +1949,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                 : (digestEntry && Array.isArray(digestEntry.metadata?.keywords)
                                                     ? (digestEntry.metadata.keywords as unknown[]).map(String)
                                                     : []);
+                                            const boxSpan = formatBoxSpan(allMemberEntries);
 
                                             return (
                                                 <div
@@ -1899,11 +1963,27 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                         setActiveBoxId(isBoxOpen ? null : box.id);
                                                     }}
                                                 >
-                                                    {/* 第一行：最左侧标题，最右侧菜单按钮 */}
-                                                    <div className="mem-report-head" style={{ alignItems: "center" }}>
-                                                        <span className="ts-13 font-bold" style={{ color: "var(--c-text)" }}>
-                                                            {box.title}
-                                                        </span>
+                                                    {/* 头部（位于虚线分割线之上）：左侧为标题 + 紧跟其下的日期信息，右侧为操作菜单 */}
+                                                    <div className="mem-report-head" style={{ alignItems: "flex-start" }}>
+                                                        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 3, minWidth: 0, flex: 1 }}>
+                                                            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                                                                <span className="ts-13 font-bold" style={{ color: "var(--c-text)" }}>
+                                                                    {box.title}
+                                                                </span>
+                                                                {newEntries.length > 0 && (
+                                                                    <span
+                                                                        className="mem-stat-pill"
+                                                                        style={{ fontWeight: 700, borderRadius: 5 }}
+                                                                        title="盒内有尚未并入总结的新事件"
+                                                                    >
+                                                                        +{newEntries.length} 条新事件
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            <div className="ts-11 text-secondary" style={{ letterSpacing: "0.4px", textAlign: "left", lineHeight: 1.4 }}>
+                                                                {boxSpan ? `事件跨度: ${boxSpan} · ` : ""}最近更新：{formatIsoTimestamp(box.updatedAt)}
+                                                            </div>
+                                                        </div>
                                                         <div className="mem-report-actions">
                                                             <div className="mem-entry-menu-wrap">
                                                                 <button
@@ -1919,7 +1999,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                                 {entryMenuId === menuKey && (
                                                                     <div className="mem-entry-menu" onClick={ev => ev.stopPropagation()}>
                                                                         <button
-                                                                            disabled={boxSummarizing || allMemberEntries.length === 0}
+                                                                            disabled={boxSummarizing || batchBoxSummarizing || allMemberEntries.length === 0}
                                                                             onClick={() => {
                                                                                 setEntryMenuId(null);
                                                                                 void handleManualSummarizeBox(box.id);
@@ -1955,11 +2035,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                                 )}
                                                             </div>
                                                         </div>
-                                                    </div>
-
-                                                    {/* 第二行：最左侧 最近更新：{{时间戳}} */}
-                                                    <div className="ts-11 text-secondary" style={{ letterSpacing: "0.5px", textAlign: "left" }}>
-                                                        最近更新：{formatIsoTimestamp(box.updatedAt)}
                                                     </div>
 
                                                     {/* 第三行：总结正文内容（没有就不显示） */}
@@ -2675,14 +2750,24 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                             );
                                         })}
                                     </div>
-                                    <button
-                                        className="ui-btn ui-btn-primary mem-edit-save-btn"
-                                        style={{ marginTop: 12 }}
-                                        disabled={smartBusy || chosenCount === 0}
-                                        onClick={() => void handleConfirmSmartSuggestions()}
-                                    >
-                                        {smartBusy ? "正在放入事件盒..." : `确认放入 ${chosenCount} 组事件盒`}
-                                    </button>
+                                    <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                                        <button
+                                            className="ui-btn ui-btn-outline mem-edit-save-btn"
+                                            style={{ flex: 1 }}
+                                            disabled={smartBusy || batchBoxSummarizing || chosenCount === 0}
+                                            onClick={() => void handleConfirmSmartSuggestions(false)}
+                                        >
+                                            {smartBusy ? "正在放入..." : `仅放入（${chosenCount} 组）`}
+                                        </button>
+                                        <button
+                                            className="ui-btn ui-btn-primary mem-edit-save-btn"
+                                            style={{ flex: 1 }}
+                                            disabled={smartBusy || batchBoxSummarizing || chosenCount === 0}
+                                            onClick={() => void handleConfirmSmartSuggestions(true)}
+                                        >
+                                            {smartBusy || batchBoxSummarizing ? "处理中..." : `放入并批量总结（${chosenCount} 组）`}
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>

@@ -4,7 +4,7 @@
 import type { MemoryEntry } from "./memory-types";
 import { stripMemoryStructuredSections } from "./memory-summarizer";
 import { effectiveImportance, isEntrySuperseded } from "./memory-revision";
-import { filterRecallableEntries } from "./memory-event-boxes";
+import { filterRecallableEntries, getEntryBoxId, isEntryBoxDigest, loadEventBoxes } from "./memory-event-boxes";
 
 function formatLocalDay(isoOrDateStr: string): string {
     if (!isoOrDateStr) return "未知日期";
@@ -60,14 +60,77 @@ export function formatLongTermMemories(memories: MemoryEntry[]): string {
 
     const sorted = sortMemoriesByDateThenImportance(recallable, 0.8);
 
-    const lines: string[] = [];
+    // 预加载角色事件盒标题映射，确保哪怕旧条目没写 metadata.eventBoxTitle 也能串联显示事件盒脉络
+    const charId = sorted[0]?.characterId ?? "";
+    const boxTitleMap = new Map<string, string>();
+    if (charId) {
+        for (const box of loadEventBoxes(charId)) {
+            boxTitleMap.set(box.id, box.title);
+        }
+    }
+
+    // 统计本次注入中每个事件盒出现的条目数：若同一事件盒同时召回了「先前事件总结 + 新进展」或多条进展，
+    // 自动把同盒条目聚拢串联，避免同一件事的前因后果散落在不同日期行里割裂。
+    const boxGroupEntries = new Map<string, MemoryEntry[]>();
     for (const entry of sorted) {
+        const boxId = getEntryBoxId(entry) || (isEntryBoxDigest(entry) ? String(entry.metadata?.eventBoxDigestOf ?? "") : "");
+        if (!boxId) continue;
+        const arr = boxGroupEntries.get(boxId) ?? [];
+        arr.push(entry);
+        boxGroupEntries.set(boxId, arr);
+    }
+
+    const lines: string[] = [];
+    const emittedIds = new Set<string>();
+
+    for (const entry of sorted) {
+        if (emittedIds.has(entry.id)) continue;
+        const boxId = getEntryBoxId(entry) || (isEntryBoxDigest(entry) ? String(entry.metadata?.eventBoxDigestOf ?? "") : "");
+        const boxTitle = (typeof entry.metadata?.eventBoxTitle === "string" && entry.metadata.eventBoxTitle.trim())
+            ? entry.metadata.eventBoxTitle.trim()
+            : (boxId ? (boxTitleMap.get(boxId) ?? "") : "");
+
+        const group = boxId ? boxGroupEntries.get(boxId) : undefined;
+        if (boxId && group && group.length > 1) {
+            // 同一事件盒被召回了多条（例如阶段总结 + 近期新事件），按时间正序串联在同一事件脉络下输出
+            const chronological = [...group].sort((a, b) => {
+                // 阶段性总结放在该事件脉络最前面打底，后续跟上按日期从早到晚的新事件进展
+                const aDigest = isEntryBoxDigest(a) ? 0 : 1;
+                const bDigest = isEntryBoxDigest(b) ? 0 : 1;
+                if (aDigest !== bDigest) return aDigest - bDigest;
+                return resolveEntryDateKey(a).localeCompare(resolveEntryDateKey(b));
+            });
+            const subParts: string[] = [];
+            for (const member of chronological) {
+                emittedIds.add(member.id);
+                const dKey = resolveEntryDateKey(member);
+                const timeSpan = typeof member.metadata?.timeSpan === "string" && member.metadata.timeSpan.trim()
+                    ? member.metadata.timeSpan.trim()
+                    : dKey;
+                const cleanBody = (stripMemoryStructuredSections(member.content) || member.content).replace(/\s*\n+\s*/g, " ").trim();
+                const staleMark = isEntrySuperseded(member) ? "（部分说法已更正）" : "";
+                if (isEntryBoxDigest(member)) {
+                    subParts.push(`[前情总结 ${timeSpan}]${staleMark} ${cleanBody}`);
+                } else {
+                    subParts.push(`[进展 ${dKey}]${staleMark} ${cleanBody}`);
+                }
+            }
+            const headerLabel = boxTitle ? `【事件脉络：${boxTitle}】` : `【关联事件脉络】`;
+            lines.push(`- ${headerLabel}${subParts.join(" → ")}`);
+            continue;
+        }
+
+        emittedIds.add(entry.id);
         const eventDate = resolveEntryDateKey(entry);
+        const timeSpan = isEntryBoxDigest(entry) && typeof entry.metadata?.timeSpan === "string" && entry.metadata.timeSpan.trim()
+            ? entry.metadata.timeSpan.trim()
+            : eventDate;
         const cleanBody = (stripMemoryStructuredSections(entry.content) || entry.content).replace(/\s*\n+\s*/g, " ").trim();
-        // 被后续记忆改写过的旧条目：正文照给，但标一句「部分已过时」，
-        // 让模型知道其中被改写的说法不能再当事实用。
         const staleMark = isEntrySuperseded(entry) ? "（其中部分说法已被后来的记忆更正）" : "";
-        lines.push(`- [${eventDate}]${staleMark} ${cleanBody}`);
+        const boxPrefix = boxTitle
+            ? (isEntryBoxDigest(entry) ? `【事件总结：${boxTitle}】` : `【事件：${boxTitle}】`)
+            : "";
+        lines.push(`- [${timeSpan}]${boxPrefix}${staleMark} ${cleanBody}`);
     }
     return lines.join("\n");
 }

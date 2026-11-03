@@ -243,6 +243,10 @@ export async function moveEntryToBox(entry: MemoryEntry, boxId: string): Promise
         delete metadata[EVENT_BOX_META_KEYS.archivedInto];
         delete metadata[EVENT_BOX_META_KEYS.archivedAt];
     }
+    const box = loadEventBoxes(entry.characterId).find(b => b.id === boxId);
+    if (box?.title) {
+        metadata.eventBoxTitle = box.title;
+    }
     const next: MemoryEntry = {
         ...entry,
         updatedAt: new Date().toISOString(),
@@ -258,6 +262,7 @@ export async function removeEntryFromBox(entry: MemoryEntry): Promise<MemoryEntr
     delete metadata[EVENT_BOX_META_KEYS.boxId];
     delete metadata[EVENT_BOX_META_KEYS.archivedInto];
     delete metadata[EVENT_BOX_META_KEYS.archivedAt];
+    delete metadata.eventBoxTitle;
     const next: MemoryEntry = {
         ...entry,
         updatedAt: new Date().toISOString(),
@@ -464,7 +469,7 @@ export async function summarizeEventBoxManually(
 
     // 将盒内所有成员条目打上「已归档」标记，显示在事件盒下方的「已归档事件」区
     for (const member of allMemberEntries) {
-        if (isEntryArchived(member) && member.metadata?.[EVENT_BOX_META_KEYS.archivedInto] === box.id) {
+        if (isEntryArchived(member) && member.metadata?.[EVENT_BOX_META_KEYS.archivedInto] === box.id && member.metadata?.eventBoxTitle === box.title) {
             continue;
         }
         await saveMemoryEntry({
@@ -473,6 +478,7 @@ export async function summarizeEventBoxManually(
             metadata: {
                 ...(member.metadata ?? {}),
                 [EVENT_BOX_META_KEYS.boxId]: box.id,
+                eventBoxTitle: box.title,
                 [EVENT_BOX_META_KEYS.archivedInto]: box.id,
                 [EVENT_BOX_META_KEYS.archivedAt]: now,
             },
@@ -556,6 +562,7 @@ export async function deleteEventBoxAndKeepEntries(
             delete metadata[EVENT_BOX_META_KEYS.boxId];
             delete metadata[EVENT_BOX_META_KEYS.archivedInto];
             delete metadata[EVENT_BOX_META_KEYS.archivedAt];
+            delete metadata.eventBoxTitle;
             await saveMemoryEntry({ ...entry, updatedAt: now, metadata });
             detachedCount += 1;
         }
@@ -569,7 +576,71 @@ export async function deleteEventBoxAndKeepEntries(
     return { detachedCount };
 }
 
-// ── 智能推荐归盒（只推荐/归入事件盒，绝不自动总结！）─────────────
+/**
+ * 批量总结所有存在待总结「新事件」（或从未总结过但有成员事件）的事件盒
+ */
+export async function summarizeAllPendingEventBoxes(
+    characterId: string,
+    characterName: string,
+    allLongTermEntries: MemoryEntry[],
+    targetBoxIds?: string[],
+    onProgress?: (done: number, total: number, currentTitle: string) => void,
+): Promise<{ summarizedCount: number; failedCount: number; lastError?: string }> {
+    const boxes = loadEventBoxes(characterId);
+    const idFilter = targetBoxIds ? new Set(targetBoxIds) : null;
+    const pendingBoxes = boxes.filter(box => {
+        if (idFilter && !idFilter.has(box.id)) return false;
+        const { digestEntry, newEntries, allMemberEntries } = getBoxLayers(allLongTermEntries, box);
+        return newEntries.length > 0 || (!digestEntry && allMemberEntries.length > 0);
+    });
+
+    if (pendingBoxes.length === 0) {
+        return { summarizedCount: 0, failedCount: 0 };
+    }
+
+    let summarizedCount = 0;
+    let failedCount = 0;
+    let lastError: string | undefined;
+    let currentEntries = [...allLongTermEntries];
+
+    for (let i = 0; i < pendingBoxes.length; i++) {
+        const box = pendingBoxes[i];
+        onProgress?.(i + 1, pendingBoxes.length, box.title);
+        const res = await summarizeEventBoxManually(characterId, characterName, box.id, currentEntries);
+        if (res.success && res.digestEntry) {
+            summarizedCount += 1;
+            const digest = res.digestEntry;
+            const now = digest.updatedAt;
+            const hasDigest = currentEntries.some(e => e.id === digest.id);
+            currentEntries = hasDigest
+                ? currentEntries.map(e => (e.id === digest.id ? digest : e))
+                : [digest, ...currentEntries];
+            currentEntries = currentEntries.map(e => {
+                if (getEntryBoxId(e) === box.id && !isEntryBoxDigest(e)) {
+                    return {
+                        ...e,
+                        updatedAt: now,
+                        metadata: {
+                            ...(e.metadata ?? {}),
+                            [EVENT_BOX_META_KEYS.boxId]: box.id,
+                            eventBoxTitle: box.title,
+                            [EVENT_BOX_META_KEYS.archivedInto]: box.id,
+                            [EVENT_BOX_META_KEYS.archivedAt]: now,
+                        },
+                    };
+                }
+                return e;
+            });
+        } else {
+            failedCount += 1;
+            if (res.error) lastError = res.error;
+        }
+    }
+
+    return { summarizedCount, failedCount, lastError };
+}
+
+// ── 智能推荐归盒（只推荐/归入事件盒，或由用户选择归盒后一键批量总结）─────────────
 
 export type SmartBoxSuggestion = {
     key: string;
@@ -684,17 +755,22 @@ export async function buildSmartBoxSuggestions(
     const newSuggestions: SmartBoxSuggestion[] = rawNewClusters.map((members, idx) => {
         const sorted = [...members].sort((a, b) => entryDateKey(a).localeCompare(entryDateKey(b)));
         const dates = sorted.map(entryDateKey);
-        const kws = uniqueKeywords(sorted.flatMap(readEntryKeywords)).slice(0, 3);
+        const firstClean = (stripMemoryStructuredSections(sorted[0].content) || sorted[0].content)
+            .replace(/\s*\n+\s*/g, " ")
+            .trim();
+        const kws = uniqueKeywords(sorted.flatMap(readEntryKeywords)).slice(0, 2);
+        const fallbackTitle = firstClean.split(/[，。；！？,.;!?]/)[0]?.slice(0, 14)
+            || (kws.length > 0 ? `${kws[0]}事件` : "未命名事件");
         return {
             key: `new_${idx}_${sorted[0].id}`,
-            title: kws.join(" · ") || sorted[0].content.slice(0, 12),
+            title: fallbackTitle,
             entries: sorted,
             earliest: dates[0],
             latest: dates[dates.length - 1],
         };
     });
 
-    // 为新建的候选盒起一个简短的事件盒标题
+    // 为新建的候选盒起一个简短、直指核心事件的标题（严禁“XX与XX”式名词拼接）
     if (newSuggestions.length > 0) {
         const apiConfig = resolveSummarizationApiConfig(characterId);
         if (apiConfig) {
@@ -705,8 +781,13 @@ export async function buildSmartBoxSuggestions(
                         .join("\n");
                     return `【第${i + 1}组】\n${lines}`;
                 }).join("\n\n");
-                const prompt = `下面是{{char}}与用户之间围绕同一件事的多组记忆记录，请为每组起一个简短的中文事件盒名称（4～12个字，如“筹备生日惊喜”、“学法语的约定”）。
-严格按“序号. 标题”每行输出一条，不要包含书名号、引号或多余解释：
+                const prompt = `下面是{{char}}与用户之间围绕同一件事的多组记忆记录，请为每组起一个精准概括具体事件的中文事件盒标题（5～14个字）。
+
+命名要求：
+1. **必须用动宾短语或主谓短语点明“具体发生了什么事/在推进什么事”**（好的例子：“筹备海边生日惊喜”、“深夜胃痛送医照料”、“化解冷战重归于好”、“共同收养流浪猫”）。
+2. **严禁使用“XX与XX”、“XX和XX”、“XX及XX”、“关于XX”这种把两个名词/主题硬凑在一起的空洞格式**（坏的例子：“生日与礼物”、“争吵与和解”、“工作与休息”）。
+3. 不要出现人名本身作并列主语，不要包含书名号、引号或多余解释。
+4. 严格按“序号. 标题”每行输出一条：
 
 ${blocks}`.replace(/\{\{char\}\}/gi, characterName || "角色");
                 const res = await simpleLLMCall(apiConfig, [{ role: "user", content: prompt }], { temperature: 0.3 });
@@ -715,14 +796,18 @@ ${blocks}`.replace(/\{\{char\}\}/gi, characterName || "角色");
                         const m = line.match(/^\s*(\d+)\s*[.、．:：]\s*(.+?)\s*$/);
                         if (!m) continue;
                         const idx = Number(m[1]) - 1;
-                        const cleanTitle = m[2].replace(/[《》「」"“”]/g, "").trim();
+                        let cleanTitle = m[2].replace(/[《》「」"“”*]/g, "").trim();
+                        // 如果模型仍然输出了短短的“XX与XX / XX和XX”，自动改写或剔除连词堆砌
+                        if (/^[\u4e00-\u9fa5]{1,5}[与和及][\u4e00-\u9fa5]{1,5}$/.test(cleanTitle)) {
+                            cleanTitle = cleanTitle.replace(/[与和及]/, "");
+                        }
                         if (idx >= 0 && idx < newSuggestions.length && cleanTitle) {
                             newSuggestions[idx].title = cleanTitle.slice(0, 20);
                         }
                     }
                 }
             } catch {
-                // fallback to keyword title
+                // fallback to clause title
             }
         }
     }
