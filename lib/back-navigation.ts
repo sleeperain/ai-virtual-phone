@@ -3,9 +3,16 @@
  *
  * 默认行为：
  *   - APP 内不管在第几层，左右滑 / 浏览器后退一次 → 直接回到手机主桌面
- *   - 已经在桌面上，连续滑两次 → 退出网页（浏览器真实后退离开本页）
+ *   - 已经在桌面上，连续滑两次 → 退出网页
  *     第一次滑只是「待命」，必须在 EXIT_ARM_WINDOW_MS 内再滑一次才真正退出，
  *     避免一次误滑就把整个网页关掉。
+ *
+ * ── 「退出网页」到底能退到哪 ──
+ * 网页无法真正关闭自己（window.close 只对脚本打开的窗口有效，PWA 里基本被忽略），
+ * 所以「退出网页」= 退回上一个页面。而同一标签页里常躺着本应用更早的历史实例
+ *（刷新过、从别处跳进来过），直接退一次只会落回那个旧实例 —— 表现就是又看到
+ * 一次开屏动画，看起来像没退出去。exit intent 标记 + escapeOwnHistory 专门处理这段：
+ * 落回本站就继续往后跳，直到真的离开本站。
  *
  * 实现思路：在 history 里**常驻**一条「守卫记录」。用户的系统后退手势会消耗掉
  * 这条记录并触发 popstate，我们在 popstate 里执行返回动作，然后立刻把守卫补回去。
@@ -72,9 +79,22 @@ const PATROL_INTERVAL_MS = 1000;
  * 太短（<1s）第二下滑不进来；太长（>5s）会让人觉得滑一下就莫名退出了。
  */
 const EXIT_ARM_WINDOW_MS = 2500;
+/**
+ * 「退出网页」时跳过本应用残留历史实例的标记。
+ *
+ * 背景：网页没法真正「关闭自己」（window.close 只对脚本打开的窗口有效，PWA 里基本被忽略），
+ * 能做到的「退出网页」就是退回上一个页面。但同一个标签页里往往还躺着本应用更早的实例
+ *（刷新过几次、从别处跳进来过），直接退一次会落回那个旧实例 —— 表现就是重新出现开屏动画。
+ * 所以退之前先写一个带时间戳的意图标记，落回本站时发现标记还在，就继续往后跳，
+ * 直到真的离开本站。
+ */
+const EXIT_INTENT_KEY = "ai-virtual-phone-exit-intent";
+const EXIT_INTENT_TTL_MS = 6000;
+const EXIT_ESCAPE_MAX = 10;
 
 let patrolTimer = 0;
 let armTimer = 0;
+let escapeTimer = 0;
 
 function getBackState(): BackState {
   const scope = window as unknown as Record<string, unknown>;
@@ -83,6 +103,41 @@ function getBackState(): BackState {
   const fresh: BackState = { layers: [], nextId: 1, base: null, exitArmedAt: null };
   scope[STATE_KEY] = fresh;
   return fresh;
+}
+
+type ExitIntent = {
+  /** 写下意图的时间戳，用于 TTL 判定 */
+  at: number;
+  /** 已经跳过了几个本站历史实例，防止极端情况下无限后退 */
+  count: number;
+};
+
+function readExitIntent(): ExitIntent | null {
+  try {
+    const raw = window.sessionStorage.getItem(EXIT_INTENT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as ExitIntent;
+    if (!parsed || typeof parsed.at !== "number" || typeof parsed.count !== "number") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeExitIntent(count: number): void {
+  try {
+    window.sessionStorage.setItem(EXIT_INTENT_KEY, JSON.stringify({ at: Date.now(), count }));
+  } catch {
+    /* 隐私模式等禁用 sessionStorage 的环境，忽略即可 */
+  }
+}
+
+function clearExitIntent(): void {
+  try {
+    window.sessionStorage.removeItem(EXIT_INTENT_KEY);
+  } catch {
+    /* 同上 */
+  }
 }
 
 /** 桌面是否已处于「再滑一次就退出网页」的待命状态 */
@@ -96,6 +151,9 @@ function isExitArmed(): boolean {
 function armExit(): void {
   const state = getBackState();
   state.exitArmedAt = Date.now();
+  // 预先写下退出意图：第二下滑会直接离开本文档，我们收不到任何回调，
+  // 只能靠这份标记让「落回本站」的新文档知道自己该继续往后跳。
+  writeExitIntent(0);
   debug("桌面待命：再滑一次退出网页");
 
   window.clearTimeout(armTimer);
@@ -105,6 +163,8 @@ function armExit(): void {
     if (current.exitArmedAt === null) return;
     current.exitArmedAt = null;
     debug("待命过期，取消退出");
+    // 没真的退出，意图标记也要跟着作废，否则以后某次正常返回会被它误当成「继续退出」
+    clearExitIntent();
     // 待命期间守卫是故意不补的，解除后必须马上补回来，
     // 否则中间这一小段空窗里滑一下就会意外退出网页。
     ensureGuard();
@@ -118,6 +178,37 @@ function clearExitArm(): void {
   state.exitArmedAt = null;
   window.clearTimeout(armTimer);
   armTimer = 0;
+}
+
+/**
+ * 落回本站时发现还有未过期的退出意图 → 说明上一跳落到了本应用更早的历史实例
+ *（所以又看到开屏动画），继续往后跳，直到真的离开本站。
+ */
+function escapeOwnHistory(): boolean {
+  const intent = readExitIntent();
+  if (!intent) return false;
+
+  const age = Date.now() - intent.at;
+  if (age > EXIT_INTENT_TTL_MS || intent.count >= EXIT_ESCAPE_MAX) {
+    clearExitIntent();
+    return false;
+  }
+
+  debug("退出网页时落回了本站旧实例，继续后退", intent.count + 1);
+  writeExitIntent(intent.count + 1);
+
+  window.clearTimeout(escapeTimer);
+  window.setTimeout(() => {
+    window.history.back();
+    // 如果这一下并没有真的离开（历史里已经没有更早的项），
+    // 文档还在，就把意图标记清掉，别影响后续正常操作。
+    escapeTimer = window.setTimeout(() => {
+      escapeTimer = 0;
+      clearExitIntent();
+    }, 1200);
+  }, 0);
+
+  return true;
 }
 
 function debug(...args: unknown[]): void {
@@ -278,6 +369,11 @@ export function installBackNavigation(): void {
   if (scope[INSTALL_FLAG]) return;
   scope[INSTALL_FLAG] = true;
 
+  // 最优先：这次加载是不是「退出网页」落回了本站旧实例？是的话立刻继续往后跳，
+  // 并且绝不能压守卫 —— 压了会给正在离开的文档凭空多出一条历史项，
+  // 结果就是退到另一个旧实例、再看到一次开屏动画。
+  if (escapeOwnHistory()) return;
+
   // 刷新后可能残留旧标记（上次页面实例压的），先清掉再重新压，避免重复累积
   const raw = window.history.state;
   if (raw && typeof raw === "object" && (raw as Record<string, unknown>)[GUARD_KEY]) {
@@ -297,8 +393,12 @@ export function installBackNavigation(): void {
   window.addEventListener("pointerdown", onGestureStart, { passive: true, capture: true });
   window.addEventListener("touchstart", onGestureStart, { passive: true, capture: true });
 
-  // 从 bfcache 恢复时 history 可能已经换了，重新校验
-  window.addEventListener("pageshow", () => ensureGuard());
+  // 从 bfcache 恢复时 history 可能已经换了，重新校验；
+  // 若是「退出网页」过程中被恢复回来（标记还在），继续往后跳而不是停在这里。
+  window.addEventListener("pageshow", () => {
+    if (escapeOwnHistory()) return;
+    ensureGuard();
+  });
   window.addEventListener("focus", () => ensureGuard());
 
   ensureGuard();
