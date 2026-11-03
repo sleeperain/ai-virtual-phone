@@ -1,8 +1,11 @@
 /**
  * 系统「返回」→ 仿真手机内的返回
  *
- * 默认行为（用户要的一刀切）：不管当前在 APP 的第几层，左右滑 / 浏览器后退
- * 一次就直接回到手机主桌面。再滑一次什么都不发生，绝不会离开整个网页。
+ * 默认行为：
+ *   - APP 内不管在第几层，左右滑 / 浏览器后退一次 → 直接回到手机主桌面
+ *   - 已经在桌面上，连续滑两次 → 退出网页（浏览器真实后退离开本页）
+ *     第一次滑只是「待命」，必须在 EXIT_ARM_WINDOW_MS 内再滑一次才真正退出，
+ *     避免一次误滑就把整个网页关掉。
  *
  * 实现思路：在 history 里**常驻**一条「守卫记录」。用户的系统后退手势会消耗掉
  * 这条记录并触发 popstate，我们在 popstate 里执行返回动作，然后立刻把守卫补回去。
@@ -16,12 +19,9 @@
  * 「只能退两级，第三次直接大退」。现在的做法完全不调用 history.back()，
  * 守卫只增不减，再用「校验 + 重试 + 巡检」保证它一定在。
  *
- * ── 副作用（有意为之）──
- * 守卫常驻 = 浏览器后退键 / 系统返回手势不会让页面离开。这对仿真手机是想要的，
- * 但对「想用后退键离开这个网页」的用户是个意外。留了开关：
- *   window.__aiVirtualPhoneBackNavFreeExit = true   // 桌面上再滑就让浏览器正常后退
- * 调试逐级模式（老行为）：
- *   window.__aiVirtualPhoneBackNavStepwise = true   // 先退内部层级，最后才回桌面
+ * 开关：
+ *   window.__aiVirtualPhoneBackNavFreeExit = true   // 桌面上滑一次就退出网页（不要两次确认）
+ *   window.__aiVirtualPhoneBackNavStepwise = true   // 逐级模式：先退内部层级，最后才回桌面
  */
 
 export type BackLayerHandle = () => void;
@@ -37,6 +37,11 @@ type BackState = {
   nextId: number;
   /** 最底一层（当前打开的 APP） */
   base: (() => void) | null;
+  /**
+   * 桌面上的「待命退出」时间戳。非 null 表示已经滑过一次、
+   * 此刻再滑一次就真的退出网页；为 null 表示还没待命。
+   */
+  exitArmedAt: number | null;
 };
 
 const INSTALL_FLAG = "__aiVirtualPhoneBackNavInstalled";
@@ -62,16 +67,57 @@ const GUARD_RETRY_MAX = 12;
 const GUARD_RETRY_BASE_MS = 16;
 /** 巡检间隔：兜住任何我们没预料到的守卫丢失 */
 const PATROL_INTERVAL_MS = 1000;
+/**
+ * 桌面「待命退出」的有效窗口：在这个时间内再滑一次才退出网页。
+ * 太短（<1s）第二下滑不进来；太长（>5s）会让人觉得滑一下就莫名退出了。
+ */
+const EXIT_ARM_WINDOW_MS = 2500;
 
 let patrolTimer = 0;
+let armTimer = 0;
 
 function getBackState(): BackState {
   const scope = window as unknown as Record<string, unknown>;
   const existing = scope[STATE_KEY] as BackState | undefined;
   if (existing && Array.isArray(existing.layers)) return existing;
-  const fresh: BackState = { layers: [], nextId: 1, base: null };
+  const fresh: BackState = { layers: [], nextId: 1, base: null, exitArmedAt: null };
   scope[STATE_KEY] = fresh;
   return fresh;
+}
+
+/** 桌面是否已处于「再滑一次就退出网页」的待命状态 */
+function isExitArmed(): boolean {
+  const armedAt = getBackState().exitArmedAt;
+  if (armedAt === null) return false;
+  return Date.now() - armedAt < EXIT_ARM_WINDOW_MS;
+}
+
+/** 进入待命：窗口内再滑就退出网页；窗口过期自动解除并立刻把守卫补回去 */
+function armExit(): void {
+  const state = getBackState();
+  state.exitArmedAt = Date.now();
+  debug("桌面待命：再滑一次退出网页");
+
+  window.clearTimeout(armTimer);
+  armTimer = window.setTimeout(() => {
+    armTimer = 0;
+    const current = getBackState();
+    if (current.exitArmedAt === null) return;
+    current.exitArmedAt = null;
+    debug("待命过期，取消退出");
+    // 待命期间守卫是故意不补的，解除后必须马上补回来，
+    // 否则中间这一小段空窗里滑一下就会意外退出网页。
+    ensureGuard();
+  }, EXIT_ARM_WINDOW_MS);
+}
+
+/** 解除待命（打开 APP、做出任何实际返回动作时调用） */
+function clearExitArm(): void {
+  const state = getBackState();
+  if (state.exitArmedAt === null) return;
+  state.exitArmedAt = null;
+  window.clearTimeout(armTimer);
+  armTimer = 0;
 }
 
 function debug(...args: unknown[]): void {
@@ -136,6 +182,9 @@ function pushGuard(): boolean {
  * 只压一次不够，必须校验到真的写进去为止。
  */
 function ensureGuard(): void {
+  // 待命退出期间故意不补守卫：此刻用户的下一次滑动必须真的走到浏览器后退，
+  // 才能退出网页。这里若补了守卫，第二下滑只会又被我们吃掉。
+  if (isExitArmed()) return;
   if (isGuardEntry()) return;
   pushGuard();
 
@@ -190,31 +239,36 @@ function resolveAction(): (() => void) | null {
   return button ? () => button.click() : null;
 }
 
-/** 当前是否还「有事可退」——只在决定要不要放行浏览器后退时用 */
-function hasAction(): boolean {
-  const state = getBackState();
-  return Boolean(state.base) || state.layers.length > 0 || findVisibleBackButton() !== null;
-}
-
 function handlePopState(): void {
   const action = resolveAction();
   debug("popstate", { action: Boolean(action), base: Boolean(getBackState().base) });
 
   if (action) {
+    // APP 内 / 桌面上的文件夹、编辑模式：这一下就是实打实的返回
+    clearExitArm();
     runHandler(action);
     // 无论动作是否改变了 React 状态，守卫都要立刻补回去，绝不留给下一次手势
     ensureGuard();
     return;
   }
 
+  // 以下都是「已经停在桌面、没什么可退」的情况
   if (freeExitEnabled()) {
     // 用户显式要求放行：不再补守卫，这次后退就交给浏览器
     debug("放行浏览器后退");
     return;
   }
 
-  // 桌面上什么都不做，但守卫照补，保证再滑也不会离开网页
-  ensureGuard();
+  if (isExitArmed()) {
+    // 桌面上的第二次滑动：守卫此前故意没补，此刻用户已经真的走到浏览器后退上，
+    // 不再拦截，让它把页面退出去。
+    clearExitArm();
+    debug("桌面第二次滑动，退出网页");
+    return;
+  }
+
+  // 桌面上第一次滑动：进入待命，守卫暂不补；窗口内再滑一次才退出网页。
+  armExit();
 }
 
 /** 幂等安装 */
@@ -269,6 +323,8 @@ export function registerBackLayer(handler: () => void): BackLayerHandle {
   const layer: BackLayer = { id: state.nextId, handler };
   state.nextId += 1;
   state.layers.push(layer);
+  // 出现新的可退层级：取消桌面待命退出，回到正常拦截
+  clearExitArm();
   ensureGuard();
 
   return () => {
@@ -289,6 +345,8 @@ export function setBackBaseHandler(handler: (() => void) | null): BackLayerHandl
 
   const state = getBackState();
   state.base = handler;
+  // 打开了 APP：取消桌面待命退出
+  if (handler) clearExitArm();
   ensureGuard();
 
   return () => {

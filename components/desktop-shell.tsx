@@ -1384,7 +1384,8 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
   }, [showWidgetPicker]);
 
   // ── 系统返回手势（左右滑 / 浏览器后退）→ 回手机桌面 ──
-  // 默认一刀切：不管 APP 内部在第几层，滑动都直接关掉当前 APP 回桌面。
+  // 默认一刀切：不管 APP 内部在第几层，滑动都直接关掉当前 APP 回桌面；
+  // 回到桌面后连续滑两次才退出网页（见 lib/back-navigation 的待命退出）。
   // 「当前打开的 APP」作为 base 注册，优先级高于 APP 内部自注册的层级
   // （见 lib/back-navigation 的 resolveAction）；桌面上还开着的文件夹、
   // 编辑模式各算一层，在没有 APP 打开时生效。
