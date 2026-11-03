@@ -4,6 +4,7 @@
 import type { MemoryEntry } from "./memory-types";
 import { stripMemoryStructuredSections } from "./memory-summarizer";
 import { effectiveImportance, isEntrySuperseded } from "./memory-revision";
+import { filterRecallableEntries } from "./memory-event-boxes";
 
 function formatLocalDay(isoOrDateStr: string): string {
     if (!isoOrDateStr) return "未知日期";
@@ -54,8 +55,10 @@ export function sortMemoriesByDateThenImportance(
  */
 export function formatLongTermMemories(memories: MemoryEntry[]): string {
     if (memories.length === 0) return "";
+    const recallable = filterRecallableEntries(memories);
+    if (recallable.length === 0) return "";
 
-    const sorted = sortMemoriesByDateThenImportance(memories, 0.8);
+    const sorted = sortMemoriesByDateThenImportance(recallable, 0.8);
 
     const lines: string[] = [];
     for (const entry of sorted) {

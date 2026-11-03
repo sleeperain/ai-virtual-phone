@@ -9,6 +9,7 @@ import { estimateTokens } from "./token-counter";
 import { extractMemoryStructuredMeta } from "./memory-summarizer";
 import { sortMemoriesByDateThenImportance } from "./memory-injector";
 import { effectiveImportance } from "./memory-revision";
+import { filterRecallableEntries } from "./memory-event-boxes";
 
 /**
  * Retrieve relevant long-term memories for prompt injection.
@@ -27,7 +28,9 @@ export async function retrieveMemoriesForPrompt(
     currentContext: string,
     config: MemoryConfig
 ): Promise<MemoryEntry[]> {
-    const longTermEntries = await loadMemoryEntriesByType(characterId, "long_term");
+    // 事件盒中「已归档」的原始条目由盒子的「先前事件总结」代表参与召回；
+    // 盒内尚未总结的「新事件」以及盒外记忆正常参与召回。
+    const longTermEntries = filterRecallableEntries(await loadMemoryEntriesByType(characterId, "long_term"));
     if (longTermEntries.length === 0 || !currentContext.trim()) return [];
 
     const budget = config.longTermTokenBudget;

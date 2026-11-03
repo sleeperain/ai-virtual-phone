@@ -664,6 +664,8 @@ export type CleanedManualMemoryDraft = {
 export function isLegacyUnorganizedMemory(entry: MemoryEntry): boolean {
     if (entry.type !== "long_term") return false;
     if (entry.metadata?.resplitDone === true) return false;
+    // 事件盒生成的总结条目不走旧记忆拆条清洗
+    if (entry.metadata?.origin === "event_box_digest" || entry.metadata?.eventBoxDigestOf) return false;
 
     const cleanBody = stripMemoryStructuredSections(entry.content) || entry.content.trim();
     const kws = Array.isArray(entry.metadata?.keywords)

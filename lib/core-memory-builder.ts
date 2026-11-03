@@ -11,6 +11,7 @@ import {
 } from "./memory-storage";
 import { resolveSummarizationApiConfig } from "./memory-summarizer";
 import { simpleLLMCall } from "./api-helpers";
+import { filterRecallableEntries } from "./memory-event-boxes";
 
 const coreBuildingSet = new Set<string>();
 
@@ -40,7 +41,7 @@ export async function runCoreMemoryPipeline(
     options?: { force?: boolean },
 ): Promise<{ success: boolean; error?: string; rebuiltCount?: number }> {
     const config = loadMemoryConfig();
-    const allLongTermEntries = await loadMemoryEntriesByType(characterId, "long_term");
+    const allLongTermEntries = filterRecallableEntries(await loadMemoryEntriesByType(characterId, "long_term"));
 
     if (allLongTermEntries.length === 0) {
         return { success: false, error: "没有可用于总结核心记忆的长期记忆" };

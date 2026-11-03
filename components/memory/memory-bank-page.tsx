@@ -1,7 +1,7 @@
 "use client";
 
 import { Component, useState, useEffect, useCallback, type CSSProperties, type ReactNode } from "react";
-import { Trash2, Zap, Clock, Users, Archive, AlertCircle, Search, Brain, FileText, MoreHorizontal, Plus, Edit3, X, Check, ChevronRight, Filter, SlidersHorizontal, Sparkles, Heart, type LucideIcon } from "lucide-react";
+import { Trash2, Zap, Clock, Users, Archive, Folder, AlertCircle, Search, Brain, FileText, MoreHorizontal, Plus, Edit3, X, Check, ChevronLeft, ChevronRight, Filter, SlidersHorizontal, Sparkles, Heart, RotateCcw, History, type LucideIcon } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { MemoryTimeline } from "./memory-timeline";
 import { Toggle } from "@/components/ui/form";
@@ -61,9 +61,30 @@ import {
     readSupersededSpans,
     sliceSupersededText,
 } from "@/lib/memory-revision";
+import {
+    EVENT_BOX_STATUS_META,
+    buildSmartBoxSuggestions,
+    createEventBox,
+    deleteEventBoxAndKeepEntries,
+    formatBoxSpan,
+    getBoxLayers,
+    getEntryBoxId,
+    isEntryArchived,
+    isEntryBoxDigest,
+    loadEventBoxes,
+    moveEntryToBox,
+    removeEntryFromBox,
+    restoreEventBoxArchivedEntries,
+    summarizeEventBoxManually,
+    unarchiveSingleBoxEntry,
+    updateEventBox,
+    type EventBoxStatus,
+    type MemoryEventBox,
+    type SmartBoxSuggestion,
+} from "@/lib/memory-event-boxes";
 
 type MemoryView = "list" | "detail" | "settings";
-type MemoryTab = "short" | "shared" | "core" | "long";
+type MemoryTab = "short" | "shared" | "long" | "boxes" | "core";
 type MemoryBudgetKey = "shortTermTokenBudget" | "coreMemoryTokenBudget" | "longTermTokenBudget";
 
 const MEMORY_TOKEN_BUDGET_MAX = 100000;
@@ -354,6 +375,26 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
     const [appBudgetOpen, setAppBudgetOpen] = useState(false);
 
+    // ── 事件盒（位于「长期」与「核心」之间）──
+    const [boxes, setBoxes] = useState<MemoryEventBox[]>([]);
+    const [activeBoxId, setActiveBoxId] = useState<string | null>(null);
+    const [boxSummarizing, setBoxSummarizing] = useState(false);
+    const [digestHistoryOpen, setDigestHistoryOpen] = useState(false);
+    const [boxMoveEntryId, setBoxMoveEntryId] = useState<string | null>(null);
+    const [boxDialog, setBoxDialog] = useState<{
+        boxId?: string;
+        title: string;
+        status: EventBoxStatus;
+        note: string;
+        pendingEntryId?: string;
+    } | null>(null);
+    const [boxConfirm, setBoxConfirm] = useState<{ kind: "delete" | "restore"; boxId: string } | null>(null);
+    const [boxAddPickerOpen, setBoxAddPickerOpen] = useState(false);
+    const [boxAddSelectedIds, setBoxAddSelectedIds] = useState<Record<string, boolean>>({});
+    const [smartSuggestions, setSmartSuggestions] = useState<SmartBoxSuggestion[]>([]);
+    const [smartSelected, setSmartSelected] = useState<Record<string, boolean>>({});
+    const [smartBusy, setSmartBusy] = useState(false);
+
     const disabledSourceCount = MEMORY_SOURCE_OPTIONS
         .filter(source => (config.shortTermAllowedSources ?? {})[source.key] === false).length;
 
@@ -430,9 +471,11 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             ]);
             setCoreEntries(core);
             setLongTermEntries(lt);
+            setBoxes(loadEventBoxes(charId));
         } catch {
             setCoreEntries([]);
             setLongTermEntries([]);
+            setBoxes(loadEventBoxes(charId));
         }
         // Native timeline is sync (localStorage) — no await needed.
         // 只取最近一段（全量可能几万条），防止解析+渲染把 iOS Safari 内存顶爆
@@ -453,6 +496,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     useEffect(() => {
         if (view === "detail" && selectedCharId) {
             setActiveTab("short");
+            setActiveBoxId(null);
             setExpandedId(null);
             setSearchQuery("");
             setSearchScoreMap(null);
@@ -490,6 +534,187 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
 
     const showNotice = (msg: string) => {
         onNotice?.(msg);
+    };
+
+    // ── 事件盒操作 ──
+    const handleSaveBoxDialog = async () => {
+        if (!selectedCharId || !boxDialog) return;
+        const cleanTitle = boxDialog.title.trim();
+        if (!cleanTitle) {
+            showNotice("请输入事件盒名称");
+            return;
+        }
+        const pendingEntryId = boxDialog.pendingEntryId;
+        if (boxDialog.boxId) {
+            const next = updateEventBox(selectedCharId, boxDialog.boxId, {
+                title: cleanTitle,
+                status: boxDialog.status,
+                note: boxDialog.note.trim() || undefined,
+            });
+            setBoxes(next);
+            showNotice("事件盒信息已更新");
+        } else {
+            const created = createEventBox(selectedCharId, cleanTitle, boxDialog.status, boxDialog.note);
+            setBoxes(loadEventBoxes(selectedCharId));
+            if (pendingEntryId) {
+                const target = longTermEntries.find(e => e.id === pendingEntryId);
+                if (target) {
+                    const updated = await moveEntryToBox(target, created.id);
+                    setLongTermEntries(prev => prev.map(item => (item.id === updated.id ? updated : item)));
+                }
+                setBoxMoveEntryId(null);
+                showNotice(`已创建事件盒「${created.title}」并放入记忆`);
+            } else {
+                showNotice(`已创建事件盒「${created.title}」`);
+            }
+        }
+        setBoxDialog(null);
+    };
+
+    const handleMoveSingleEntryToBox = async (boxId: string) => {
+        if (!selectedCharId || !boxMoveEntryId) return;
+        const target = longTermEntries.find(e => e.id === boxMoveEntryId);
+        if (!target) return;
+        const box = boxes.find(b => b.id === boxId);
+        const updated = await moveEntryToBox(target, boxId);
+        setLongTermEntries(prev => prev.map(item => (item.id === updated.id ? updated : item)));
+        setBoxMoveEntryId(null);
+        showNotice(`已放入事件盒「${box?.title ?? "事件盒"}」的新事件中`);
+    };
+
+    const handleRemoveEntryFromBox = async (entryId: string) => {
+        const target = longTermEntries.find(e => e.id === entryId);
+        if (!target) return;
+        const updated = await removeEntryFromBox(target);
+        setLongTermEntries(prev => prev.map(item => (item.id === updated.id ? updated : item)));
+        setBoxMoveEntryId(null);
+        setEntryMenuId(null);
+        showNotice("已移出事件盒");
+    };
+
+    const handleUnarchiveEntry = async (entry: MemoryEntry) => {
+        const updated = await unarchiveSingleBoxEntry(entry);
+        setLongTermEntries(prev => prev.map(item => (item.id === updated.id ? updated : item)));
+        setEntryMenuId(null);
+        showNotice("已取消归档，移回「新事件」");
+    };
+
+    /** 在盒内批量把未归盒记忆添加进当前盒子的「新事件」 */
+    const handleConfirmAddEntriesToBox = async () => {
+        if (!selectedCharId || !activeBoxId) return;
+        const chosenIds = Object.keys(boxAddSelectedIds).filter(id => boxAddSelectedIds[id]);
+        if (chosenIds.length === 0) return;
+        for (const id of chosenIds) {
+            const target = longTermEntries.find(e => e.id === id);
+            if (target) {
+                await moveEntryToBox(target, activeBoxId);
+            }
+        }
+        setBoxAddPickerOpen(false);
+        setBoxAddSelectedIds({});
+        await loadDetailData(selectedCharId);
+        showNotice(`已将 ${chosenIds.length} 条记忆加入「新事件」，可点击上方「手动总结」归档`);
+    };
+
+    /** 用户在事件盒内手动点击「总结」：总结 + 自动向量化 + 原记忆移入下方已归档 */
+    const handleManualSummarizeBox = async (boxId: string) => {
+        if (!selectedCharId || boxSummarizing) return;
+        setBoxSummarizing(true);
+        try {
+            const res = await summarizeEventBoxManually(
+                selectedCharId,
+                selectedChar?.name ?? "角色",
+                boxId,
+                longTermEntries,
+            );
+            if (!res.success) {
+                showNotice(res.error || "事件盒总结失败");
+                return;
+            }
+            await loadDetailData(selectedCharId);
+            const hasVec = Boolean(res.digestEntry?.embedding && res.digestEntry.embedding.length > 0);
+            showNotice(hasVec
+                ? "事件盒总结完成并已自动向量化，原记忆已移至下方「已归档事件」"
+                : "事件盒总结完成，原记忆已移至下方「已归档事件」");
+        } catch (err) {
+            showNotice("事件盒总结出错: " + String(err));
+        } finally {
+            setBoxSummarizing(false);
+        }
+    };
+
+    const handleConfirmBoxAction = async () => {
+        if (!selectedCharId || !boxConfirm) return;
+        const { kind, boxId } = boxConfirm;
+        setBoxConfirm(null);
+        if (kind === "restore") {
+            const res = await restoreEventBoxArchivedEntries(selectedCharId, boxId, longTermEntries);
+            await loadDetailData(selectedCharId);
+            showNotice(`已撤销总结，${res.restoredCount} 条记忆已恢复为「新事件」`);
+        } else {
+            const res = await deleteEventBoxAndKeepEntries(selectedCharId, boxId, longTermEntries);
+            if (activeBoxId === boxId) setActiveBoxId(null);
+            await loadDetailData(selectedCharId);
+            showNotice(`已删除事件盒，盒内 ${res.detachedCount} 条原始记忆均已保留`);
+        }
+    };
+
+    /** 智能识别相关记忆归盒（只归入事件盒，绝不自动批量总结） */
+    const handleRunSmartBoxSuggest = async () => {
+        if (!selectedCharId || smartBusy) return;
+        const ungrouped = longTermEntries.filter(e => !getEntryBoxId(e) && !isEntryBoxDigest(e));
+        if (ungrouped.length < 2 && boxes.length === 0) {
+            showNotice("当前未归盒的长期记忆不足 2 条，可先手动新建事件盒");
+            return;
+        }
+        setSmartBusy(true);
+        try {
+            const list = await buildSmartBoxSuggestions(
+                selectedCharId,
+                selectedChar?.name ?? "角色",
+                longTermEntries,
+                boxes,
+            );
+            if (list.length === 0) {
+                showNotice("未发现明显属于同一件事的零散记忆，可手动新建事件盒并添加记忆");
+                return;
+            }
+            setSmartSuggestions(list);
+            const initSel: Record<string, boolean> = {};
+            for (const item of list) initSel[item.key] = true;
+            setSmartSelected(initSel);
+        } catch (err) {
+            showNotice("智能识别出错: " + String(err));
+        } finally {
+            setSmartBusy(false);
+        }
+    };
+
+    const handleConfirmSmartSuggestions = async () => {
+        if (!selectedCharId || smartBusy) return;
+        const chosen = smartSuggestions.filter(s => smartSelected[s.key]);
+        if (chosen.length === 0) return;
+        setSmartBusy(true);
+        try {
+            let totalMoved = 0;
+            for (const group of chosen) {
+                const targetBoxId = group.targetBoxId
+                    ? group.targetBoxId
+                    : createEventBox(selectedCharId, group.title, "active").id;
+                for (const entry of group.entries) {
+                    await moveEntryToBox(entry, targetBoxId);
+                    totalMoved += 1;
+                }
+            }
+            setSmartSuggestions([]);
+            setSmartSelected({});
+            await loadDetailData(selectedCharId);
+            showNotice(`已将 ${totalMoved} 条记忆放入事件盒，请点进对应事件盒手动点击「总结」`);
+        } catch (err) {
+            showNotice("归入事件盒出错: " + String(err));
+        } finally {
+            setSmartBusy(false);
+        }
     };
 
     const handleManualSummarize = async (range: SummarizeRange = "auto") => {
@@ -1123,6 +1348,10 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                 };
 
             await saveMemoryEntry(entry);
+            // 如果当前在事件盒内部新增长期记忆，直接放入该盒子的「新事件」
+            if (!source && type === "long_term" && activeTab === "boxes" && activeBoxId) {
+                await moveEntryToBox(entry, activeBoxId);
+            }
             await loadDetailData(selectedCharId);
             setMemoryEditor(null);
             setExpandedId(entry.id);
@@ -1308,6 +1537,11 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                             ? entries.some(item => item.id === revisionSourceId)
                             : false;
 
+                        const entryBoxId = getEntryBoxId(entry);
+                        const boxOfEntry = entryBoxId ? boxes.find(b => b.id === entryBoxId) : undefined;
+                        const entryIsDigest = isEntryBoxDigest(entry);
+                        const entryArchived = isEntryArchived(entry);
+
                         return (
                             <div
                                 key={entry.id}
@@ -1352,6 +1586,24 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                 角色反思
                                             </span>
                                         )}
+                                        {entryIsDigest && (
+                                            <span
+                                                className="mem-stat-pill"
+                                                style={{ fontWeight: 700, borderRadius: 5 }}
+                                                title="事件盒手动总结生成的阶段性总结"
+                                            >
+                                                事件盒总结
+                                            </span>
+                                        )}
+                                        {entryArchived && (
+                                            <span
+                                                className="mem-stat-pill"
+                                                style={{ fontWeight: 700, borderRadius: 5 }}
+                                                title="已在事件盒中总结归档"
+                                            >
+                                                已归档
+                                            </span>
+                                        )}
                                         <span
                                             className={`mem-origin-badge ${isManualMemoryEntry(entry) ? "is-manual" : ""}`}
                                             style={{ borderRadius: 5 }}
@@ -1375,7 +1627,18 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                         <Edit3 size={13} />
                                                         <span>编辑</span>
                                                     </button>
-                                                    {type === "long_term" && (
+                                                    {type === "long_term" && !entryIsDigest && (
+                                                        <button
+                                                            onClick={() => {
+                                                                setEntryMenuId(null);
+                                                                setBoxMoveEntryId(entry.id);
+                                                            }}
+                                                        >
+                                                            <Folder size={13} />
+                                                            <span>{entryBoxId ? "更换/移出事件盒" : "放入事件盒"}</span>
+                                                        </button>
+                                                    )}
+                                                    {type === "long_term" && !entryIsDigest && (
                                                         <button
                                                             onClick={() => void handleCleanSingleLegacyEntry(entry)}
                                                             disabled={Boolean(cleaningLegacyEntryId) || cleaningAllLegacy}
@@ -1439,6 +1702,22 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                 查看新版本
                                             </button>
                                         )}
+                                    </div>
+                                )}
+                                {boxOfEntry && (
+                                    <div className="mem-superseded-note">
+                                        <span>所属事件盒：{boxOfEntry.title}</span>
+                                        <button
+                                            type="button"
+                                            className="mem-superseded-jump"
+                                            onClick={(event) => {
+                                                event.stopPropagation();
+                                                setActiveBoxId(boxOfEntry.id);
+                                                setActiveTab("boxes");
+                                            }}
+                                        >
+                                            查看事件盒
+                                        </button>
                                     </div>
                                 )}
                                 <div className="mem-structured-footer">
@@ -1517,6 +1796,439 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                 userName={resolveUserIdentity(selectedCharId!)?.name || "用户"}
                             />
                         )
+                    ) : activeTab === "boxes" ? (
+                        /* ── Event Boxes: 三层结构（先前事件的总结 / 新事件 / 已归档事件）── */
+                        (() => {
+                            const activeBox = activeBoxId ? boxes.find(b => b.id === activeBoxId) ?? null : null;
+                            if (!activeBox) {
+                                const ungroupedCount = longTermEntries.filter(e => !getEntryBoxId(e) && !isEntryBoxDigest(e)).length;
+                                return (
+                                    <div className="flex flex-col gap-2 pb-24">
+                                        <div className="mem-entry-toolbar" style={{ flexWrap: "wrap" }}>
+                                            <button
+                                                className="mem-entry-add-btn"
+                                                onClick={() => setBoxDialog({ title: "", status: "active", note: "" })}
+                                            >
+                                                <Plus size={15} strokeWidth={1.8} />
+                                                <span>新建事件盒</span>
+                                            </button>
+                                            <button
+                                                className="mem-entry-add-btn"
+                                                onClick={() => void handleRunSmartBoxSuggest()}
+                                                disabled={smartBusy || (ungroupedCount < 2 && boxes.length === 0)}
+                                                title="识别同一件事的相关记忆并推荐放入事件盒（仅归盒，不自动总结）"
+                                            >
+                                                <Sparkles size={14} strokeWidth={1.8} />
+                                                <span>{smartBusy ? "识别中..." : `智能推荐归盒(${ungroupedCount})`}</span>
+                                            </button>
+                                        </div>
+
+                                        {boxes.length === 0 ? (
+                                            <div className="mem-empty-card">
+                                                <p>还没有事件盒。将围绕同一件事的长期记忆放进事件盒，可在盒内手动总结并归档旧进展。</p>
+                                                <button
+                                                    className="mem-empty-add-btn"
+                                                    onClick={() => setBoxDialog({ title: "", status: "active", note: "" })}
+                                                >
+                                                    <Plus size={14} />
+                                                    <span>新建事件盒</span>
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            boxes.map(box => {
+                                                const { digestEntry, newEntries, archivedEntries, allMemberEntries } = getBoxLayers(longTermEntries, box);
+                                                const spanStr = formatBoxSpan(allMemberEntries);
+                                                return (
+                                                    <div
+                                                        key={box.id}
+                                                        className="g-card memory-report-card"
+                                                        style={{ cursor: "pointer" }}
+                                                        onClick={() => {
+                                                            setActiveBoxId(box.id);
+                                                            setDigestHistoryOpen(false);
+                                                            setExpandedId(null);
+                                                            setEntryMenuId(null);
+                                                        }}
+                                                    >
+                                                        <div className="mem-report-head">
+                                                            <div className="flex items-center gap-2">
+                                                                <Folder size={15} />
+                                                                <span className="ts-14 font-bold">{box.title}</span>
+                                                            </div>
+                                                            <div className="mem-report-actions">
+                                                                {newEntries.length > 0 && (
+                                                                    <span className="mem-stat-pill is-vector-ok" style={{ fontWeight: 700, borderRadius: 5 }}>
+                                                                        新事件 {newEntries.length}
+                                                                    </span>
+                                                                )}
+                                                                {archivedEntries.length > 0 && (
+                                                                    <span className="mem-stat-pill" style={{ borderRadius: 5 }}>
+                                                                        已归档 {archivedEntries.length}
+                                                                    </span>
+                                                                )}
+                                                                <span className="mem-origin-badge" style={{ borderRadius: 5 }}>
+                                                                    {EVENT_BOX_STATUS_META[box.status].label}
+                                                                </span>
+                                                                <ChevronRight size={16} className="text-secondary" />
+                                                            </div>
+                                                        </div>
+                                                        {box.note && (
+                                                            <p className="ts-12 text-secondary" style={{ margin: "2px 0" }}>{box.note}</p>
+                                                        )}
+                                                        {digestEntry ? (
+                                                            <p className="ts-12 leading-[1.6] text-secondary" style={{ margin: "4px 0 0" }}>
+                                                                <strong>先前总结：</strong>
+                                                                {(stripMemoryStructuredSections(digestEntry.content) || digestEntry.content).slice(0, 110)}
+                                                                {(stripMemoryStructuredSections(digestEntry.content) || digestEntry.content).length > 110 ? "..." : ""}
+                                                            </p>
+                                                        ) : (
+                                                            <p className="ts-11 text-secondary" style={{ margin: "4px 0 0" }}>
+                                                                尚未生成总结 · 共 {allMemberEntries.length} 条记忆{spanStr ? `（${spanStr}）` : ""}
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })
+                                        )}
+                                    </div>
+                                );
+                            }
+
+                            // ── 单个事件盒内部：三层结构视图 ──
+                            const { digestEntry, newEntries, archivedEntries, allMemberEntries } = getBoxLayers(longTermEntries, activeBox);
+                            const ungroupedPool = longTermEntries.filter(e => !getEntryBoxId(e) && !isEntryBoxDigest(e));
+                            const historyVersions = activeBox.digestHistory ?? [];
+
+                            const renderBoxMemberCard = (entry: MemoryEntry, isArchivedLayer: boolean) => {
+                                const parsedMeta = extractMemoryStructuredMeta(entry.content);
+                                const kws = Array.isArray(entry.metadata?.keywords) && (entry.metadata.keywords as unknown[]).length > 0
+                                    ? (entry.metadata.keywords as unknown[]).map(String)
+                                    : parsedMeta.keywords;
+                                const impVal = Number.isFinite(entry.importance) ? entry.importance : (parsedMeta.importance ?? 0.8);
+                                const impScore = Math.max(1, Math.min(10, Math.round(impVal * 10)));
+                                const vecValid = isEntryVectorValid(entry);
+                                const isExp = expandedId === entry.id;
+                                const cleanBody = stripMemoryStructuredSections(entry.content) || entry.content;
+                                const displayMd = isExp || cleanBody.length <= 180 ? cleanBody : cleanBody.slice(0, 180) + "...";
+
+                                return (
+                                    <div
+                                        key={entry.id}
+                                        className={`g-card memory-report-card${isArchivedLayer ? " mem-box-archived-card" : ""}${entryMenuId === entry.id ? " is-menu-open" : ""}`}
+                                        onClick={() => {
+                                            if (entryMenuId) {
+                                                setEntryMenuId(null);
+                                                return;
+                                            }
+                                            setExpandedId(isExp ? null : entry.id);
+                                        }}
+                                    >
+                                        <div className="mem-report-head">
+                                            <span
+                                                className="ts-11 text-secondary"
+                                                style={{
+                                                    letterSpacing: "0.5px",
+                                                    display: "flex",
+                                                    flexDirection: "column",
+                                                    alignItems: "flex-start",
+                                                    gap: 1,
+                                                    textAlign: "left",
+                                                    lineHeight: 1.5,
+                                                }}
+                                            >
+                                                {formatEntryDateLines(entry).map((line, idx) => (
+                                                    <span key={idx}>{line}</span>
+                                                ))}
+                                            </span>
+                                            <div className="mem-report-actions">
+                                                <span
+                                                    className={`mem-stat-pill ${isArchivedLayer ? "" : "is-vector-ok"}`}
+                                                    style={{ fontWeight: 700, borderRadius: 5 }}
+                                                >
+                                                    {isArchivedLayer ? "已归档" : "新事件"}
+                                                </span>
+                                                <div className="mem-entry-menu-wrap">
+                                                    <button
+                                                        className="mem-entry-menu-btn"
+                                                        onClick={ev => {
+                                                            ev.stopPropagation();
+                                                            setEntryMenuId(prev => prev === entry.id ? null : entry.id);
+                                                        }}
+                                                    >
+                                                        <MoreHorizontal size={18} />
+                                                    </button>
+                                                    {entryMenuId === entry.id && (
+                                                        <div className="mem-entry-menu" onClick={ev => ev.stopPropagation()}>
+                                                            <button onClick={() => openEditMemoryEditor(entry)}>
+                                                                <Edit3 size={13} />
+                                                                <span>编辑</span>
+                                                            </button>
+                                                            {isArchivedLayer && (
+                                                                <button onClick={() => void handleUnarchiveEntry(entry)}>
+                                                                    <RotateCcw size={13} />
+                                                                    <span>移回新事件</span>
+                                                                </button>
+                                                            )}
+                                                            <button onClick={() => void handleRemoveEntryFromBox(entry.id)}>
+                                                                <Folder size={13} />
+                                                                <span>移出事件盒</span>
+                                                            </button>
+                                                            <button
+                                                                className="is-danger"
+                                                                onClick={() => {
+                                                                    setEntryMenuId(null);
+                                                                    setConfirmDeleteEntryId(entry.id);
+                                                                }}
+                                                            >
+                                                                <Trash2 size={13} />
+                                                                <span>删除</span>
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="ts-12 leading-[1.7] mem-markdown-body chat-markdown">
+                                            <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+                                                {displayMd}
+                                            </ReactMarkdown>
+                                        </div>
+                                        <div className="mem-structured-footer">
+                                            <div className="mem-stats-row" style={{ display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 10 }}>
+                                                <span className="mem-stat-pill" style={{ background: "transparent", border: "none", padding: 0 }}>
+                                                    重要性 <strong>{impScore}/10</strong>
+                                                </span>
+                                                <span
+                                                    className={`mem-stat-pill ${vecValid ? "is-vector-ok" : "is-vector-missing"}`}
+                                                    style={{ marginLeft: "auto", background: "transparent", border: "none", padding: 0 }}
+                                                >
+                                                    {vecValid ? `● 已向量化(${entry.embedding!.length}d)` : "○ 未向量化"}
+                                                </span>
+                                            </div>
+                                            {kws.length > 0 && (
+                                                <div className="mem-keywords-row">
+                                                    <span className="mem-keywords-label">检索关键词：</span>
+                                                    {kws.map((kw, idx) => (
+                                                        <span key={idx} className="mem-keyword-chip" style={{ borderRadius: 5 }}>{kw}</span>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            };
+
+                            return (
+                                <div className="flex flex-col gap-2 pb-24">
+                                    {entryMenuId && (
+                                        <button
+                                            className="mem-entry-menu-backdrop"
+                                            aria-label="关闭菜单"
+                                            onClick={() => setEntryMenuId(null)}
+                                        />
+                                    )}
+                                    {/* 顶部返回与盒子信息头 */}
+                                    <div className="g-card" style={{ padding: "10px 14px", gap: 6 }}>
+                                        <div className="flex items-center justify-between">
+                                            <button
+                                                type="button"
+                                                className="ui-bare-btn ts-12 text-secondary"
+                                                style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+                                                onClick={() => {
+                                                    setActiveBoxId(null);
+                                                    setEntryMenuId(null);
+                                                }}
+                                            >
+                                                <ChevronLeft size={15} />
+                                                <span>返回事件盒列表</span>
+                                            </button>
+                                            <div className="flex items-center gap-2">
+                                                <button
+                                                    type="button"
+                                                    className="ui-bare-btn ts-12 text-secondary"
+                                                    onClick={() => setBoxDialog({
+                                                        boxId: activeBox.id,
+                                                        title: activeBox.title,
+                                                        status: activeBox.status,
+                                                        note: activeBox.note ?? "",
+                                                    })}
+                                                >
+                                                    编辑信息
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className="ui-bare-btn ts-12"
+                                                    style={{ color: "var(--c-danger, #d9534f)" }}
+                                                    onClick={() => setBoxConfirm({ kind: "delete", boxId: activeBox.id })}
+                                                >
+                                                    删除盒子
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center justify-between" style={{ gap: 8, flexWrap: "wrap" }}>
+                                            <div>
+                                                <h3 className="ts-15 font-bold" style={{ margin: 0 }}>{activeBox.title}</h3>
+                                                {activeBox.note && <p className="ts-11 text-secondary" style={{ margin: "2px 0 0" }}>{activeBox.note}</p>}
+                                            </div>
+                                            <span className="mem-origin-badge" style={{ borderRadius: 5 }}>
+                                                {EVENT_BOX_STATUS_META[activeBox.status].label}
+                                            </span>
+                                        </div>
+                                        <div className="mem-entry-toolbar" style={{ marginTop: 4, flexWrap: "wrap" }}>
+                                            <button
+                                                className="mem-entry-add-btn"
+                                                disabled={boxSummarizing || allMemberEntries.length === 0}
+                                                onClick={() => void handleManualSummarizeBox(activeBox.id)}
+                                            >
+                                                <Sparkles size={14} strokeWidth={1.8} />
+                                                <span>
+                                                    {boxSummarizing
+                                                        ? "正在总结并向量化..."
+                                                        : digestEntry
+                                                            ? (newEntries.length > 0 ? `并入 ${newEntries.length} 条新事件更新总结` : "重新总结全部事件")
+                                                            : `手动总结盒内事件(${allMemberEntries.length})`}
+                                                </span>
+                                            </button>
+                                            <button
+                                                className="mem-entry-add-btn"
+                                                onClick={() => {
+                                                    setBoxAddSelectedIds({});
+                                                    setBoxAddPickerOpen(true);
+                                                }}
+                                            >
+                                                <Plus size={14} strokeWidth={1.8} />
+                                                <span>从已有记忆添加</span>
+                                            </button>
+                                            <button
+                                                className="mem-entry-add-btn"
+                                                onClick={() => openCreateMemoryEditor("long_term")}
+                                            >
+                                                <Plus size={14} strokeWidth={1.8} />
+                                                <span>直接新增事件</span>
+                                            </button>
+                                            {archivedEntries.length > 0 && (
+                                                <button
+                                                    className="mem-entry-clear-btn"
+                                                    onClick={() => setBoxConfirm({ kind: "restore", boxId: activeBox.id })}
+                                                >
+                                                    <RotateCcw size={14} strokeWidth={1.8} />
+                                                    <span>撤销总结并恢复</span>
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* ── 第一层：先前事件的总结 ── */}
+                                    <div className="mem-box-section-header">
+                                        <span>一、先前事件的总结</span>
+                                        <span className="mem-box-section-sub">代表已归档事件参与召回</span>
+                                    </div>
+                                    {digestEntry ? (() => {
+                                        const digestKws = Array.isArray(digestEntry.metadata?.keywords)
+                                            ? (digestEntry.metadata.keywords as unknown[]).map(String)
+                                            : extractMemoryStructuredMeta(digestEntry.content).keywords;
+                                        const digestVecValid = isEntryVectorValid(digestEntry);
+                                        const digestImp = Math.max(1, Math.min(10, Math.round((Number.isFinite(digestEntry.importance) ? digestEntry.importance : 0.85) * 10)));
+                                        const digestClean = stripMemoryStructuredSections(digestEntry.content) || digestEntry.content;
+                                        return (
+                                            <div className="g-card mem-box-digest-card">
+                                                <div className="flex items-center justify-between">
+                                                    <span className="ts-11 text-secondary">
+                                                        时间跨度：{String(digestEntry.metadata?.timeSpan ?? digestEntry.metadata?.eventDate ?? "")}
+                                                        {" · "}整合自 {archivedEntries.length} 条已归档事件
+                                                    </span>
+                                                    <div className="flex items-center gap-2">
+                                                        {historyVersions.length > 1 && (
+                                                            <button
+                                                                type="button"
+                                                                className="mem-superseded-jump"
+                                                                onClick={() => setDigestHistoryOpen(prev => !prev)}
+                                                            >
+                                                                <History size={11} style={{ marginRight: 2, verticalAlign: -1 }} />
+                                                                {digestHistoryOpen ? "收起历史" : `历史(${historyVersions.length}版)`}
+                                                            </button>
+                                                        )}
+                                                        <button
+                                                            type="button"
+                                                            className="mem-superseded-jump"
+                                                            onClick={() => openEditMemoryEditor(digestEntry)}
+                                                        >
+                                                            编辑总结
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                                <div className="ts-12 leading-[1.7] mem-markdown-body chat-markdown">
+                                                    <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+                                                        {digestClean}
+                                                    </ReactMarkdown>
+                                                </div>
+                                                {digestHistoryOpen && historyVersions.length > 1 && (
+                                                    <div className="flex flex-col gap-2 pt-2" style={{ borderTop: "1px dashed var(--c-border)" }}>
+                                                        {historyVersions.slice(0, -1).reverse().map(ver => (
+                                                            <div key={ver.version} className="ts-11 text-secondary">
+                                                                <div><strong>第 {ver.version} 版</strong> · {ver.generatedAt.slice(0, 10)}（{ver.sourceIds.length} 条）</div>
+                                                                <div style={{ marginTop: 2 }}>{ver.text}</div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                                <div className="mem-structured-footer">
+                                                    <div className="mem-stats-row" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                                                        <span className="mem-stat-pill" style={{ background: "transparent", border: "none", padding: 0 }}>
+                                                            重要性 <strong>{digestImp}/10</strong>
+                                                        </span>
+                                                        <span
+                                                            className={`mem-stat-pill ${digestVecValid ? "is-vector-ok" : "is-vector-missing"}`}
+                                                            style={{ marginLeft: "auto", background: "transparent", border: "none", padding: 0 }}
+                                                        >
+                                                            {digestVecValid ? `● 已向量化(${digestEntry.embedding!.length}d)` : "○ 未向量化"}
+                                                        </span>
+                                                    </div>
+                                                    {digestKws.length > 0 && (
+                                                        <div className="mem-keywords-row">
+                                                            <span className="mem-keywords-label">检索关键词：</span>
+                                                            {digestKws.map((kw, idx) => (
+                                                                <span key={idx} className="mem-keyword-chip" style={{ borderRadius: 5 }}>{kw}</span>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })() : (
+                                        <div className="mem-empty-card" style={{ padding: "14px 12px" }}>
+                                            <p className="ts-12">尚未生成先前事件的总结。将相关记忆放入下方「新事件」后，点击上方「手动总结」即可生成并自动向量化。</p>
+                                        </div>
+                                    )}
+
+                                    {/* ── 第二层：新事件（待总结进展）── */}
+                                    <div className="mem-box-section-header">
+                                        <span>二、新事件 / 最新进展（{newEntries.length}）</span>
+                                        <span className="mem-box-section-sub">尚未并入总结，当前正常独立召回</span>
+                                    </div>
+                                    {newEntries.length === 0 ? (
+                                        <div className="mem-empty-card" style={{ padding: "14px 12px" }}>
+                                            <p className="ts-12">暂无待总结的新事件。后续有新进展时可点击「从已有记忆添加」（共有 {ungroupedPool.length} 条未归盒记忆可选）。</p>
+                                        </div>
+                                    ) : (
+                                        newEntries.map(entry => renderBoxMemberCard(entry, false))
+                                    )}
+
+                                    {/* ── 第三层：已归档事件 ── */}
+                                    <div className="mem-box-section-header">
+                                        <span>三、已归档事件（{archivedEntries.length}）</span>
+                                        <span className="mem-box-section-sub">已并入上方总结，不再重复注入</span>
+                                    </div>
+                                    {archivedEntries.length === 0 ? (
+                                        <div className="mem-empty-card" style={{ padding: "14px 12px" }}>
+                                            <p className="ts-12">暂无已归档事件。手动总结后，被总结的记忆会显示在这里。</p>
+                                        </div>
+                                    ) : (
+                                        archivedEntries.map(entry => renderBoxMemberCard(entry, true))
+                                    )}
+                                </div>
+                            );
+                        })()
                     ) : activeTab === "core" ? (
                         renderMemoryEntries("core", coreEntries, "暂无核心记忆。长期记忆累计到设定条数后会自动提炼，也可以手动新增。")
                     ) : (
@@ -1526,13 +2238,14 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                     </MemoryDetailBoundary>
                 </div>
 
-                {/* Bottom tab bar — floating above bottom */}
-                <div className="chat-tab-bar" style={{ position: "absolute", bottom: 40, left: 40, right: 40, zIndex: 10, borderRadius: 28, borderTop: "none", padding: "10px 0" }}>
+                {/* Bottom tab bar — 短期 | 共享事件 | 长期 | 事件盒 | 核心 */}
+                <div className="chat-tab-bar" style={{ position: "absolute", bottom: 40, left: 24, right: 24, zIndex: 10, borderRadius: 28, borderTop: "none", padding: "10px 0" }}>
                     {([
                         { key: "short" as const, icon: Clock, label: "短期" },
                         { key: "shared" as const, icon: Users, label: "共享事件" },
                         { key: "long" as const, icon: Archive, label: "长期" },
-                        { key: "core" as const, icon: Archive, label: "核心" },
+                        { key: "boxes" as const, icon: Folder, label: "事件盒" },
+                        { key: "core" as const, icon: Brain, label: "核心" },
                     ]).map(tab => (
                         <button
                             key={tab.key}
@@ -1801,6 +2514,292 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                         </div>
                     );
                 })()}
+
+                {/* 事件盒：新建 / 编辑弹窗 */}
+                {boxDialog && (
+                    <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={() => setBoxDialog(null)}>
+                        <div className="modal-sheet mem-edit-sheet" data-ui="modal-sheet" onClick={ev => ev.stopPropagation()}>
+                            <div className="modal-header" data-ui="modal-header">
+                                <button className="modal-header-btn modal-header-btn-muted" onClick={() => setBoxDialog(null)}>
+                                    <X size={18} />
+                                </button>
+                                <h3 className="modal-title">{boxDialog.boxId ? "编辑事件盒" : "新建事件盒"}</h3>
+                                <button
+                                    className="modal-header-btn modal-header-btn-action"
+                                    disabled={!boxDialog.title.trim()}
+                                    onClick={() => void handleSaveBoxDialog()}
+                                >
+                                    <Check size={18} />
+                                </button>
+                            </div>
+                            <div className="modal-body mem-edit-body" data-ui="modal-body">
+                                <div className="mem-edit-field-row">
+                                    <label className="mem-edit-field-label">事件盒名称</label>
+                                    <input
+                                        type="text"
+                                        className="ui-input ts-12"
+                                        placeholder="例如：筹备生日礼物、学法语的约定"
+                                        value={boxDialog.title}
+                                        onChange={e => setBoxDialog(prev => prev ? { ...prev, title: e.target.value } : prev)}
+                                    />
+                                </div>
+                                <div className="mem-edit-field-row">
+                                    <label className="mem-edit-field-label">事件状态</label>
+                                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                        {(Object.keys(EVENT_BOX_STATUS_META) as EventBoxStatus[]).map(st => (
+                                            <button
+                                                key={st}
+                                                type="button"
+                                                className="ui-chip"
+                                                style={{ fontSize: 11, padding: "4px 10px" }}
+                                                data-selected={boxDialog.status === st ? "" : undefined}
+                                                onClick={() => setBoxDialog(prev => prev ? { ...prev, status: st } : prev)}
+                                            >
+                                                {EVENT_BOX_STATUS_META[st].label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div className="mem-edit-field-row">
+                                    <label className="mem-edit-field-label">备注说明（可选）</label>
+                                    <input
+                                        type="text"
+                                        className="ui-input ts-12"
+                                        placeholder="一句话记录这件事的背景"
+                                        value={boxDialog.note}
+                                        onChange={e => setBoxDialog(prev => prev ? { ...prev, note: e.target.value } : prev)}
+                                    />
+                                </div>
+                                <button
+                                    className="ui-btn ui-btn-primary mem-edit-save-btn"
+                                    disabled={!boxDialog.title.trim()}
+                                    onClick={() => void handleSaveBoxDialog()}
+                                >
+                                    {boxDialog.boxId ? "保存修改" : "创建事件盒"}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* 事件盒：单条记忆放入/更换事件盒 */}
+                {boxMoveEntryId && (() => {
+                    const targetEntry = longTermEntries.find(e => e.id === boxMoveEntryId);
+                    if (!targetEntry) return null;
+                    const currentBoxId = getEntryBoxId(targetEntry);
+                    return (
+                        <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={() => setBoxMoveEntryId(null)}>
+                            <div className="modal-sheet" data-ui="modal-sheet" onClick={ev => ev.stopPropagation()}>
+                                <div className="modal-header" data-ui="modal-header">
+                                    <span style={{ width: 28 }} />
+                                    <h3 className="modal-title">放入事件盒</h3>
+                                    <button className="modal-header-btn modal-header-btn-muted" onClick={() => setBoxMoveEntryId(null)}>
+                                        <X size={18} />
+                                    </button>
+                                </div>
+                                <div className="modal-body" data-ui="modal-body" style={{ paddingBottom: 20 }}>
+                                    <p className="ts-11 text-secondary mx-2" style={{ marginBottom: 8 }}>
+                                        放入事件盒后将作为该盒的「新事件」，后续可在事件盒中手动点击总结。
+                                    </p>
+                                    <div className="menu-group">
+                                        {boxes.map(box => (
+                                            <button
+                                                key={box.id}
+                                                className="menu-item"
+                                                onClick={() => void handleMoveSingleEntryToBox(box.id)}
+                                            >
+                                                <Folder size={18} />
+                                                <div className="menu-label-group">
+                                                    <span className="menu-label">{box.title}</span>
+                                                    <span className="menu-desc">{EVENT_BOX_STATUS_META[box.status].label}</span>
+                                                </div>
+                                                <div className="menu-right">
+                                                    {box.id === currentBoxId ? <span className="menu-desc">当前所属</span> : <ChevronRight size={16} />}
+                                                </div>
+                                            </button>
+                                        ))}
+                                        <button
+                                            className="menu-item"
+                                            onClick={() => {
+                                                const pid = boxMoveEntryId;
+                                                setBoxMoveEntryId(null);
+                                                setBoxDialog({ title: "", status: "active", note: "", pendingEntryId: pid });
+                                            }}
+                                        >
+                                            <Plus size={18} />
+                                            <div className="menu-label-group">
+                                                <span className="menu-label">新建事件盒并放入</span>
+                                                <span className="menu-desc">创建一个新事件盒，直接将本条记忆作为新事件放入</span>
+                                            </div>
+                                            <div className="menu-right">
+                                                <ChevronRight size={16} />
+                                            </div>
+                                        </button>
+                                        {currentBoxId && (
+                                            <button
+                                                className="menu-item"
+                                                onClick={() => void handleRemoveEntryFromBox(targetEntry.id)}
+                                            >
+                                                <Trash2 size={18} />
+                                                <div className="menu-label-group">
+                                                    <span className="menu-label menu-label-danger">移出当前事件盒</span>
+                                                    <span className="menu-desc">恢复为未归盒的普通长期记忆</span>
+                                                </div>
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    );
+                })()}
+
+                {/* 事件盒内：从已有未归盒记忆中勾选添加 */}
+                {boxAddPickerOpen && activeBoxId && (() => {
+                    const available = longTermEntries.filter(e => !getEntryBoxId(e) && !isEntryBoxDigest(e));
+                    const selectedCount = Object.keys(boxAddSelectedIds).filter(id => boxAddSelectedIds[id]).length;
+                    return (
+                        <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={() => setBoxAddPickerOpen(false)}>
+                            <div className="modal-sheet" data-ui="modal-sheet" onClick={ev => ev.stopPropagation()}>
+                                <div className="modal-header" data-ui="modal-header">
+                                    <button className="modal-header-btn modal-header-btn-muted" onClick={() => setBoxAddPickerOpen(false)}>
+                                        <X size={18} />
+                                    </button>
+                                    <h3 className="modal-title">勾选记忆加入「新事件」</h3>
+                                    <button
+                                        className="modal-header-btn modal-header-btn-action"
+                                        disabled={selectedCount === 0}
+                                        onClick={() => void handleConfirmAddEntriesToBox()}
+                                    >
+                                        <Check size={18} />
+                                    </button>
+                                </div>
+                                <div className="modal-body" data-ui="modal-body" style={{ maxHeight: "60vh", overflowY: "auto", paddingBottom: 16 }}>
+                                    {available.length === 0 ? (
+                                        <p className="ts-12 text-secondary text-center py-6">当前没有未归盒的长期记忆可供添加。</p>
+                                    ) : (
+                                        <div className="flex flex-col gap-2">
+                                            {available.map(item => {
+                                                const checked = Boolean(boxAddSelectedIds[item.id]);
+                                                const body = (stripMemoryStructuredSections(item.content) || item.content).slice(0, 120);
+                                                return (
+                                                    <div
+                                                        key={item.id}
+                                                        className="g-card"
+                                                        style={{
+                                                            padding: "10px 12px",
+                                                            cursor: "pointer",
+                                                            border: checked ? "1.5px solid var(--c-text)" : undefined,
+                                                        }}
+                                                        onClick={() => setBoxAddSelectedIds(prev => ({ ...prev, [item.id]: !prev[item.id] }))}
+                                                    >
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="ts-11 text-secondary">{formatEntryDateLines(item)[0]}</span>
+                                                            <span className="ts-11 font-bold">{checked ? "✓ 已选" : "点击选择"}</span>
+                                                        </div>
+                                                        <p className="ts-12" style={{ margin: "4px 0 0" }}>{body}</p>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                    {available.length > 0 && (
+                                        <button
+                                            className="ui-btn ui-btn-primary mem-edit-save-btn"
+                                            style={{ marginTop: 12 }}
+                                            disabled={selectedCount === 0}
+                                            onClick={() => void handleConfirmAddEntriesToBox()}
+                                        >
+                                            加入事件盒（{selectedCount} 条）
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    );
+                })()}
+
+                {/* 事件盒：智能推荐归盒预览（仅归入事件盒，绝不自动批量总结） */}
+                {smartSuggestions.length > 0 && (() => {
+                    const chosenCount = smartSuggestions.filter(s => smartSelected[s.key]).length;
+                    return (
+                        <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={() => !smartBusy && setSmartSuggestions([])}>
+                            <div className="modal-sheet" data-ui="modal-sheet" onClick={ev => ev.stopPropagation()}>
+                                <div className="modal-header" data-ui="modal-header">
+                                    <span style={{ width: 28 }} />
+                                    <h3 className="modal-title">智能推荐归盒（{smartSuggestions.length} 组）</h3>
+                                    <button className="modal-header-btn modal-header-btn-muted" disabled={smartBusy} onClick={() => setSmartSuggestions([])}>
+                                        <X size={18} />
+                                    </button>
+                                </div>
+                                <div className="modal-body" data-ui="modal-body" style={{ maxHeight: "62vh", overflowY: "auto", paddingBottom: 16 }}>
+                                    <p className="ts-11 text-secondary mx-2" style={{ marginBottom: 8 }}>
+                                        确认后仅将相关记忆放入对应事件盒的「新事件」中，不会自动总结；你可以随后点进事件盒手动点击总结。
+                                    </p>
+                                    <div className="flex flex-col gap-2">
+                                        {smartSuggestions.map(group => {
+                                            const checked = Boolean(smartSelected[group.key]);
+                                            return (
+                                                <div
+                                                    key={group.key}
+                                                    className="g-card"
+                                                    style={{
+                                                        padding: "10px 12px",
+                                                        cursor: "pointer",
+                                                        opacity: checked ? 1 : 0.55,
+                                                    }}
+                                                    onClick={() => !smartBusy && setSmartSelected(prev => ({ ...prev, [group.key]: !prev[group.key] }))}
+                                                >
+                                                    <div className="flex items-center justify-between">
+                                                        <span className="ts-13 font-bold">
+                                                            {group.targetBoxId ? `[并入已有盒] ${group.title}` : `[新建事件盒] ${group.title}`}
+                                                        </span>
+                                                        <span className="ts-11 font-bold">{checked ? "✓ 选中" : "已取消"}</span>
+                                                    </div>
+                                                    <span className="ts-11 text-secondary">
+                                                        共 {group.entries.length} 条相关记忆 · {group.earliest} ~ {group.latest}
+                                                    </span>
+                                                    <div className="flex flex-col gap-1 mt-1">
+                                                        {group.entries.slice(0, 3).map(e => (
+                                                            <p key={e.id} className="ts-11 text-secondary" style={{ margin: 0 }}>
+                                                                • {(stripMemoryStructuredSections(e.content) || e.content).slice(0, 65)}...
+                                                            </p>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                    <button
+                                        className="ui-btn ui-btn-primary mem-edit-save-btn"
+                                        style={{ marginTop: 12 }}
+                                        disabled={smartBusy || chosenCount === 0}
+                                        onClick={() => void handleConfirmSmartSuggestions()}
+                                    >
+                                        {smartBusy ? "正在放入事件盒..." : `确认放入 ${chosenCount} 组事件盒`}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    );
+                })()}
+
+                {/* 事件盒：删除盒子 / 撤销总结恢复确认 */}
+                {boxConfirm && (
+                    <ConfirmDialog
+                        title={boxConfirm.kind === "delete" ? "删除这个事件盒？" : "撤销总结并恢复？"}
+                        message={
+                            boxConfirm.kind === "delete"
+                                ? "盒内的原始记忆不会被删除，将全部恢复为普通长期记忆；该盒生成的总结条目将被移除。"
+                                : "将移除该事件盒当前的「先前事件的总结」，并把下方所有「已归档事件」恢复为「新事件」重新参与独立召回。"
+                        }
+                        icon={AlertCircle}
+                        variant={boxConfirm.kind === "delete" ? "danger" : undefined}
+                        confirmLabel={boxConfirm.kind === "delete" ? "删除事件盒" : "确认恢复"}
+                        onConfirm={() => void handleConfirmBoxAction()}
+                        onCancel={() => setBoxConfirm(null)}
+                    />
+                )}
 
                 {/* Confirm delete single entry */}
                 {confirmDeleteEntryId && (

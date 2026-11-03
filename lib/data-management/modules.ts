@@ -189,6 +189,7 @@ const PRIMARY_DATA_MODULES: DataModuleDefinition[] = [
         label: "记忆配置与计数",
         keys: ["ai_phone_memory_config_v1"],
         prefixes: [
+          "ai_phone_memory_boxes_",
           "ai_phone_mem_evt_count_",
           "ai_phone_mem_last_sum_",
           "ai_phone_mem_core_count_",
