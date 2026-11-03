@@ -43,3 +43,355 @@
 .mem-superseded-jump:active {
   opacity: 0.6;
 }
+
+/* ══════════════════════════════════════════
+   事件盒：把围绕同一件事的记忆归到一起
+   颜色沿用主题变量，夜览 / 自定义主题自动跟随
+   ══════════════════════════════════════════ */
+
+.mem-box-view {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mem-box-section-title {
+  margin: 6px 2px 0;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  color: var(--c-icon);
+}
+
+.mem-box-toolbar-hint {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--c-icon);
+  align-self: center;
+}
+
+/* 两列即可：手机宽度下三列放不下摘要文字 */
+.mem-box-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.mem-box-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px;
+  cursor: pointer;
+  position: relative;
+}
+
+.mem-box-card:active {
+  opacity: 0.75;
+}
+
+.mem-box-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 22px;
+}
+
+.mem-box-icon {
+  color: var(--c-text);
+  opacity: 0.85;
+  display: inline-flex;
+}
+
+.mem-box-title {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+  color: var(--c-text);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.mem-box-meta {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--c-icon);
+}
+
+.mem-box-flags {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+  min-height: 16px;
+}
+
+/* 状态用一个点 + 小字，不做彩色胶囊：三四种胶囊叠在一起立刻显得乱 */
+.mem-box-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--c-icon);
+  white-space: nowrap;
+}
+
+.mem-box-status::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--c-icon);
+  opacity: 0.55;
+}
+
+.mem-box-status[data-status="active"]::before {
+  background: color-mix(in srgb, var(--c-text) 70%, transparent);
+  opacity: 1;
+}
+
+.mem-box-status[data-status="pivotal"]::before {
+  opacity: 1;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--c-icon) 22%, transparent);
+}
+
+.mem-box-flag {
+  font-size: 10px;
+  line-height: 1.4;
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--c-icon);
+  border: 1px solid color-mix(in srgb, var(--c-icon) 34%, transparent);
+}
+
+.mem-box-flag.is-warn {
+  color: var(--c-text);
+  border-color: color-mix(in srgb, var(--c-text) 45%, transparent);
+}
+
+/* ── 盒内页头 ── */
+.mem-box-detail-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 2px 2px;
+}
+
+.mem-box-detail-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mem-box-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: none;
+  color: var(--c-text);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.mem-box-back:active {
+  opacity: 0.6;
+}
+
+.mem-box-detail-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--c-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.mem-box-detail-meta {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--c-icon);
+  padding-left: 34px;
+}
+
+.mem-box-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-left: 34px;
+}
+
+.mem-box-hint {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--c-icon);
+  padding-left: 34px;
+}
+
+/* ── 摘要卡 ── */
+.mem-box-digest {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  border-left: 2px solid color-mix(in srgb, var(--c-text) 45%, transparent);
+}
+
+.mem-box-digest-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  color: var(--c-icon);
+}
+
+.mem-box-digest-text {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--c-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.mem-box-digest-history {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px dashed color-mix(in srgb, var(--c-icon) 30%, transparent);
+}
+
+.mem-box-digest-version-tag {
+  display: block;
+  font-size: 10px;
+  color: var(--c-icon);
+  margin-bottom: 2px;
+}
+
+.mem-box-digest-version p {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--c-icon);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── 归盒弹层 ── */
+.mem-box-picker-hint {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--c-icon);
+  margin-bottom: 8px;
+}
+
+.mem-box-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+
+.mem-box-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--c-icon) 22%, transparent);
+  background: none;
+  color: var(--c-text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mem-box-picker-item[data-active] {
+  border-color: color-mix(in srgb, var(--c-text) 55%, transparent);
+}
+
+.mem-box-picker-item.is-new {
+  color: var(--c-icon);
+  border-style: dashed;
+}
+
+.mem-box-picker-item:active {
+  opacity: 0.7;
+}
+
+.mem-box-picker-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mem-box-picker-status {
+  font-size: 11px;
+  color: var(--c-icon);
+  flex-shrink: 0;
+}
+
+.mem-box-picker-remove {
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  padding: 8px;
+  border: none;
+  background: none;
+  color: var(--c-icon);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.mem-box-name-sheet .modal-body {
+  padding-bottom: 20px;
+}
+
+.mem-box-status-options {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mem-box-confirm-text {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--c-text);
+}
+
+.mem-box-confirm-icon {
+  flex-shrink: 0;
+  margin-top: 3px;
+  color: var(--c-icon);
+}
+
+.mem-box-confirm-icon.is-danger {
+  color: #d9534f;
+}
+
+.mem-box-confirm-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.mem-box-confirm-actions > button {
+  flex: 1;
+}
+

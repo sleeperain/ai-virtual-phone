@@ -9,6 +9,7 @@ import { estimateTokens } from "./token-counter";
 import { extractMemoryStructuredMeta } from "./memory-summarizer";
 import { sortMemoriesByDateThenImportance } from "./memory-injector";
 import { effectiveImportance } from "./memory-revision";
+import { filterRecallableEntries } from "./memory-event-boxes";
 
 /**
  * Retrieve relevant long-term memories for prompt injection.
@@ -27,7 +28,9 @@ export async function retrieveMemoriesForPrompt(
     currentContext: string,
     config: MemoryConfig
 ): Promise<MemoryEntry[]> {
-    const longTermEntries = await loadMemoryEntriesByType(characterId, "long_term");
+    // 事件盒归档过的条目退出召回：由盒子摘要条目代表整件事，避免同一件事的多条记忆
+    // 各自竞争预算、还互相矛盾（归档只是打标记，源条目随时可恢复）
+    const longTermEntries = filterRecallableEntries(await loadMemoryEntriesByType(characterId, "long_term"));
     if (longTermEntries.length === 0 || !currentContext.trim()) return [];
 
     const budget = config.longTermTokenBudget;
@@ -98,7 +101,8 @@ export async function retrieveCoreMemoriesForPrompt(
     characterId: string,
     config: MemoryConfig,
 ): Promise<MemoryEntry[]> {
-    const coreEntries = await loadMemoryEntriesByType(characterId, "core");
+    // 核心记忆理论上不会进事件盒，这里加一层保险：万一被手工归档，同样不该再注入
+    const coreEntries = filterRecallableEntries(await loadMemoryEntriesByType(characterId, "core"));
     if (coreEntries.length === 0) return [];
 
     // Selection stage: active & high importance first so budget never drops critical milestones
