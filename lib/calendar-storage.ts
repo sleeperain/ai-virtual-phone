@@ -1,4 +1,12 @@
-import type { CalendarColorKey, CalendarOwnerType, CalendarScheduleItem, CalendarWeekPlan } from "./calendar-types";
+import type {
+  CalendarCharacterRoutinePlan,
+  CalendarColorKey,
+  CalendarOwnerType,
+  CalendarRoutineDayType,
+  CalendarRoutineItem,
+  CalendarScheduleItem,
+  CalendarWeekPlan,
+} from "./calendar-types";
 import {
   formatIsoDate,
   getOwnerStorageKey,
@@ -8,20 +16,28 @@ import {
   isCalendarColorKey,
   isCalendarTimeRangeAllowed,
   normalizeTime,
+  parseIsoDate,
   pickScheduleColorKey,
   sanitizeScheduleEmoji,
   sortScheduleItems,
   timeToMinutes,
 } from "./calendar-utils";
+import { holidaysForDate } from "./calendar-holidays";
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 
 const STORAGE_KEY = "ai_phone_calendar_plans_v1";
 const CALENDAR_CONFIG_KEY = "ai_phone_calendar_config_v1";
+const ROUTINE_STORAGE_KEY = "ai_phone_calendar_routines_v1";
 registerKvMigration(STORAGE_KEY);
 registerKvMigration(CALENDAR_CONFIG_KEY);
+registerKvMigration(ROUTINE_STORAGE_KEY);
 
 type PersistedCalendarStore = {
   plans: CalendarWeekPlan[];
+};
+
+type PersistedRoutineStore = {
+  plans: CalendarCharacterRoutinePlan[];
 };
 
 export type CalendarReadScope = "chat_and_story" | "chat_only" | "story_only";
@@ -355,6 +371,221 @@ export function formatCalendarScheduleItemForPrompt(item: Pick<CalendarScheduleI
   return `${item.startTime}-${item.endTime} @${item.location || "未定"} ${item.title}`;
 }
 
+// ── 角色生活节律（常规作息：工作日 / 节假日） ──
+
+function loadRoutineStore(): PersistedRoutineStore {
+  if (typeof window === "undefined") return { plans: [] };
+  try {
+    const raw = kvGet(ROUTINE_STORAGE_KEY);
+    if (!raw) return { plans: [] };
+    const parsed = JSON.parse(raw) as Partial<PersistedRoutineStore>;
+    return { plans: Array.isArray(parsed.plans) ? parsed.plans : [] };
+  } catch {
+    return { plans: [] };
+  }
+}
+
+function saveRoutineStore(store: PersistedRoutineStore): void {
+  if (typeof window === "undefined") return;
+  kvSet(ROUTINE_STORAGE_KEY, JSON.stringify(store));
+}
+
+export function sortRoutineItems(items: CalendarRoutineItem[]): CalendarRoutineItem[] {
+  const dayOrder: Record<CalendarRoutineDayType, number> = { workday: 0, holiday: 1 };
+  return [...items].sort((a, b) => {
+    if (a.dayType !== b.dayType) return dayOrder[a.dayType] - dayOrder[b.dayType];
+    if (a.startTime !== b.startTime) return a.startTime.localeCompare(b.startTime);
+    if (a.endTime !== b.endTime) return a.endTime.localeCompare(b.endTime);
+    return a.title.localeCompare(b.title);
+  });
+}
+
+export function loadCharacterRoutinePlan(ownerId: string): CalendarCharacterRoutinePlan {
+  const store = loadRoutineStore();
+  const existing = store.plans.find(entry => entry.ownerId === ownerId);
+  if (!existing) {
+    return {
+      id: `calendar_routine_${ownerId}`,
+      ownerId,
+      items: [],
+      updatedAt: new Date().toISOString(),
+    };
+  }
+  return {
+    ...existing,
+    items: sortRoutineItems(
+      (existing.items || [])
+        .filter(item => (item.dayType === "workday" || item.dayType === "holiday") && isCalendarTimeRangeAllowed(item.startTime, item.endTime))
+        .map(item => ({
+          ...item,
+          colorKey: item.colorKey || pickScheduleColorKey(item.startTime),
+        })),
+    ),
+  };
+}
+
+export function replaceCharacterRoutineItems(ownerId: string, items: CalendarRoutineItem[]): CalendarCharacterRoutinePlan {
+  const store = loadRoutineStore();
+  const existing = store.plans.find(entry => entry.ownerId === ownerId);
+  const now = new Date().toISOString();
+  const normalized: CalendarCharacterRoutinePlan = {
+    id: existing?.id ?? `calendar_routine_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    ownerId,
+    updatedAt: now,
+    items: sortRoutineItems(
+      items
+        .filter(item => (item.dayType === "workday" || item.dayType === "holiday") && isCalendarTimeRangeAllowed(item.startTime, item.endTime))
+        .map(item => ({
+          ...item,
+          colorKey: item.colorKey || pickScheduleColorKey(item.startTime),
+        })),
+    ),
+  };
+  const others = store.plans.filter(entry => entry.ownerId !== ownerId);
+  saveRoutineStore({ plans: [...others, normalized] });
+  return normalized;
+}
+
+export function upsertCharacterRoutineItem(
+  ownerId: string,
+  item: Omit<CalendarRoutineItem, "id" | "colorKey" | "createdAt" | "updatedAt"> &
+    Partial<Pick<CalendarRoutineItem, "id" | "colorKey" | "createdAt" | "updatedAt">>,
+): CalendarCharacterRoutinePlan {
+  const plan = loadCharacterRoutinePlan(ownerId);
+  const now = new Date().toISOString();
+  const normalized: CalendarRoutineItem = {
+    id: item.id ?? `routine_item_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    dayType: item.dayType,
+    startTime: item.startTime,
+    endTime: item.endTime,
+    location: item.location.trim(),
+    title: item.title.trim(),
+    emoji: sanitizeScheduleEmoji(item.emoji),
+    colorKey: item.colorKey || pickScheduleColorKey(item.startTime),
+    source: item.source,
+    createdAt: item.createdAt ?? now,
+    updatedAt: now,
+  };
+  const nextItems = plan.items.filter(entry => entry.id !== normalized.id);
+  nextItems.push(normalized);
+  return replaceCharacterRoutineItems(ownerId, nextItems);
+}
+
+export function deleteCharacterRoutineItem(ownerId: string, itemId: string): CalendarCharacterRoutinePlan {
+  const plan = loadCharacterRoutinePlan(ownerId);
+  return replaceCharacterRoutineItems(ownerId, plan.items.filter(entry => entry.id !== itemId));
+}
+
+export function clearGeneratedRoutineItems(ownerId: string): CalendarRoutineItem[] {
+  const plan = loadCharacterRoutinePlan(ownerId);
+  const removed = plan.items.filter(item => item.source !== "manual");
+  if (removed.length === 0) return [];
+  replaceCharacterRoutineItems(ownerId, plan.items.filter(item => item.source === "manual"));
+  return removed;
+}
+
+export function restoreCharacterRoutineItems(ownerId: string, itemsToRestore: CalendarRoutineItem[]): void {
+  if (itemsToRestore.length === 0) return;
+  const plan = loadCharacterRoutinePlan(ownerId);
+  replaceCharacterRoutineItems(ownerId, [...plan.items, ...itemsToRestore]);
+}
+
+export function normalizeGeneratedRoutineItems(
+  rawItems: Array<{
+    dayType: CalendarRoutineDayType;
+    startTime: string;
+    endTime: string;
+    location: string;
+    title: string;
+    emoji?: string;
+    colorKey?: CalendarColorKey;
+  }>,
+): CalendarRoutineItem[] {
+  const now = new Date().toISOString();
+  return sortRoutineItems(
+    rawItems
+      .map((item, idx) => ({
+        id: `routine_item_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 8)}`,
+        dayType: item.dayType,
+        startTime: normalizeTime(item.startTime) || item.startTime,
+        endTime: normalizeTime(item.endTime) || item.endTime,
+        location: item.location.trim(),
+        title: item.title.trim(),
+        emoji: sanitizeScheduleEmoji(item.emoji),
+        colorKey: isCalendarColorKey(item.colorKey) ? item.colorKey : pickScheduleColorKey(item.startTime),
+        source: "generated" as const,
+        createdAt: now,
+        updatedAt: now,
+      }))
+      .filter(item => isCalendarTimeRangeAllowed(item.startTime, item.endTime)),
+  );
+}
+
+export function cloneRoutinePlanWithManualEdits(
+  ownerId: string,
+  generatedItems: CalendarRoutineItem[],
+): CalendarCharacterRoutinePlan {
+  const existing = loadCharacterRoutinePlan(ownerId);
+  const manualItems = existing.items.filter(item => item.source === "manual");
+  const nextItems = [...generatedItems.filter(item => item.source !== "manual")];
+  for (const item of manualItems) {
+    const collides = nextItems.find(
+      entry =>
+        entry.dayType === item.dayType &&
+        entry.startTime === item.startTime &&
+        entry.endTime === item.endTime &&
+        entry.title === item.title,
+    );
+    if (!collides) nextItems.push(item);
+  }
+  return replaceCharacterRoutineItems(ownerId, nextItems);
+}
+
+/** 判断某一天属于「工作日」还是「节假日」（周末 + 已启用的法定节假日均归为节假日） */
+export function resolveRoutineDayType(dateOrIso: Date | string, config = loadCalendarConfig()): CalendarRoutineDayType {
+  const iso = typeof dateOrIso === "string" ? dateOrIso : formatIsoDate(dateOrIso);
+  const date = typeof dateOrIso === "string" ? parseIsoDate(dateOrIso) : dateOrIso;
+  const day = date.getDay();
+  if (day === 0 || day === 6) return "holiday";
+  const holidays = holidaysForDate(iso, { china: config.chinaHolidays, ontario: config.ontarioHolidays });
+  if (holidays.length > 0) return "holiday";
+  return "workday";
+}
+
+export function formatCharacterRoutineForPrompt(ownerId: string): string {
+  const plan = loadCharacterRoutinePlan(ownerId);
+  if (plan.items.length === 0) {
+    return "暂无固定生活节律安排。";
+  }
+  const workdays = plan.items.filter(item => item.dayType === "workday");
+  const holidays = plan.items.filter(item => item.dayType === "holiday");
+  const formatLine = (label: string, list: CalendarRoutineItem[]) => {
+    if (list.length === 0) return `${label}：暂无明确作息`;
+    const summary = list
+      .map(item => `${item.startTime}-${item.endTime} @${item.location || "未定"} ${item.title}`)
+      .join("；");
+    return `${label}：${summary}`;
+  };
+  return [
+    formatLine("工作日", workdays),
+    formatLine("节假日（含周末及法定节假日）", holidays),
+  ].join("\n");
+}
+
+export function validateRoutineDraft(item: {
+  startTime: string;
+  endTime: string;
+  location: string;
+  title: string;
+}): string | null {
+  const start = normalizeTime(item.startTime);
+  const end = normalizeTime(item.endTime);
+  if (!start || !end) return "请输入正确的时间格式";
+  if (start >= end) return "结束时间需要晚于开始时间";
+  if (!item.title.trim()) return "请输入事项";
+  return null;
+}
+
 export function getCurrentCalendarScheduleForPrompt(
   ownerType: CalendarOwnerType,
   ownerId: string,
@@ -364,18 +595,40 @@ export function getCurrentCalendarScheduleForPrompt(
   const weekStart = getWeekStartIso(now);
   const currentMinute = now.getHours() * 60 + now.getMinutes();
   const plan = loadCalendarWeekPlan(ownerType, ownerId, weekStart);
-  if (!plan) return "无";
+  const activeSpecialItems = plan
+    ? sortScheduleItems(plan.items).filter(item => {
+        if (item.date !== date) return false;
+        const start = timeToMinutes(item.startTime);
+        const end = timeToMinutes(item.endTime);
+        if (Number.isNaN(start) || Number.isNaN(end)) return false;
+        return start <= currentMinute && currentMinute < end;
+      })
+    : [];
 
-  const activeItems = sortScheduleItems(plan.items).filter(item => {
-    if (item.date !== date) return false;
-    const start = timeToMinutes(item.startTime);
-    const end = timeToMinutes(item.endTime);
-    if (Number.isNaN(start) || Number.isNaN(end)) return false;
-    return start <= currentMinute && currentMinute < end;
-  });
+  // 日程安排（特殊事件）优先于生活节律（常规事件）
+  if (activeSpecialItems.length > 0) {
+    return activeSpecialItems.map(formatCalendarScheduleItemForPrompt).join("；");
+  }
 
-  if (activeItems.length === 0) return "无";
-  return activeItems.map(formatCalendarScheduleItemForPrompt).join("；");
+  if (ownerType === "character") {
+    const dayType = resolveRoutineDayType(date);
+    const routinePlan = loadCharacterRoutinePlan(ownerId);
+    const activeRoutineItems = routinePlan.items.filter(item => {
+      if (item.dayType !== dayType) return false;
+      const start = timeToMinutes(item.startTime);
+      const end = timeToMinutes(item.endTime);
+      if (Number.isNaN(start) || Number.isNaN(end)) return false;
+      return start <= currentMinute && currentMinute < end;
+    });
+    if (activeRoutineItems.length > 0) {
+      const label = dayType === "holiday" ? "节假日作息" : "工作日作息";
+      return activeRoutineItems
+        .map(item => `${formatCalendarScheduleItemForPrompt(item)}（${label}）`)
+        .join("；");
+    }
+  }
+
+  return "无";
 }
 
 /**
@@ -417,6 +670,16 @@ export function buildCalendarScheduleMarker(
   weekStart: string,
 ): string {
   const ownerLabel = ownerType === "user" ? "用户" : "角色";
+  if (ownerType === "character") {
+    return [
+      `当前查看周起始日期：${weekStart}`,
+      "执行优先级规则：备忘录优先、日程安排（特殊事件）第二、生活节律（常规作息）最后；当日程安排与生活节律在同一时间段发生冲突时，优先执行日程安排。",
+      `${ownerLabel}本周日程安排（特殊事件，优先于生活节律）：`,
+      formatCalendarScheduleForPrompt(ownerType, ownerId, weekStart),
+      `${ownerLabel}生活节律（常规作息，无特殊日程冲突时按此执行）：`,
+      formatCharacterRoutineForPrompt(ownerId),
+    ].join("\n");
+  }
   return [
     `当前查看周起始日期：${weekStart}`,
     `${ownerLabel}本周日程：`,

@@ -1161,6 +1161,85 @@
   color: var(--c-calendar-sel-fg);
 }
 
+/* ── 视图切换（日程安排 / 生活节律） ── */
+.calendar-view-mode-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.calendar-view-mode-option {
+  border: none;
+  border-radius: 14px;
+  padding: 12px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+  background: var(--c-calendar-surface);
+  color: var(--c-calendar-sub);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.calendar-view-mode-option b {
+  font-size: calc(14px * var(--app-text-scale, 1));
+  font-weight: 700;
+  color: var(--c-calendar-ink);
+}
+
+.calendar-view-mode-option span {
+  font-size: calc(10.5px * var(--app-text-scale, 1));
+  line-height: 1.3;
+}
+
+.calendar-view-mode-option[data-active="true"] {
+  background: var(--c-calendar-sel-bg);
+}
+
+.calendar-view-mode-option[data-active="true"] b,
+.calendar-view-mode-option[data-active="true"] span {
+  color: var(--c-calendar-sel-fg);
+}
+
+.calendar-days-section-label {
+  font-size: calc(13px * var(--app-text-scale, 1));
+  font-weight: 700;
+  margin-top: 16px;
+}
+
+.calendar-days-section-label + .calendar-days-options {
+  margin-top: 8px;
+}
+
+/* ── 生活节律编辑：适用类型（工作日 / 节假日 / 每天） ── */
+.calendar-routine-type-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.calendar-routine-type-btn {
+  flex: 1;
+  min-width: 82px;
+  border: none;
+  border-radius: 10px;
+  padding: 9px 10px;
+  background: var(--c-calendar-surface);
+  color: var(--c-calendar-sub);
+  font: inherit;
+  font-size: calc(12px * var(--app-text-scale, 1));
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.calendar-routine-type-btn[data-active="true"] {
+  background: var(--c-calendar-sel-bg);
+  color: var(--c-calendar-sel-fg);
+}
+
 .calendar-theme-grid {
   display: flex;
   flex-wrap: wrap;

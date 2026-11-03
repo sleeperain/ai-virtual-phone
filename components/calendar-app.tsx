@@ -10,18 +10,26 @@ import CSSSchemeBar from "@/components/ui/css-scheme-picker";
 import { CALENDAR_CSS_EXAMPLE } from "@/lib/css-examples";
 import { kvGet, kvSet, kvRemove } from "@/lib/kv-db";
 import { Input } from "./ui/form";
-import type { CalendarOwnerType, CalendarScheduleItem, CalendarWeekPlan } from "@/lib/calendar-types";
+import type { CalendarOwnerType, CalendarRoutineItem, CalendarScheduleItem, CalendarWeekPlan } from "@/lib/calendar-types";
 import {
   CALENDAR_DAYS_PER_PAGE_OPTIONS,
   CALENDAR_THEMES,
   deleteCalendarScheduleItem,
+  deleteCharacterRoutineItem,
   loadCalendarConfig,
+  loadCharacterRoutinePlan,
   loadOwnerCalendarPlans,
   saveCalendarConfig,
   upsertCalendarScheduleItem,
+  upsertCharacterRoutineItem,
+  validateRoutineDraft,
   validateScheduleDraft,
 } from "@/lib/calendar-storage";
-import { createDefaultScheduleDraft, generateWeeklyCalendarSchedule } from "@/lib/calendar-engine";
+import {
+  createDefaultScheduleDraft,
+  generateCharacterRoutineSchedule,
+  generateWeeklyCalendarSchedule,
+} from "@/lib/calendar-engine";
 import { loadCharacters } from "@/lib/character-storage";
 import { loadChatSessions } from "@/lib/chat-storage";
 import { resolveUserIdentity } from "@/lib/settings-storage";
@@ -45,7 +53,7 @@ import {
   type MenstrualRecord,
 } from "@/lib/menstrual-storage";
 import { CalendarMonthPage } from "./calendar/month-page";
-import { CalendarDetailPage } from "./calendar/detail-page";
+import { CalendarDetailPage, CalendarRoutinePage } from "./calendar/detail-page";
 import { CalendarEventEditModal, type CalendarEventDraft } from "./calendar/event-edit-modal";
 import {
   CALENDAR_EXTRAS_UPDATED_EVENT,
@@ -124,9 +132,12 @@ export function PhoneCalendarApp({
   const [owners, setOwners] = useState<OwnerOption[]>(() => buildOwnerOptions());
   const [selectedKey, setSelectedKey] = useState<string>(() => owners[0]?.key ?? "user:me");
   const [view, setView] = useState<"month" | "detail">("month");
+  /** 角色日历的视图模式：默认「日程安排」（schedule），可切换为「生活节律」（routine） */
+  const [characterViewMode, setCharacterViewMode] = useState<"schedule" | "routine">("schedule");
   const [selectedDate, setSelectedDate] = useState<string>(todayIso);
   const [detailKey, setDetailKey] = useState(0);
   const [ownerPlans, setOwnerPlans] = useState<CalendarWeekPlan[]>([]);
+  const [routineItems, setRoutineItems] = useState<CalendarRoutineItem[]>([]);
   const [config, setConfig] = useState(() => loadCalendarConfig());
   const [menstrualConfig, setMenstrualConfig] = useState(() => loadMenstrualConfig());
   const [menstrualRecords, setMenstrualRecords] = useState<MenstrualRecord[]>(() => loadMenstrualRecords());
@@ -137,6 +148,7 @@ export function PhoneCalendarApp({
   const [settingsSection, setSettingsSection] = useState<CalendarSettingsSection | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [showGenerateConfirm, setShowGenerateConfirm] = useState(false);
+  const [showGenerateRoutineConfirm, setShowGenerateRoutineConfirm] = useState(false);
   const [showAutoConfirm, setShowAutoConfirm] = useState(false);
   const [fabMenuOpen, setFabMenuOpen] = useState(false);
   const autoAttemptedRef = useRef<Set<string>>(new Set());
@@ -296,14 +308,26 @@ export function PhoneCalendarApp({
     }
   }, []);
 
+  const isRoutineMode = selectedOwner?.ownerType === "character" && characterViewMode === "routine";
+
   const refreshPlans = () => {
     if (!selectedOwner) return;
     setOwnerPlans(loadOwnerCalendarPlans(selectedOwner.ownerType, selectedOwner.ownerId));
+    if (selectedOwner.ownerType === "character") {
+      setRoutineItems(loadCharacterRoutinePlan(selectedOwner.ownerId).items);
+    } else {
+      setRoutineItems([]);
+    }
   };
 
   useEffect(() => {
     if (!selectedOwner) return;
     setOwnerPlans(loadOwnerCalendarPlans(selectedOwner.ownerType, selectedOwner.ownerId));
+    if (selectedOwner.ownerType === "character") {
+      setRoutineItems(loadCharacterRoutinePlan(selectedOwner.ownerId).items);
+    } else {
+      setRoutineItems([]);
+    }
   }, [selectedOwner]);
 
   // 聊天/工具调用改动日程后刷新
@@ -311,6 +335,9 @@ export function PhoneCalendarApp({
     const handler = () => {
       if (!selectedOwner) return;
       setOwnerPlans(loadOwnerCalendarPlans(selectedOwner.ownerType, selectedOwner.ownerId));
+      if (selectedOwner.ownerType === "character") {
+        setRoutineItems(loadCharacterRoutinePlan(selectedOwner.ownerId).items);
+      }
     };
     window.addEventListener("calendar-updated", handler);
     return () => window.removeEventListener("calendar-updated", handler);
@@ -349,6 +376,35 @@ export function PhoneCalendarApp({
       location: base.location,
       title: base.title,
       emoji: base.emoji,
+    });
+  };
+
+  const openNewRoutineDraft = () => {
+    const base = createDefaultScheduleDraft(todayIso);
+    setEditingItem({
+      date: base.date,
+      isRoutine: true,
+      routineTarget: "workday",
+      startTime: base.startTime,
+      endTime: base.endTime,
+      location: base.location,
+      title: base.title,
+      emoji: base.emoji,
+    });
+  };
+
+  const openEditRoutineItem = (item: CalendarRoutineItem) => {
+    setEditingItem({
+      id: item.id,
+      date: todayIso,
+      isRoutine: true,
+      routineTarget: item.dayType,
+      startTime: item.startTime,
+      endTime: item.endTime,
+      location: item.location,
+      title: item.title,
+      emoji: item.emoji || "",
+      colorKey: item.colorKey,
     });
   };
 
@@ -421,6 +477,33 @@ export function PhoneCalendarApp({
 
   const handleSaveDraft = () => {
     if (!selectedOwner || !editingItem) return;
+    if (editingItem.isRoutine) {
+      const error = validateRoutineDraft(editingItem);
+      if (error) {
+        onNotice?.(error);
+        return;
+      }
+      const target = editingItem.routineTarget ?? "workday";
+      const targets = target === "both" ? (["workday", "holiday"] as const) : ([target] as const);
+      for (let i = 0; i < targets.length; i++) {
+        const dayType = targets[i];
+        upsertCharacterRoutineItem(selectedOwner.ownerId, {
+          id: i === 0 ? editingItem.id : undefined,
+          dayType,
+          startTime: editingItem.startTime,
+          endTime: editingItem.endTime,
+          location: editingItem.location,
+          title: editingItem.title,
+          emoji: sanitizeScheduleEmoji(editingItem.emoji),
+          source: "manual",
+          colorKey: editingItem.colorKey ?? pickScheduleColorKey(editingItem.startTime),
+        });
+      }
+      setEditingItem(null);
+      refreshPlans();
+      onNotice?.("生活节律已保存");
+      return;
+    }
     const error = validateScheduleDraft(editingItem);
     if (error) {
       onNotice?.(error);
@@ -554,6 +637,13 @@ export function PhoneCalendarApp({
 
   const handleDeleteItem = () => {
     if (!selectedOwner || !editingItem?.id) return;
+    if (editingItem.isRoutine) {
+      deleteCharacterRoutineItem(selectedOwner.ownerId, editingItem.id);
+      setEditingItem(null);
+      refreshPlans();
+      onNotice?.("生活节律已删除");
+      return;
+    }
     const targetWeekStart = getWeekStartIso(parseIsoDate(editingItem.originalDate || editingItem.date));
     deleteCalendarScheduleItem(selectedOwner.ownerType, selectedOwner.ownerId, targetWeekStart, editingItem.id);
     // 附加信息跟着条目走，条目没了它也得走，否则表里会攒一堆孤儿
@@ -582,6 +672,20 @@ export function PhoneCalendarApp({
     }
     refreshPlans();
     onNotice?.("本周日程已生成");
+  };
+
+  const handleGenerateRoutine = async () => {
+    if (!selectedOwner || isGenerating || selectedOwner.ownerType !== "character") return;
+    setShowGenerateRoutineConfirm(false);
+    setIsGenerating(true);
+    const result = await generateCharacterRoutineSchedule(selectedOwner.ownerId);
+    setIsGenerating(false);
+    if (!result.success) {
+      onNotice?.(result.error || "生成失败");
+      return;
+    }
+    refreshPlans();
+    onNotice?.("角色生活节律已生成");
   };
 
   // ── 经期 ──
@@ -692,7 +796,18 @@ export function PhoneCalendarApp({
     <div className="calendar-app-shell" data-calendar-theme={shownTheme}>
       <SessionCustomCSS css={appliedCalendarCss || ""} scope=".calendar-app-shell" nightKey={nightSlotKeys.calendar} />
       <div className="calendar-app">
-        {view === "month" ? (
+        {isRoutineMode ? (
+          <CalendarRoutinePage
+            routineItems={routineItems}
+            ownerStrip={ownerStrip}
+            onOpenViewPicker={() => setShowDaysPanel(true)}
+            onOpenTheme={() => setShowThemePanel(true)}
+            onOpenSettings={() => openSettings(null)}
+            onOpenAccess={() => setToolView({ kind: "access" })}
+            onClose={onClose}
+            onEditRoutineItem={openEditRoutineItem}
+          />
+        ) : view === "month" ? (
           <CalendarMonthPage
             weekStartDay={config.weekStartDay}
             todayIso={todayIso}
@@ -705,6 +820,7 @@ export function PhoneCalendarApp({
             onOpenTheme={() => setShowThemePanel(true)}
             onOpenSettings={() => openSettings(null)}
             onOpenAccess={() => setToolView({ kind: "access" })}
+            onOpenViewPicker={selectedOwner?.ownerType === "character" ? () => setShowDaysPanel(true) : null}
           />
         ) : (
           <CalendarDetailPage
@@ -778,11 +894,15 @@ export function PhoneCalendarApp({
                 className="calendar-fab-menu-item"
                 onClick={() => {
                   setFabMenuOpen(false);
-                  openNewDraft(view === "detail" ? selectedDate : todayIso);
+                  if (isRoutineMode) {
+                    openNewRoutineDraft();
+                  } else {
+                    openNewDraft(view === "detail" ? selectedDate : todayIso);
+                  }
                 }}
               >
                 <Plus size={15} />
-                新增日程
+                {isRoutineMode ? "新增作息" : "新增日程"}
               </button>
               <button
                 type="button"
@@ -790,25 +910,31 @@ export function PhoneCalendarApp({
                 disabled={isGenerating}
                 onClick={() => {
                   setFabMenuOpen(false);
-                  setShowGenerateConfirm(true);
+                  if (isRoutineMode) {
+                    setShowGenerateRoutineConfirm(true);
+                  } else {
+                    setShowGenerateConfirm(true);
+                  }
                 }}
               >
                 <Wand2 size={15} />
-                {isGenerating ? "生成中…" : "AI 生成本周"}
+                {isGenerating ? "生成中…" : (isRoutineMode ? "AI 生成作息" : "AI 生成本周")}
               </button>
-              <button
-                type="button"
-                className="calendar-fab-menu-item"
-                data-on={autoGenerateEnabled ? "true" : undefined}
-                onClick={() => {
-                  setFabMenuOpen(false);
-                  setShowAutoConfirm(true);
-                }}
-              >
-                <Bot size={15} />
-                每周自动生成
-                <i className="calendar-fab-menu-state">{autoGenerateEnabled ? "已开" : "已关"}</i>
-              </button>
+              {!isRoutineMode ? (
+                <button
+                  type="button"
+                  className="calendar-fab-menu-item"
+                  data-on={autoGenerateEnabled ? "true" : undefined}
+                  onClick={() => {
+                    setFabMenuOpen(false);
+                    setShowAutoConfirm(true);
+                  }}
+                >
+                  <Bot size={15} />
+                  每周自动生成
+                  <i className="calendar-fab-menu-state">{autoGenerateEnabled ? "已开" : "已关"}</i>
+                </button>
+              ) : null}
             </div>
           ) : null}
           <button
@@ -928,31 +1054,94 @@ export function PhoneCalendarApp({
       {showDaysPanel && (
         <div className="modal-overlay calendar-edit-modal-overlay" onClick={() => setShowDaysPanel(false)}>
           <div className="calendar-edit-modal calendar-days-modal" onClick={e => e.stopPropagation()}>
-            <div className="calendar-theme-modal-head">
-              <strong>每页天数</strong>
-              <button type="button" onClick={() => setShowDaysPanel(false)} className="calendar-icon-btn" aria-label="关闭">
-                <X size={16} />
-              </button>
-            </div>
-            <div className="calendar-days-options">
-              {CALENDAR_DAYS_PER_PAGE_OPTIONS.map(n => (
-                <button
-                  key={n}
-                  type="button"
-                  className="calendar-days-option"
-                  data-active={config.daysPerPage === n ? "true" : undefined}
-                  onClick={() => {
-                    const nextConfig = { ...config, daysPerPage: n };
-                    setConfig(nextConfig);
-                    saveCalendarConfig(nextConfig);
-                    setShowDaysPanel(false);
-                  }}
-                >
-                  <b>{n}</b>
-                  <span>{n === 1 ? "单日" : `${n} 天`}</span>
-                </button>
-              ))}
-            </div>
+            {selectedOwner?.ownerType === "character" ? (
+              <>
+                <div className="calendar-theme-modal-head">
+                  <strong>视图切换</strong>
+                  <button type="button" onClick={() => setShowDaysPanel(false)} className="calendar-icon-btn" aria-label="关闭">
+                    <X size={16} />
+                  </button>
+                </div>
+                <div className="calendar-view-mode-options">
+                  <button
+                    type="button"
+                    className="calendar-view-mode-option"
+                    data-active={characterViewMode === "schedule" ? "true" : undefined}
+                    onClick={() => {
+                      setCharacterViewMode("schedule");
+                      setShowDaysPanel(false);
+                    }}
+                  >
+                    <b>日程安排</b>
+                    <span>按日展示特殊事件</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="calendar-view-mode-option"
+                    data-active={characterViewMode === "routine" ? "true" : undefined}
+                    onClick={() => {
+                      setCharacterViewMode("routine");
+                      setShowDaysPanel(false);
+                    }}
+                  >
+                    <b>生活节律</b>
+                    <span>工作日 / 节假日作息</span>
+                  </button>
+                </div>
+                {characterViewMode === "schedule" ? (
+                  <>
+                    <div className="calendar-days-section-label">每页天数</div>
+                    <div className="calendar-days-options">
+                      {CALENDAR_DAYS_PER_PAGE_OPTIONS.map(n => (
+                        <button
+                          key={n}
+                          type="button"
+                          className="calendar-days-option"
+                          data-active={config.daysPerPage === n ? "true" : undefined}
+                          onClick={() => {
+                            const nextConfig = { ...config, daysPerPage: n };
+                            setConfig(nextConfig);
+                            saveCalendarConfig(nextConfig);
+                            setShowDaysPanel(false);
+                          }}
+                        >
+                          <b>{n}</b>
+                          <span>{n === 1 ? "单日" : `${n} 天`}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <div className="calendar-theme-modal-head">
+                  <strong>每页天数</strong>
+                  <button type="button" onClick={() => setShowDaysPanel(false)} className="calendar-icon-btn" aria-label="关闭">
+                    <X size={16} />
+                  </button>
+                </div>
+                <div className="calendar-days-options">
+                  {CALENDAR_DAYS_PER_PAGE_OPTIONS.map(n => (
+                    <button
+                      key={n}
+                      type="button"
+                      className="calendar-days-option"
+                      data-active={config.daysPerPage === n ? "true" : undefined}
+                      onClick={() => {
+                        const nextConfig = { ...config, daysPerPage: n };
+                        setConfig(nextConfig);
+                        saveCalendarConfig(nextConfig);
+                        setShowDaysPanel(false);
+                      }}
+                    >
+                      <b>{n}</b>
+                      <span>{n === 1 ? "单日" : `${n} 天`}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -992,6 +1181,32 @@ export function PhoneCalendarApp({
                 data-variant="primary"
                 data-loading={isGenerating ? "true" : undefined}
                 onClick={handleGenerate}
+                disabled={isGenerating}
+                aria-busy={isGenerating}
+              >
+                {isGenerating ? "生成中…" : "确认"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showGenerateRoutineConfirm && selectedOwner && (
+        <div className="modal-overlay calendar-edit-modal-overlay" onClick={() => setShowGenerateRoutineConfirm(false)}>
+          <div className="calendar-edit-modal calendar-confirm-dialog" onClick={e => e.stopPropagation()}>
+            <Wand2 size={26} className="calendar-confirm-icon" />
+            <div className="calendar-confirm-title">确认生成生活节律？</div>
+            <div className="calendar-confirm-desc">
+              将为 <strong>{selectedOwner.name}</strong> 生成工作日与节假日的日常作息表，并覆盖当前已有的 AI 作息（手动添加的保留）
+            </div>
+            <div className="calendar-confirm-footer">
+              <button type="button" className="calendar-block-btn" data-variant="ghost" onClick={() => setShowGenerateRoutineConfirm(false)}>取消</button>
+              <button
+                type="button"
+                className="calendar-block-btn"
+                data-variant="primary"
+                data-loading={isGenerating ? "true" : undefined}
+                onClick={handleGenerateRoutine}
                 disabled={isGenerating}
                 aria-busy={isGenerating}
               >

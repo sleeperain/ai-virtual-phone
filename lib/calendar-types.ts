@@ -34,3 +34,27 @@ export type CalendarWeekPlan = {
   items: CalendarScheduleItem[];
   updatedAt: string;
 };
+
+/** 角色生活节律（常规作息）区分「工作日」与「节假日」两类 */
+export type CalendarRoutineDayType = "workday" | "holiday";
+
+export type CalendarRoutineItem = {
+  id: string;
+  dayType: CalendarRoutineDayType;
+  startTime: string;  // HH:MM
+  endTime: string;    // HH:MM
+  location: string;
+  title: string;
+  emoji?: string;
+  colorKey: CalendarColorKey;
+  source: "manual" | "generated";
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CalendarCharacterRoutinePlan = {
+  id: string;
+  ownerId: string;
+  items: CalendarRoutineItem[];
+  updatedAt: string;
+};

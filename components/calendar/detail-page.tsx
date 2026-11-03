@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { ChevronLeft, Columns2, Settings2 } from "lucide-react";
-import type { CalendarScheduleItem } from "@/lib/calendar-types";
+import { ChevronLeft, Columns2, Palette, Settings2 } from "lucide-react";
+import type { CalendarRoutineDayType, CalendarRoutineItem, CalendarScheduleItem } from "@/lib/calendar-types";
 import type { MenstrualDayState } from "@/lib/menstrual-storage";
 import { formatIsoDate, parseIsoDate, timeToMinutes } from "@/lib/calendar-utils";
 import { getLunarInfoByIso } from "@/lib/lunar";
@@ -26,8 +26,13 @@ const weekStartOf = (iso: string, mondayFirst: boolean) => {
   return addDaysIso(iso, -(mondayFirst ? (day + 6) % 7 : day));
 };
 
-type PositionedEvent = {
-  item: CalendarScheduleItem;
+type TimelineEventLike = Pick<
+  CalendarScheduleItem,
+  "id" | "startTime" | "endTime" | "location" | "title" | "emoji" | "colorKey" | "source"
+>;
+
+type PositionedEvent<T extends TimelineEventLike = CalendarScheduleItem> = {
+  item: T;
   top: number;
   height: number;
   left: number;   // %
@@ -35,7 +40,7 @@ type PositionedEvent = {
 };
 
 /** 重叠事件“列分配”布局 */
-function layoutDayEvents(items: CalendarScheduleItem[]): PositionedEvent[] {
+function layoutDayEvents<T extends TimelineEventLike>(items: T[]): PositionedEvent<T>[] {
   const sorted = [...items]
     .map(item => ({
       item,
@@ -45,7 +50,7 @@ function layoutDayEvents(items: CalendarScheduleItem[]): PositionedEvent[] {
     .filter(entry => !Number.isNaN(entry.start) && !Number.isNaN(entry.end))
     .sort((a, b) => a.start - b.start || a.end - b.end);
 
-  const results: PositionedEvent[] = [];
+  const results: PositionedEvent<T>[] = [];
   let clusterMaxEnd = -1;
   let columnEnds: number[] = [];
   let clusterEntries: Array<{ entry: (typeof sorted)[number]; column: number }> = [];
@@ -476,6 +481,158 @@ export function CalendarDetailPage({
         <button type="button" className="calendar-pill-btn" onClick={gotoToday}>
           今天
         </button>
+      </div>
+    </div>
+  );
+}
+
+const ROUTINE_COLUMNS: Array<{ dayType: CalendarRoutineDayType; title: string; subtitle: string }> = [
+  { dayType: "workday", title: "工作日", subtitle: "常规日程节律" },
+  { dayType: "holiday", title: "节假日", subtitle: "周末及法定节假日" },
+];
+
+export function CalendarRoutinePage({
+  routineItems,
+  ownerStrip,
+  onOpenViewPicker,
+  onOpenTheme,
+  onOpenSettings,
+  onOpenAccess,
+  onClose,
+  onEditRoutineItem,
+}: {
+  routineItems: CalendarRoutineItem[];
+  ownerStrip: ReactNode;
+  onOpenViewPicker: () => void;
+  onOpenTheme: () => void;
+  onOpenSettings: () => void;
+  onOpenAccess: () => void;
+  onClose: () => void;
+  onEditRoutineItem: (item: CalendarRoutineItem) => void;
+}) {
+  const tlVRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      if (tlVRef.current && tlVRef.current.scrollTop === 0) {
+        tlVRef.current.scrollTop = 8 * HOUR_H;
+      }
+    });
+  }, []);
+
+  const [nowMinutes, setNowMinutes] = useState(() => {
+    const now = new Date();
+    return now.getHours() * 60 + now.getMinutes();
+  });
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const now = new Date();
+      setNowMinutes(now.getHours() * 60 + now.getMinutes());
+    }, 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const nowTop = (nowMinutes / 60) * HOUR_H;
+  const nowLabel = `${String(Math.floor(nowMinutes / 60)).padStart(2, "0")}:${String(nowMinutes % 60).padStart(2, "0")}`;
+
+  const itemsByDayType = useMemo(() => {
+    const map = new Map<CalendarRoutineDayType, CalendarRoutineItem[]>([
+      ["workday", []],
+      ["holiday", []],
+    ]);
+    for (const item of routineItems) {
+      const list = map.get(item.dayType) ?? [];
+      list.push(item);
+      map.set(item.dayType, list);
+    }
+    return map;
+  }, [routineItems]);
+
+  return (
+    <div className="calendar-page calendar-page-detail calendar-page-routine">
+      <div className="calendar-apple-topbar">
+        <button type="button" className="calendar-pill-btn calendar-back-btn" onClick={onClose} aria-label="返回桌面">
+          <ChevronLeft size={19} /> 生活节律
+        </button>
+        <span className="calendar-topbar-space" />
+        <button type="button" className="calendar-icon-btn" onClick={onOpenViewPicker} aria-label="视图与显示天数">
+          <Columns2 size={17} />
+        </button>
+        <button type="button" className="calendar-icon-btn caltool-access-button" onClick={onOpenAccess} aria-label="选择日历知情角色">
+          <span className="caltool-contact-icon" aria-hidden="true"><i /><b /></span>
+        </button>
+        <button type="button" className="calendar-icon-btn" onClick={onOpenTheme} aria-label="主题与自定义">
+          <Palette size={17} />
+        </button>
+        <button type="button" className="calendar-icon-btn" onClick={onOpenSettings} aria-label="日历设置">
+          <Settings2 size={17} />
+        </button>
+      </div>
+
+      {ownerStrip}
+
+      {/* 双列版头：工作日 | 节假日（不显示具体日期） */}
+      <div className="calendar-tl-headrow">
+        <div className="calendar-tl-headrow-gutter" aria-hidden="true" />
+        <div
+          className="calendar-tl-headrow-days hide-scrollbar"
+          style={{ "--tl-day-w": "50%" } as CSSProperties}
+        >
+          {ROUTINE_COLUMNS.map(col => (
+            <div key={col.dayType} className="calendar-tl-day-head">
+              <b>{col.title}</b>
+              <span>{col.subtitle}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="calendar-tl-vscroll hide-scrollbar" ref={tlVRef}>
+        <div className="calendar-tl-row">
+          <div className="calendar-tl-gutter" aria-hidden="true">
+            {Array.from({ length: 24 }, (_, h) => (
+              <span key={h}>{String(h).padStart(2, "0")}:00</span>
+            ))}
+            <i className="calendar-now-badge" style={{ top: `${nowTop}px` }}>{nowLabel}</i>
+          </div>
+          <div
+            className="calendar-tl-hscroll hide-scrollbar"
+            style={{ "--tl-day-w": "50%" } as CSSProperties}
+          >
+            {ROUTINE_COLUMNS.map(col => {
+              const positioned = layoutDayEvents(itemsByDayType.get(col.dayType) ?? []);
+              return (
+                <div key={col.dayType} className="calendar-tl-day">
+                  <div className="calendar-tl-body">
+                    <i className="calendar-now-line" style={{ top: `${nowTop}px` }} aria-hidden="true" />
+                    {positioned.map(pos => (
+                      <button
+                        key={pos.item.id}
+                        type="button"
+                        className="calendar-tl-event"
+                        data-color={pos.item.colorKey}
+                        style={{
+                          top: `${pos.top}px`,
+                          height: `${pos.height}px`,
+                          left: `calc(${pos.left}% + 3px)`,
+                          width: `calc(${pos.width}% - 6px)`,
+                        }}
+                        onClick={() => onEditRoutineItem(pos.item)}
+                        aria-label={`${col.title} ${pos.item.startTime} ${pos.item.title}`}
+                      >
+                        <b>{pos.item.emoji ? `${pos.item.emoji} ` : ""}{pos.item.title}</b>
+                        <span>
+                          {pos.item.startTime}–{pos.item.endTime}
+                          {pos.item.location ? ` · ${pos.item.location}` : ""}
+                          {pos.item.source === "generated" ? " · AI" : ""}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </div>
     </div>
   );

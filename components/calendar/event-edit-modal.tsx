@@ -2,16 +2,20 @@
 
 import { Check, ChevronLeft, Trash2 } from "lucide-react";
 import { Input } from "../ui/form";
-import type { CalendarColorKey } from "@/lib/calendar-types";
+import type { CalendarColorKey, CalendarRoutineDayType } from "@/lib/calendar-types";
 import type { CalendarRecurrenceFrequency, CalendarTodo } from "@/lib/calendar-extras";
 import { CALENDAR_COLOR_KEYS } from "@/lib/calendar-utils";
 import { addDaysIso } from "@/lib/calendar-recurrence";
 
 export type CalendarRepeatFrequency = "none" | CalendarRecurrenceFrequency;
+export type CalendarRoutineTargetType = CalendarRoutineDayType | "both";
 
 export type CalendarEventDraft = {
   id?: string;
   date: string;
+  /** 生活节律编辑模式：只选「工作日 / 节假日 / 每天（两者）」，不选具体日期 */
+  isRoutine?: boolean;
+  routineTarget?: CalendarRoutineTargetType;
   /** 结束日期（含当天）；留空视为单天。跨多天时保存会按天生成日程。
    *  选了重复时这一格是「重复结束日期」 */
   endDate?: string;
@@ -92,6 +96,12 @@ const REPEAT_OPTIONS: Array<[CalendarRepeatFrequency, string]> = [
 /** 每周重复日的按钮顺序：周一在前、周日在后 */
 const WEEKDAY_CHIPS: Array<[number, string]> = [[1, "一"], [2, "二"], [3, "三"], [4, "四"], [5, "五"], [6, "六"], [0, "日"]];
 
+const ROUTINE_TARGET_OPTIONS: Array<[CalendarRoutineTargetType, string]> = [
+  ["workday", "工作日"],
+  ["holiday", "节假日"],
+  ["both", "每天（工作日 + 节假日）"],
+];
+
 export function CalendarEventEditModal({
   draft,
   withUserExtras,
@@ -170,7 +180,11 @@ export function CalendarEventEditModal({
           <button onClick={onClose} className="modal-header-btn modal-header-btn-muted" aria-label="返回">
             <ChevronLeft size={18} />
           </button>
-          <span className="modal-header-title">{draft.id ? "编辑日程" : "新增日程"}</span>
+          <span className="modal-header-title">
+            {draft.isRoutine
+              ? (draft.id ? "编辑生活节律" : "新增生活节律")
+              : (draft.id ? "编辑日程" : "新增日程")}
+          </span>
           <button onClick={onSave} className="modal-header-btn modal-header-btn-action" aria-label="保存">
             <Check size={18} />
           </button>
@@ -240,6 +254,44 @@ export function CalendarEventEditModal({
                 >
                   永远
                 </button>
+              </div>
+            </>
+          ) : draft.isRoutine ? (
+            <>
+              <div className="flex flex-col gap-1">
+                <label className="menu-desc ml-1">适用类型</label>
+                <div className="calendar-routine-type-picker">
+                  {ROUTINE_TARGET_OPTIONS.filter(([key]) => !draft.id || key !== "both").map(([key, label]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      className="calendar-routine-type-btn"
+                      data-active={(draft.routineTarget ?? "workday") === key ? "true" : undefined}
+                      onClick={() => onChange({ ...draft, routineTarget: key })}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className="menu-desc ml-1">开始时间</label>
+                  <Input
+                    type="time"
+                    value={draft.startTime}
+                    onChange={e => onChange({ ...draft, startTime: e.target.value })}
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="menu-desc ml-1">结束时间</label>
+                  <Input
+                    type="time"
+                    value={draft.endTime}
+                    onChange={e => onChange({ ...draft, endTime: e.target.value })}
+                  />
+                </div>
               </div>
             </>
           ) : (

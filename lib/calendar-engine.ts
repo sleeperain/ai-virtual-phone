@@ -2,7 +2,7 @@ import type { Character } from "./character-types";
 import type { ApiConfig, PresetConfig, RegexConfig, WorldBookConfig } from "./settings-types";
 import type { UserIdentity } from "@/components/settings/user-identity";
 import type { AssemblerInput, LLMMessage } from "./llm-prompt-assembler";
-import type { CalendarOwnerType, CalendarScheduleItem } from "./calendar-types";
+import type { CalendarOwnerType, CalendarRoutineDayType, CalendarRoutineItem, CalendarScheduleItem } from "./calendar-types";
 import { loadCharacters } from "./character-storage";
 import {
   loadBindingConfig,
@@ -20,7 +20,17 @@ import { formatCoreMemories, formatLongTermMemories } from "./memory-injector";
 import { prepareShortTermContext } from "./short-term-assembler";
 import { getCustomStickerExample, getCustomStickerNames } from "./custom-sticker-storage";
 import { previewMessagesForApi, sendLLMRequest, type ChatEngineError } from "./chat-engine";
-import { buildCalendarScheduleMarker, clearGeneratedWeekItems, cloneWeekPlanWithManualEdits, normalizeGeneratedScheduleItems, restoreCalendarWeekItems } from "./calendar-storage";
+import {
+  buildCalendarScheduleMarker,
+  clearGeneratedRoutineItems,
+  clearGeneratedWeekItems,
+  cloneRoutinePlanWithManualEdits,
+  cloneWeekPlanWithManualEdits,
+  normalizeGeneratedRoutineItems,
+  normalizeGeneratedScheduleItems,
+  restoreCalendarWeekItems,
+  restoreCharacterRoutineItems,
+} from "./calendar-storage";
 import {
   getWeekDates,
   getWeekStartIso,
@@ -322,4 +332,123 @@ export function createDefaultScheduleDraft(date: string) {
 
 export function getCurrentWeekStart(): string {
   return getWeekStartIso(new Date());
+}
+
+function buildRoutineTriggerInstruction(ownerName: string): string {
+  return [
+    `请为${ownerName}生成「工作日」与「节假日」的日常作息时间表（生活节律 / 常规事件）。`,
+    "请结合角色的人设、职业、性格与生活习惯，规划一天中各个时间段的典型日常活动（如起床、通勤/工作/学习、用餐、休闲娱乐、运动、休息就寝等）。",
+    "每行一条，严格按以下 6 段格式输出：类型|开始时间|结束时间|地点|emoji|事项",
+    "其中「类型」只能填「工作日」或「节假日」；开始时间与结束时间为 HH:MM（24小时制，结束时间需晚于开始时间，跨夜请拆分为 23:59 前后）；emoji 填一个最贴合该事项的表情符号。",
+    "工作日和节假日各安排 5~10 条，覆盖全天主要时间节律，不要输出解释文字。",
+  ].join("\n");
+}
+
+function parseRoutineLines(rawText: string): CalendarRoutineItem[] {
+  const lines = stripCodeFences(rawText)
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+
+  const parsed: Array<{
+    dayType: CalendarRoutineDayType;
+    startTime: string;
+    endTime: string;
+    location: string;
+    title: string;
+    emoji?: string;
+  }> = [];
+
+  for (const rawLine of lines) {
+    const line = rawLine
+      .replace(/^[-*]\s*/, "")
+      .replace(/^\d+[.)、]\s*/, "")
+      .trim();
+    if (!line.includes("|")) continue;
+    const parts = line.split("|").map(part => part.trim());
+    if (parts.length < 5) continue;
+
+    const rawType = parts[0];
+    let dayType: CalendarRoutineDayType | null = null;
+    if (/工作日|平日|weekday|workday/i.test(rawType)) {
+      dayType = "workday";
+    } else if (/节假日|休息日|周末|假日|holiday|weekend/i.test(rawType)) {
+      dayType = "holiday";
+    }
+    if (!dayType) continue;
+
+    const startTime = normalizeTime(parts[1]);
+    const endTime = normalizeTime(parts[2]);
+    if (!startTime || !endTime || !isCalendarTimeRangeAllowed(startTime, endTime)) continue;
+
+    const location = parts[3] === "无" ? "" : parts[3];
+    let emoji = "";
+    let title: string;
+    if (parts.length >= 6) {
+      const candidate = sanitizeScheduleEmoji(parts[4]);
+      if (candidate && Array.from(parts[4]).length <= 3) {
+        emoji = candidate;
+        title = parts.slice(5).join("|");
+      } else {
+        title = parts.slice(4).join("|");
+      }
+    } else {
+      title = parts[4];
+    }
+    if (!title.trim()) continue;
+
+    parsed.push({
+      dayType,
+      startTime,
+      endTime,
+      location,
+      title,
+      emoji,
+    });
+  }
+
+  return normalizeGeneratedRoutineItems(parsed);
+}
+
+export async function generateCharacterRoutineSchedule(
+  ownerId: string,
+): Promise<{ success: boolean; error?: string; items?: CalendarRoutineItem[] }> {
+  const removedGenerated = clearGeneratedRoutineItems(ownerId);
+  const restoreRemoved = () => restoreCharacterRoutineItems(ownerId, removedGenerated);
+  try {
+    const weekStart = getCurrentWeekStart();
+    const resolved = await resolveCalendarAssemblerInput("character", ownerId, weekStart);
+    const triggerInstruction = buildRoutineTriggerInstruction(resolved.ownerName);
+
+    const messages: LLMMessage[] = [
+      ...resolved.llmMessages,
+      {
+        role: "user",
+        content: triggerInstruction,
+        _debugMeta: { marker: "calendar_routine_trigger" },
+      },
+    ];
+
+    const rawText = await sendLLMRequest(
+      resolved.apiConfig,
+      resolved.preset,
+      messages,
+      resolved.regexes,
+      { characterName: `作息:${resolved.ownerName}` },
+      { appId: "calendar", appTags: ["calendar"] },
+    );
+
+    const items = parseRoutineLines(rawText);
+    if (items.length === 0) {
+      restoreRemoved();
+      return { success: false, error: "生活节律生成结果为空，或格式无法解析。" };
+    }
+
+    cloneRoutinePlanWithManualEdits(ownerId, items);
+    return { success: true, items };
+  } catch (error) {
+    restoreRemoved();
+    const err = error as ChatEngineError | Error;
+    return { success: false, error: err?.message || "生成生活节律失败" };
+  }
 }
