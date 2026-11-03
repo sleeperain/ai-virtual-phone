@@ -10,11 +10,10 @@
 import { useState, type CSSProperties } from "react";
 import {
     AlertCircle,
+    Archive,
     ChevronRight,
-    Folder,
-    FolderOpen,
-    FolderPlus,
     History,
+    Plus,
     RotateCcw,
     Sparkles,
     Wand2,
@@ -35,11 +34,18 @@ import type { AutoClusterCandidate } from "@/lib/memory-event-box-auto";
 
 const boxIconStyle = { "--icon-color": BINDING_ACCENTS.memory } as CSSProperties;
 
-function BoxIcon({ open }: { open?: boolean }) {
-    const Icon = open ? FolderOpen : Folder;
+/**
+ * 事件盒图标：用和记忆详情底部「长期」tab 一致的 Archive（盒子），
+ * 而不是文件夹——这页装的是事件档案，不是文件目录。
+ * muted 用来区分归档态：归档后图标转灰，一眼能看出这盒已经封存。
+ */
+function BoxIcon({ muted }: { muted?: boolean }) {
     return (
-        <span className="card-icon" style={boxIconStyle}>
-            <Icon size={22} strokeWidth={1.75} />
+        <span
+            className="card-icon"
+            style={muted ? { ...boxIconStyle, "--icon-color": "var(--c-icon)" } as CSSProperties : boxIconStyle}
+        >
+            <Archive size={22} strokeWidth={1.75} />
         </span>
     );
 }
@@ -65,6 +71,8 @@ export function EventBoxList({
     onAutoCluster: () => void;
     ungroupedCount: number;
 }) {
+    // 列表行里的归档态用灰图标，和「长期」tab 的 Archive 同一个盒子形状
+
     return (
         <div className="page-menu">
             <p className="menu-group-desc mx-2">自动整理</p>
@@ -90,16 +98,22 @@ export function EventBoxList({
                         </button>
                     </div>
                 </div>
-                <button className="menu-item" onClick={onCreate}>
+                <div className="menu-item">
                     <BoxIcon />
                     <div className="menu-label-group">
                         <span className="menu-label">新建事件盒</span>
                         <span className="menu-desc">手动建一个空盒子，之后把记忆放进去</span>
                     </div>
                     <div className="menu-right">
-                        <FolderPlus size={16} strokeWidth={1.6} className="text-secondary" />
+                        <button
+                            className="ui-btn ui-btn-outline py-1 px-3 ts-12"
+                            onClick={onCreate}
+                        >
+                            <Plus size={12} className="mr-1" />
+                            新建
+                        </button>
                     </div>
-                </button>
+                </div>
             </div>
 
             <p className="menu-group-desc mx-2">事件盒（{boxes.length}）</p>
@@ -123,7 +137,7 @@ export function EventBoxList({
                     ].filter(Boolean).join(" · ");
                     return (
                         <button key={box.id} className="menu-item" onClick={() => onOpen(box.id)}>
-                            <BoxIcon open={box.archived} />
+                            <BoxIcon muted={box.archived} />
                             <div className="menu-label-group">
                                 <span className="menu-label">{box.title}</span>
                                 <span className="menu-desc">{meta}</span>
@@ -195,7 +209,7 @@ export function EventBoxPanel({
 
             <div className="menu-group">
                 <div className="menu-item">
-                    <BoxIcon open={box.archived} />
+                    <BoxIcon />
                     <div className="menu-label-group">
                         <span className="menu-label">{box.archived ? "重新总结" : "总结并归档"}</span>
                         <span className="menu-desc">
@@ -296,7 +310,7 @@ export function EventBoxPicker({
                     <div className="menu-group" style={{ marginTop: 8 }}>
                         {boxes.map(box => (
                             <button key={box.id} className="menu-item" onClick={() => onPick(box.id)}>
-                                <BoxIcon open={box.id === currentBoxId} />
+                                <BoxIcon muted={box.id !== currentBoxId} />
                                 <div className="menu-label-group">
                                     <span className="menu-label">{box.title}</span>
                                     <span className="menu-desc">{EVENT_BOX_STATUS_META[box.status].label}</span>
@@ -306,16 +320,22 @@ export function EventBoxPicker({
                                 </div>
                             </button>
                         ))}
-                        <button className="menu-item" onClick={onPickNew}>
+                        <div className="menu-item">
                             <BoxIcon />
                             <div className="menu-label-group">
                                 <span className="menu-label">新建事件盒</span>
                                 <span className="menu-desc">建好后这条记忆直接放进去</span>
                             </div>
                             <div className="menu-right">
-                                <FolderPlus size={16} strokeWidth={1.6} className="text-secondary" />
+                                <button
+                                    className="ui-btn ui-btn-outline py-1 px-3 ts-12"
+                                    onClick={onPickNew}
+                                >
+                                    <Plus size={12} className="mr-1" />
+                                    新建
+                                </button>
                             </div>
-                        </button>
+                        </div>
                         {currentBoxId ? (
                             <button className="menu-item" onClick={onRemove}>
                                 <BoxIcon />
@@ -467,7 +487,7 @@ export function AutoClusterPreview({
                                     disabled={busy}
                                 >
                                     <span className="card-icon" style={{ "--icon-color": checked ? BINDING_ACCENTS.memory : "var(--c-icon)" } as CSSProperties}>
-                                        {checked ? <Folder size={22} strokeWidth={1.75} /> : <FolderOpen size={22} strokeWidth={1.75} />}
+                                        <Archive size={22} strokeWidth={1.75} />
                                     </span>
                                     <div className="menu-label-group">
                                         <span className="menu-label" style={{ opacity: checked ? 1 : 0.5 }}>{candidate.title}</span>

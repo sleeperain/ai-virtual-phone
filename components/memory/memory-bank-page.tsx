@@ -1,7 +1,7 @@
 "use client";
 
 import { Component, useState, useEffect, useCallback, type CSSProperties, type ReactNode } from "react";
-import { Trash2, Zap, Clock, Users, Archive, AlertCircle, Search, Brain, FileText, MoreHorizontal, Plus, Edit3, X, Check, ChevronLeft, ChevronRight, Filter, SlidersHorizontal, Sparkles, Heart, Folder, type LucideIcon } from "lucide-react";
+import { Trash2, Zap, Clock, Users, Archive, AlertCircle, Search, Brain, FileText, MoreHorizontal, Plus, Edit3, X, Check, ChevronLeft, ChevronRight, Filter, SlidersHorizontal, Sparkles, Heart, type LucideIcon } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { MemoryTimeline } from "./memory-timeline";
 import { Toggle } from "@/components/ui/form";
@@ -1741,7 +1741,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                                 setBoxMoveEntryId(entry.id);
                                                             }}
                                                         >
-                                                            <Folder size={13} />
+                                                            <Archive size={13} />
                                                             <span>{getEntryBoxId(entry) ? "事件盒归属" : "移入事件盒"}</span>
                                                         </button>
                                                     )}

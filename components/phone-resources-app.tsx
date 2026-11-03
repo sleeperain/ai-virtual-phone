@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Brain, Folder, MoreHorizontal, Sparkles } from "lucide-react";
+import { Archive, Brain, MoreHorizontal, Sparkles } from "lucide-react";
 import { MemoryBankPage } from "./memory/memory-bank-page";
 import { VnAssetPage } from "./vn/vn-asset-page";
 import { loadCharacters } from "@/lib/character-storage";
@@ -95,7 +95,9 @@ export function PhoneResourcesApp({ onClose, onNotice, initialPage }: { onClose:
             onBack={handleBack}
             className={currentPage === "memory" && memoryView === "detail" ? "mem-detail" : undefined}
             rightAction={showSettingsIcon || showBoxIcon ? (
-                <>
+                // 两个 icon 按钮之间留出间距：page-header-right 本身不带 gap，
+                // 直接并排会贴在一起
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
                     {showBoxIcon && (
                         <button
                             onClick={() => setMemoryView(memoryView === "boxes" ? "detail" : "boxes")}
@@ -105,7 +107,8 @@ export function PhoneResourcesApp({ onClose, onNotice, initialPage }: { onClose:
                             aria-pressed={memoryView === "boxes"}
                             data-active={memoryView === "boxes" ? "" : undefined}
                         >
-                            <Folder size={21} strokeWidth={1.5} />
+                            {/* 和记忆详情底部「长期」tab 同一个 Archive 盒子图标 */}
+                            <Archive size={21} strokeWidth={1.5} />
                         </button>
                     )}
                     {showSettingsIcon && (
@@ -118,7 +121,7 @@ export function PhoneResourcesApp({ onClose, onNotice, initialPage }: { onClose:
                             <MoreHorizontal size={22} strokeWidth={1.5} />
                         </button>
                     )}
-                </>
+                </span>
             ) : undefined}
         >
             <div
