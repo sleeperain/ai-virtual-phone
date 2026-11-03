@@ -4,7 +4,6 @@
 import type { MemoryEntry } from "./memory-types";
 import { stripMemoryStructuredSections } from "./memory-summarizer";
 import { effectiveImportance, isEntrySuperseded } from "./memory-revision";
-import { filterRecallableEntries } from "./memory-event-boxes";
 
 function formatLocalDay(isoOrDateStr: string): string {
     if (!isoOrDateStr) return "未知日期";
@@ -55,12 +54,8 @@ export function sortMemoriesByDateThenImportance(
  */
 export function formatLongTermMemories(memories: MemoryEntry[]): string {
     if (memories.length === 0) return "";
-    // 兜底：已归档进事件盒的条目不该出现在提示词里。检索侧已经过滤过一次，
-    // 这里再挡一次——格式化是最靠近模型的一层，漏一处就会「以为排除了其实还在发」。
-    const recallable = filterRecallableEntries(memories);
-    if (recallable.length === 0) return "";
 
-    const sorted = sortMemoriesByDateThenImportance(recallable, 0.8);
+    const sorted = sortMemoriesByDateThenImportance(memories, 0.8);
 
     const lines: string[] = [];
     for (const entry of sorted) {
@@ -76,10 +71,8 @@ export function formatLongTermMemories(memories: MemoryEntry[]): string {
 
 export function formatCoreMemories(memories: MemoryEntry[]): string {
     if (memories.length === 0) return "";
-    const recallable = filterRecallableEntries(memories);
-    if (recallable.length === 0) return "";
 
-    const sorted = sortMemoriesByDateThenImportance(recallable, 0.95);
+    const sorted = sortMemoriesByDateThenImportance(memories, 0.95);
 
     const lines: string[] = [];
     for (const entry of sorted) {

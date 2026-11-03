@@ -189,9 +189,6 @@ const PRIMARY_DATA_MODULES: DataModuleDefinition[] = [
         label: "记忆配置与计数",
         keys: ["ai_phone_memory_config_v1"],
         prefixes: [
-          // 事件盒的表跟着角色走，必须一起备份：漏了就会出现
-          // 「条目有 eventBoxId、盒子全空」的孤儿数据，而且换设备后无法自愈
-          "ai_phone_memory_boxes_",
           "ai_phone_mem_evt_count_",
           "ai_phone_mem_last_sum_",
           "ai_phone_mem_core_count_",
