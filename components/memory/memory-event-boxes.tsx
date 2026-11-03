@@ -474,7 +474,7 @@ export function AutoClusterPreview({
                 </div>
                 <div className="modal-body" data-ui="modal-body" style={{ maxHeight: "62vh", overflowY: "auto", paddingBottom: 16 }}>
                     <p className="menu-group-desc mx-2" style={{ marginBottom: 8 }}>
-                        取消勾选不需要的组。确认后会建盒、生成摘要并归档，原始记忆始终保留。
+                        取消勾选不需要的组。确认后只把它们归到盒子里，方便翻找；总结归档由你在盒子里手动触发。
                     </p>
                     <div className="menu-group">
                         {candidates.map(candidate => {

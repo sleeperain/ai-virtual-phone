@@ -610,7 +610,11 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         }
     };
 
-    /** 自动归纳第二步：确认后建盒 + 归档。一组失败不影响其它组。 */
+    /**
+     * 自动归纳第二步：确认后**只建盒 + 归组，不总结、不归档**。
+     * 归纳解决的是「翻找费劲」，总结归档什么时候做由用户自己在盒子里决定，
+     * 不能在归组的同一动作里顺手把原文从召回里摘掉。
+     */
     const handleConfirmAutoCluster = async () => {
         if (!selectedCharId || autoBusy) return;
         const chosen = autoCandidates.filter(item => autoSelected[item.key] !== false);
@@ -618,43 +622,27 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
 
         setAutoBusy(true);
         let created = 0;
-        let digested = 0;
         try {
-            let workingEntries = [...longTermEntries];
             for (let index = 0; index < chosen.length; index += 1) {
                 const candidate = chosen[index];
-                setAutoBusyLabel(`归档中 ${index + 1}/${chosen.length}`);
+                setAutoBusyLabel(`归组中 ${index + 1}/${chosen.length}`);
                 const box: MemoryEventBox = createEventBox(selectedCharId, candidate.title);
                 saveEventBoxes(selectedCharId, [...loadEventBoxes(selectedCharId), box]);
                 created += 1;
 
-                // 逐条改归属，workingEntries 同步更新，后面的组才能看到最新状态
                 for (const entry of candidate.entries) {
                     const moved = await moveEntryToBox(entry, box.id);
-                    workingEntries = workingEntries.map(item => (item.id === moved.id ? moved : item));
+                    replaceLongTermEntry(moved);
                 }
-
-                const result = await runEventBoxDigest(
-                    selectedCharId,
-                    selectedChar?.name ?? "",
-                    box.id,
-                    workingEntries,
-                );
-                if (result.success) digested += 1;
-                else console.warn("[MemoryBank] Auto digest skipped:", candidate.title, result.error);
             }
 
             setAutoCandidates([]);
             setAutoSelected({});
             await loadDetailData(selectedCharId);
-            showNotice(
-                digested === created
-                    ? `已整理 ${created} 个事件盒并完成归档`
-                    : `已建 ${created} 个事件盒，${digested} 个完成归档（其余可在盒子里手动总结）`,
-            );
+            showNotice(`已归入 ${created} 个事件盒。需要归档时在盒子里点「总结」`);
         } catch (err) {
             console.error("[MemoryBank] Confirm auto cluster failed:", err);
-            showNotice("自动整理失败: " + String(err));
+            showNotice("自动归纳失败: " + String(err));
             await loadDetailData(selectedCharId);
         } finally {
             setAutoBusy(false);
@@ -1574,18 +1562,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                         </div>
                     </>
                 )}
-                {/* 盒内页的操作区：摘要 + 总结 / 恢复，下面沿用同一套条目卡片 */}
-                {activeBox ? (
-                    <EventBoxPanel
-                        box={activeBox}
-                        entries={entries}
-                        busy={boxBusy}
-                        onDigest={() => void handleDigestActiveBox()}
-                        onRestore={() => setBoxConfirm({ kind: "restore", boxId: activeBox.id })}
-                        onRename={() => openRenameBoxDialog(activeBox)}
-                        onDelete={() => setBoxConfirm({ kind: "delete", boxId: activeBox.id })}
-                    />
-                ) : null}
                 {entryMenuId && (
                     <button
                         className="mem-entry-menu-backdrop"
@@ -2285,8 +2261,10 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                     }}
                                 >
                                     <ChevronLeft size={14} />
-                                    事件盒
+                                    全部事件盒
                                 </button>
+                                {/* 标题栏只写「事件盒」，具体是哪个盒子在这里标明 */}
+                                <h3 className="ts-15 font-bold" style={{ margin: "2px 0 0" }}>{activeBox.title}</h3>
                             </div>
                             <div style={{ padding: "0 16px" }}>
                                 <EventBoxPanel
