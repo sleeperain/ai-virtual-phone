@@ -45,36 +45,64 @@
 }
 
 /* ══════════════════════════════════════════
-   事件盒（三层结构：先前事件的总结 / 新事件 / 已归档事件）
-   颜色与边框全部走全局主题变量
+   事件盒卡片内联展开（脉络时间线抽屉）
+   不跳二级页面，直接在卡片下方展开关联事件
    ══════════════════════════════════════════ */
 
-.mem-box-section-header {
+.mem-box-drawer {
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px dashed color-mix(in srgb, var(--c-icon) 25%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mem-box-layer-label {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  margin: 8px 4px 2px;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--c-text);
+  font-size: 11px;
+  color: var(--c-icon);
+  letter-spacing: 0.3px;
 }
 
-.mem-box-section-sub {
+.mem-box-chain-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 10px;
+  border-left: 1.5px solid color-mix(in srgb, var(--c-icon) 28%, transparent);
+}
+
+.mem-box-chain-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--c-icon) 6%, transparent);
+}
+
+.mem-box-chain-item.is-archived {
+  opacity: 0.72;
+}
+
+.mem-box-chain-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
   font-size: 11px;
-  font-weight: 400;
   color: var(--c-icon);
 }
 
-.mem-box-digest-card {
+.mem-box-inline-actions {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px 14px;
-  border-left: 3px solid var(--c-text);
-}
-
-.mem-box-archived-card {
-  opacity: 0.78;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-top: 2px;
+  font-size: 11px;
 }
 
