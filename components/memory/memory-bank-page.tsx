@@ -183,6 +183,7 @@ type MemoryEditorState = {
     dateTouched?: boolean;
     importance: number; // 1-10
     keywordsText: string;
+    eventBoxId?: string;
     cleanedDrafts?: MemoryEditorDraftItem[];
 };
 
@@ -192,14 +193,18 @@ function getLocalTodayKey(): string {
     return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
+function formatIsoTimestamp(isoStr: string): string {
+    const d = new Date(isoStr);
+    const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
+    return !isNaN(d.getTime())
+        ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+        : isoStr.slice(0, 16);
+}
+
 /** 事件日期与入库日期分开成两行显示，顺序固定：事件日期在上，入库在下。 */
 function formatEntryDateLines(entry: MemoryEntry): string[] {
     const eventDate = typeof entry.metadata?.eventDate === "string" ? entry.metadata.eventDate.trim() : "";
-    const d = new Date(entry.createdAt);
-    const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
-    const createdDate = !isNaN(d.getTime())
-        ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
-        : entry.createdAt.slice(0, 16);
+    const createdDate = formatIsoTimestamp(entry.createdAt);
     if (eventDate) {
         return [`事件日期: ${eventDate}`, `入库: ${createdDate}`];
     }
@@ -384,8 +389,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const [boxDialog, setBoxDialog] = useState<{
         boxId?: string;
         title: string;
-        status: EventBoxStatus;
-        note: string;
+        keywordsText: string;
         pendingEntryId?: string;
     } | null>(null);
     const [boxConfirm, setBoxConfirm] = useState<{ kind: "delete" | "restore"; boxId: string } | null>(null);
@@ -544,17 +548,38 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             showNotice("请输入事件盒名称");
             return;
         }
+        const parsedKws = boxDialog.keywordsText
+            .split(/[、，,；;|/\s]+/)
+            .map(s => s.trim())
+            .filter(Boolean);
         const pendingEntryId = boxDialog.pendingEntryId;
         if (boxDialog.boxId) {
             const next = updateEventBox(selectedCharId, boxDialog.boxId, {
                 title: cleanTitle,
-                status: boxDialog.status,
-                note: boxDialog.note.trim() || undefined,
+                keywords: parsedKws,
             });
             setBoxes(next);
-            showNotice("事件盒信息已更新");
+            // 同步更新该盒子的总结条目关键词
+            const targetBox = next.find(b => b.id === boxDialog.boxId);
+            if (targetBox) {
+                const { digestEntry } = getBoxLayers(longTermEntries, targetBox);
+                if (digestEntry) {
+                    const updatedDigest: MemoryEntry = {
+                        ...digestEntry,
+                        updatedAt: new Date().toISOString(),
+                        metadata: {
+                            ...(digestEntry.metadata ?? {}),
+                            eventBoxTitle: cleanTitle,
+                            keywords: parsedKws,
+                        },
+                    };
+                    await saveMemoryEntry(updatedDigest);
+                    setLongTermEntries(prev => prev.map(item => (item.id === updatedDigest.id ? updatedDigest : item)));
+                }
+            }
+            showNotice("事件盒已更新");
         } else {
-            const created = createEventBox(selectedCharId, cleanTitle, boxDialog.status, boxDialog.note);
+            const created = createEventBox(selectedCharId, cleanTitle, "active", undefined, parsedKws);
             setBoxes(loadEventBoxes(selectedCharId));
             if (pendingEntryId) {
                 const target = longTermEntries.find(e => e.id === pendingEntryId);
@@ -1080,6 +1105,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             dateTouched: false,
             importance: type === "core" ? 10 : 8,
             keywordsText: "",
+            eventBoxId: type === "long_term" && activeTab === "boxes" && activeBoxId ? activeBoxId : "",
         });
     };
 
@@ -1102,6 +1128,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             dateTouched: true,
             importance: impScore,
             keywordsText: existingKeywords.join("、"),
+            eventBoxId: getEntryBoxId(entry),
         });
     };
 
@@ -1348,9 +1375,14 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                 };
 
             await saveMemoryEntry(entry);
-            // 如果当前在事件盒内部新增长期记忆，直接放入该盒子的「新事件」
-            if (!source && type === "long_term" && activeTab === "boxes" && activeBoxId) {
-                await moveEntryToBox(entry, activeBoxId);
+            if (type === "long_term" && !isEntryBoxDigest(entry)) {
+                const desiredBoxId = (memoryEditor.eventBoxId ?? "").trim();
+                const prevBoxId = source ? getEntryBoxId(source) : "";
+                if (desiredBoxId && desiredBoxId !== prevBoxId) {
+                    await moveEntryToBox(entry, desiredBoxId);
+                } else if (!desiredBoxId && prevBoxId) {
+                    await removeEntryFromBox(entry);
+                }
             }
             await loadDetailData(selectedCharId);
             setMemoryEditor(null);
@@ -1629,22 +1661,11 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                     </button>
                                                     {type === "long_term" && !entryIsDigest && (
                                                         <button
-                                                            onClick={() => {
-                                                                setEntryMenuId(null);
-                                                                setBoxMoveEntryId(entry.id);
-                                                            }}
-                                                        >
-                                                            <Folder size={13} />
-                                                            <span>{entryBoxId ? "更换/移出事件盒" : "放入事件盒"}</span>
-                                                        </button>
-                                                    )}
-                                                    {type === "long_term" && !entryIsDigest && (
-                                                        <button
                                                             onClick={() => void handleCleanSingleLegacyEntry(entry)}
                                                             disabled={Boolean(cleaningLegacyEntryId) || cleaningAllLegacy}
                                                         >
                                                             <Sparkles size={13} />
-                                                            <span>{cleaningLegacyEntryId === entry.id ? "清洗中..." : "记忆清洗"}</span>
+                                                            <span>{cleaningLegacyEntryId === entry.id ? "清洗中..." : "清洗"}</span>
                                                         </button>
                                                     )}
                                                     <button
@@ -1745,16 +1766,13 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                             </span>
                                         )}
                                     </div>
-                                    <div className="mem-keywords-row">
-                                        <span className="mem-keywords-label">检索关键词：</span>
-                                        {keywords.length > 0 ? (
-                                            keywords.map((kw, idx) => (
+                                    {keywords.length > 0 && (
+                                        <div className="mem-keywords-row">
+                                            {keywords.map((kw, idx) => (
                                                 <span key={idx} className="mem-keyword-chip" style={{ borderRadius: 5 }}>{kw}</span>
-                                            ))
-                                        ) : (
-                                            <span className="mem-keywords-empty">未设置</span>
-                                        )}
-                                    </div>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         );
@@ -1797,7 +1815,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                             />
                         )
                     ) : activeTab === "boxes" ? (
-                        /* ── Event Boxes: 单层列表，点击卡片原地展开关联事件（无二级页面）── */
+                        /* ── Event Boxes: 严格按五层行序渲染 + 点击卡片展开近期事件与已归档事件 ── */
                         (() => {
                             const ungroupedCount = longTermEntries.filter(e => !getEntryBoxId(e) && !isEntryBoxDigest(e)).length;
                             return (
@@ -1813,7 +1831,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                         <div className="mem-entry-toolbar" style={{ flexWrap: "wrap" }}>
                                             <button
                                                 className="mem-entry-add-btn"
-                                                onClick={() => setBoxDialog({ title: "", status: "active", note: "" })}
+                                                onClick={() => setBoxDialog({ title: "", keywordsText: "" })}
                                             >
                                                 <Plus size={15} strokeWidth={1.8} />
                                                 <span>新建事件盒</span>
@@ -1834,11 +1852,11 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
 
                                     {boxes.length === 0 ? (
                                         <div className="mem-empty-card">
-                                            <p>暂无事件盒。将围绕同一件事的记忆关联到一起，点击卡片即可展开事件脉络并手动总结。</p>
+                                            <p>暂无事件盒。将围绕同一件事的记忆关联到一起，点击卡片即可展开关联事件并手动总结。</p>
                                             <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
                                                 <button
                                                     className="mem-empty-add-btn"
-                                                    onClick={() => setBoxDialog({ title: "", status: "active", note: "" })}
+                                                    onClick={() => setBoxDialog({ title: "", keywordsText: "" })}
                                                 >
                                                     <Plus size={14} />
                                                     <span>新建事件盒</span>
@@ -1858,16 +1876,16 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                     ) : (
                                         boxes.map(box => {
                                             const { digestEntry, newEntries, archivedEntries, allMemberEntries } = getBoxLayers(longTermEntries, box);
-                                            const spanStr = formatBoxSpan(allMemberEntries);
                                             const isBoxOpen = activeBoxId === box.id;
                                             const menuKey = `box_menu_${box.id}`;
                                             const digestClean = digestEntry
-                                                ? (stripMemoryStructuredSections(digestEntry.content) || digestEntry.content)
+                                                ? (stripMemoryStructuredSections(digestEntry.content) || digestEntry.content).trim()
                                                 : "";
-                                            const digestKws = digestEntry && Array.isArray(digestEntry.metadata?.keywords)
-                                                ? (digestEntry.metadata.keywords as unknown[]).map(String)
-                                                : [];
-                                            const digestVecValid = digestEntry ? isEntryVectorValid(digestEntry) : false;
+                                            const boxKeywords = (box.keywords && box.keywords.length > 0)
+                                                ? box.keywords
+                                                : (digestEntry && Array.isArray(digestEntry.metadata?.keywords)
+                                                    ? (digestEntry.metadata.keywords as unknown[]).map(String)
+                                                    : []);
 
                                             return (
                                                 <div
@@ -1879,43 +1897,14 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                             return;
                                                         }
                                                         setActiveBoxId(isBoxOpen ? null : box.id);
-                                                        setDigestHistoryOpen(false);
                                                     }}
                                                 >
-                                                    {/* 卡片头部：与长期记忆卡片完全同构 */}
-                                                    <div className="mem-report-head">
-                                                        <span
-                                                            className="ts-11 text-secondary"
-                                                            style={{
-                                                                letterSpacing: "0.5px",
-                                                                display: "flex",
-                                                                flexDirection: "column",
-                                                                alignItems: "flex-start",
-                                                                gap: 1,
-                                                                textAlign: "left",
-                                                                lineHeight: 1.5,
-                                                            }}
-                                                        >
-                                                            <span className="ts-13 font-bold" style={{ color: "var(--c-text)" }}>{box.title}</span>
-                                                            <span>
-                                                                {spanStr ? `时间跨度: ${spanStr} · ` : ""}
-                                                                关联 {allMemberEntries.length} 条事件{box.note ? ` · ${box.note}` : ""}
-                                                            </span>
+                                                    {/* 第一行：最左侧标题，最右侧菜单按钮 */}
+                                                    <div className="mem-report-head" style={{ alignItems: "center" }}>
+                                                        <span className="ts-13 font-bold" style={{ color: "var(--c-text)" }}>
+                                                            {box.title}
                                                         </span>
                                                         <div className="mem-report-actions">
-                                                            {newEntries.length > 0 && (
-                                                                <span className="mem-stat-pill is-vector-ok" style={{ fontWeight: 700, borderRadius: 5 }}>
-                                                                    新进展 {newEntries.length}
-                                                                </span>
-                                                            )}
-                                                            {archivedEntries.length > 0 && (
-                                                                <span className="mem-stat-pill" style={{ fontWeight: 700, borderRadius: 5 }}>
-                                                                    已归档 {archivedEntries.length}
-                                                                </span>
-                                                            )}
-                                                            <span className="mem-origin-badge" style={{ borderRadius: 5 }}>
-                                                                {EVENT_BOX_STATUS_META[box.status].label}
-                                                            </span>
                                                             <div className="mem-entry-menu-wrap">
                                                                 <button
                                                                     className="mem-entry-menu-btn"
@@ -1929,28 +1918,15 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                                 </button>
                                                                 {entryMenuId === menuKey && (
                                                                     <div className="mem-entry-menu" onClick={ev => ev.stopPropagation()}>
-                                                                        {allMemberEntries.length > 0 && (
-                                                                            <button
-                                                                                disabled={boxSummarizing}
-                                                                                onClick={() => {
-                                                                                    setEntryMenuId(null);
-                                                                                    void handleManualSummarizeBox(box.id);
-                                                                                }}
-                                                                            >
-                                                                                <Sparkles size={13} />
-                                                                                <span>{digestEntry ? "更新事件盒总结" : "手动总结盒内事件"}</span>
-                                                                            </button>
-                                                                        )}
                                                                         <button
+                                                                            disabled={boxSummarizing || allMemberEntries.length === 0}
                                                                             onClick={() => {
                                                                                 setEntryMenuId(null);
-                                                                                setActiveBoxId(box.id);
-                                                                                setBoxAddSelectedIds({});
-                                                                                setBoxAddPickerOpen(true);
+                                                                                void handleManualSummarizeBox(box.id);
                                                                             }}
                                                                         >
-                                                                            <Plus size={13} />
-                                                                            <span>关联已有记忆</span>
+                                                                            <Sparkles size={13} />
+                                                                            <span>{boxSummarizing ? "总结中..." : "总结"}</span>
                                                                         </button>
                                                                         <button
                                                                             onClick={() => {
@@ -1958,25 +1934,13 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                                                 setBoxDialog({
                                                                                     boxId: box.id,
                                                                                     title: box.title,
-                                                                                    status: box.status,
-                                                                                    note: box.note ?? "",
+                                                                                    keywordsText: boxKeywords.join("、"),
                                                                                 });
                                                                             }}
                                                                         >
                                                                             <Edit3 size={13} />
-                                                                            <span>编辑事件盒</span>
+                                                                            <span>编辑</span>
                                                                         </button>
-                                                                        {archivedEntries.length > 0 && (
-                                                                            <button
-                                                                                onClick={() => {
-                                                                                    setEntryMenuId(null);
-                                                                                    setBoxConfirm({ kind: "restore", boxId: box.id });
-                                                                                }}
-                                                                            >
-                                                                                <RotateCcw size={13} />
-                                                                                <span>撤销总结恢复</span>
-                                                                            </button>
-                                                                        )}
                                                                         <button
                                                                             className="is-danger"
                                                                             onClick={() => {
@@ -1985,7 +1949,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                                             }}
                                                                         >
                                                                             <Trash2 size={13} />
-                                                                            <span>删除事件盒</span>
+                                                                            <span>删除</span>
                                                                         </button>
                                                                     </div>
                                                                 )}
@@ -1993,114 +1957,106 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                         </div>
                                                     </div>
 
-                                                    {/* 卡片正文区：如果有先前总结则显示总结，没有则显示一句话轻提示 */}
-                                                    {digestEntry ? (
+                                                    {/* 第二行：最左侧 最近更新：{{时间戳}} */}
+                                                    <div className="ts-11 text-secondary" style={{ letterSpacing: "0.5px", textAlign: "left" }}>
+                                                        最近更新：{formatIsoTimestamp(box.updatedAt)}
+                                                    </div>
+
+                                                    {/* 第三行：总结正文内容（没有就不显示） */}
+                                                    {digestClean && (
                                                         <div className="ts-12 leading-[1.7] mem-markdown-body chat-markdown">
                                                             <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-                                                                {isBoxOpen || digestClean.length <= 160 ? digestClean : digestClean.slice(0, 160) + "..."}
+                                                                {digestClean}
                                                             </ReactMarkdown>
-                                                        </div>
-                                                    ) : (
-                                                        <div className="ts-12 text-secondary" style={{ lineHeight: 1.6 }}>
-                                                            {allMemberEntries.length > 0
-                                                                ? (stripMemoryStructuredSections(allMemberEntries[0].content) || allMemberEntries[0].content).slice(0, 110) + ((stripMemoryStructuredSections(allMemberEntries[0].content) || allMemberEntries[0].content).length > 110 ? "..." : "")
-                                                                : "尚未关联记忆，点击展开后可关联已有记忆。"}
                                                         </div>
                                                     )}
 
-                                                    {/* 点击卡片后原地展开：关联事件脉络（新事件 + 已归档事件） */}
+                                                    {/* 第四行：罗列检索关键词（无“检索关键词：”前缀） */}
+                                                    {boxKeywords.length > 0 && (
+                                                        <div className="mem-keywords-row">
+                                                            {boxKeywords.map((kw, idx) => (
+                                                                <span key={idx} className="mem-keyword-chip" style={{ borderRadius: 5 }}>{kw}</span>
+                                                            ))}
+                                                        </div>
+                                                    )}
+
+                                                    {/* 第五行：点击展开/收起 {{条数}} 条关联事件（使用 ChevronRight ">" SVG 图标） */}
+                                                    <div className="mem-structured-footer" style={{ paddingTop: 4 }}>
+                                                        <div className="mem-stats-row" style={{ display: "flex", alignItems: "center", justifyContent: "flex-start" }}>
+                                                            <span
+                                                                className="mem-stat-pill"
+                                                                style={{
+                                                                    background: "transparent",
+                                                                    border: "none",
+                                                                    padding: 0,
+                                                                    display: "inline-flex",
+                                                                    alignItems: "center",
+                                                                    gap: 4,
+                                                                }}
+                                                            >
+                                                                <ChevronRight
+                                                                    size={13}
+                                                                    style={{
+                                                                        transform: isBoxOpen ? "rotate(90deg)" : "none",
+                                                                        transition: "transform 0.15s ease",
+                                                                    }}
+                                                                />
+                                                                <span>
+                                                                    {isBoxOpen ? "点击收起关联事件" : `点击展开 ${allMemberEntries.length} 条关联事件`}
+                                                                </span>
+                                                            </span>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* 展开折叠区：近期事件（深色在前）+ 已归档事件（浅色在后）+ 最下方「+ 添加事件」 */}
                                                     {isBoxOpen && (
                                                         <div className="mem-box-drawer" onClick={ev => ev.stopPropagation()}>
-                                                            {/* 顶部轻量操作行（无大黑按钮） */}
-                                                            <div className="mem-box-inline-actions">
-                                                                {allMemberEntries.length > 0 && (
-                                                                    <button
-                                                                        type="button"
-                                                                        className="mem-superseded-jump"
-                                                                        disabled={boxSummarizing}
-                                                                        onClick={() => void handleManualSummarizeBox(box.id)}
-                                                                    >
-                                                                        {boxSummarizing
-                                                                            ? "正在总结并向量化..."
-                                                                            : digestEntry
-                                                                                ? (newEntries.length > 0 ? `✦ 并入 ${newEntries.length} 条新事件更新总结` : "✦ 重新总结全部事件")
-                                                                                : `✦ 手动总结这 ${allMemberEntries.length} 条事件`}
-                                                                    </button>
-                                                                )}
-                                                                <button
-                                                                    type="button"
-                                                                    className="mem-superseded-jump"
-                                                                    onClick={() => {
-                                                                        setBoxAddSelectedIds({});
-                                                                        setBoxAddPickerOpen(true);
-                                                                    }}
-                                                                >
-                                                                    + 关联已有记忆
-                                                                </button>
-                                                                {digestEntry && (
-                                                                    <button
-                                                                        type="button"
-                                                                        className="mem-superseded-jump"
-                                                                        onClick={() => openEditMemoryEditor(digestEntry)}
-                                                                    >
-                                                                        编辑总结正文
-                                                                    </button>
-                                                                )}
+                                                            {/* 近期事件（深色） */}
+                                                            <div className="mem-box-layer-label" style={{ color: "var(--c-text)", fontWeight: 600 }}>
+                                                                <span>近期事件（{newEntries.length}）</span>
                                                             </div>
-
-                                                            {/* 新事件进展 */}
-                                                            {newEntries.length > 0 && (
-                                                                <>
-                                                                    <div className="mem-box-layer-label">
-                                                                        <span>新进展（{newEntries.length} 条 · 待总结）</span>
-                                                                    </div>
-                                                                    <div className="mem-box-chain-list">
-                                                                        {newEntries.map(item => {
-                                                                            const itemBody = stripMemoryStructuredSections(item.content) || item.content;
-                                                                            const itemDate = formatEntryDateLines(item)[0];
-                                                                            return (
-                                                                                <div key={item.id} className="mem-box-chain-item">
-                                                                                    <div className="mem-box-chain-head">
-                                                                                        <span>{itemDate}</span>
-                                                                                        <div style={{ display: "flex", gap: 8 }}>
-                                                                                            <button
-                                                                                                type="button"
-                                                                                                className="mem-superseded-jump"
-                                                                                                onClick={() => openEditMemoryEditor(item)}
-                                                                                            >
-                                                                                                编辑
-                                                                                            </button>
-                                                                                            <button
-                                                                                                type="button"
-                                                                                                className="mem-superseded-jump"
-                                                                                                onClick={() => void handleRemoveEntryFromBox(item.id)}
-                                                                                            >
-                                                                                                移出
-                                                                                            </button>
-                                                                                        </div>
-                                                                                    </div>
-                                                                                    <div className="ts-12 leading-[1.6]" style={{ color: "var(--c-text)" }}>
-                                                                                        {itemBody}
+                                                            {newEntries.length > 0 ? (
+                                                                <div className="mem-box-chain-list">
+                                                                    {newEntries.map(item => {
+                                                                        const itemBody = stripMemoryStructuredSections(item.content) || item.content;
+                                                                        const itemDate = formatEntryDateLines(item)[0];
+                                                                        return (
+                                                                            <div key={item.id} className="mem-box-chain-item">
+                                                                                <div className="mem-box-chain-head">
+                                                                                    <span>{itemDate}</span>
+                                                                                    <div style={{ display: "flex", gap: 8 }}>
+                                                                                        <button
+                                                                                            type="button"
+                                                                                            className="mem-superseded-jump"
+                                                                                            onClick={() => openEditMemoryEditor(item)}
+                                                                                        >
+                                                                                            编辑
+                                                                                        </button>
+                                                                                        <button
+                                                                                            type="button"
+                                                                                            className="mem-superseded-jump"
+                                                                                            onClick={() => void handleRemoveEntryFromBox(item.id)}
+                                                                                        >
+                                                                                            移出
+                                                                                        </button>
                                                                                     </div>
                                                                                 </div>
-                                                                            );
-                                                                        })}
-                                                                    </div>
-                                                                </>
+                                                                                <div className="ts-12 leading-[1.6]" style={{ color: "var(--c-text)" }}>
+                                                                                    {itemBody}
+                                                                                </div>
+                                                                            </div>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            ) : (
+                                                                <div className="ts-11 text-secondary" style={{ paddingLeft: 2 }}>暂无近期事件</div>
                                                             )}
 
-                                                            {/* 已归档事件（在下方显示已归档） */}
+                                                            {/* 已归档事件（浅色，在近期事件之后） */}
                                                             {archivedEntries.length > 0 && (
                                                                 <>
                                                                     <div className="mem-box-layer-label">
-                                                                        <span>已归档事件（{archivedEntries.length} 条 · 已并入总结）</span>
-                                                                        <button
-                                                                            type="button"
-                                                                            className="mem-superseded-jump"
-                                                                            onClick={() => setBoxConfirm({ kind: "restore", boxId: box.id })}
-                                                                        >
-                                                                            全部恢复为新事件
-                                                                        </button>
+                                                                        <span>已归档事件（{archivedEntries.length}）</span>
                                                                     </div>
                                                                     <div className="mem-box-chain-list">
                                                                         {archivedEntries.map(item => {
@@ -2109,7 +2065,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                                             return (
                                                                                 <div key={item.id} className="mem-box-chain-item is-archived">
                                                                                     <div className="mem-box-chain-head">
-                                                                                        <span>{itemDate} · 已归档</span>
+                                                                                        <span>{itemDate}</span>
                                                                                         <div style={{ display: "flex", gap: 8 }}>
                                                                                             <button
                                                                                                 type="button"
@@ -2127,7 +2083,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                                                             </button>
                                                                                         </div>
                                                                                     </div>
-                                                                                    <div className="ts-12 leading-[1.6]" style={{ color: "var(--c-text)" }}>
+                                                                                    <div className="ts-12 leading-[1.6]" style={{ color: "var(--c-icon)" }}>
                                                                                         {itemBody}
                                                                                     </div>
                                                                                 </div>
@@ -2136,33 +2092,22 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                                     </div>
                                                                 </>
                                                             )}
+
+                                                            {/* 罗列事件下方：+ 添加事件 */}
+                                                            <div className="mem-box-inline-actions">
+                                                                <button
+                                                                    type="button"
+                                                                    className="mem-superseded-jump"
+                                                                    onClick={() => {
+                                                                        setBoxAddSelectedIds({});
+                                                                        setBoxAddPickerOpen(true);
+                                                                    }}
+                                                                >
+                                                                    + 添加事件
+                                                                </button>
+                                                            </div>
                                                         </div>
                                                     )}
-
-                                                    {/* 卡片底栏：和普通记忆卡片保持一致的统计与关键词 */}
-                                                    <div className="mem-structured-footer">
-                                                        <div className="mem-stats-row" style={{ display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 10 }}>
-                                                            <span className="mem-stat-pill" style={{ background: "transparent", border: "none", padding: 0 }}>
-                                                                {isBoxOpen ? "▲ 点击收起关联事件" : `▼ 点击展开 ${allMemberEntries.length} 条关联事件`}
-                                                            </span>
-                                                            {digestEntry && (
-                                                                <span
-                                                                    className={`mem-stat-pill ${digestVecValid ? "is-vector-ok" : "is-vector-missing"}`}
-                                                                    style={{ marginLeft: "auto", background: "transparent", border: "none", padding: 0 }}
-                                                                >
-                                                                    {digestVecValid ? `● 总结已向量化(${digestEntry.embedding!.length}d)` : "○ 总结未向量化"}
-                                                                </span>
-                                                            )}
-                                                        </div>
-                                                        {digestKws.length > 0 && (
-                                                            <div className="mem-keywords-row">
-                                                                <span className="mem-keywords-label">检索关键词：</span>
-                                                                {digestKws.map((kw, idx) => (
-                                                                    <span key={idx} className="mem-keyword-chip" style={{ borderRadius: 5 }}>{kw}</span>
-                                                                ))}
-                                                            </div>
-                                                        )}
-                                                    </div>
                                                 </div>
                                             );
                                         })
@@ -2436,6 +2381,42 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                         onChange={e => setMemoryEditor(prev => prev ? { ...prev, keywordsText: e.target.value } : prev)}
                                                     />
                                                 </div>
+                                                {!isCore && (!memoryEditor.entry || !isEntryBoxDigest(memoryEditor.entry)) && (
+                                                    <div className="mem-edit-field-row">
+                                                        <label className="mem-edit-field-label">放入事件盒</label>
+                                                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                                                            <button
+                                                                type="button"
+                                                                className="ui-chip"
+                                                                style={{ fontSize: 11, padding: "4px 10px" }}
+                                                                data-selected={!memoryEditor.eventBoxId ? "" : undefined}
+                                                                onClick={() => setMemoryEditor(prev => prev ? { ...prev, eventBoxId: "" } : prev)}
+                                                            >
+                                                                不放入
+                                                            </button>
+                                                            {boxes.map(b => (
+                                                                <button
+                                                                    key={b.id}
+                                                                    type="button"
+                                                                    className="ui-chip"
+                                                                    style={{ fontSize: 11, padding: "4px 10px" }}
+                                                                    data-selected={memoryEditor.eventBoxId === b.id ? "" : undefined}
+                                                                    onClick={() => setMemoryEditor(prev => prev ? { ...prev, eventBoxId: b.id } : prev)}
+                                                                >
+                                                                    {b.title}
+                                                                </button>
+                                                            ))}
+                                                            <button
+                                                                type="button"
+                                                                className="ui-chip"
+                                                                style={{ fontSize: 11, padding: "4px 10px" }}
+                                                                onClick={() => setBoxDialog({ title: "", keywordsText: "" })}
+                                                            >
+                                                                + 新建事件盒
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                )}
                                             </div>
                                         </>
                                     )}
@@ -2456,7 +2437,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                     );
                 })()}
 
-                {/* 事件盒：新建 / 编辑弹窗 */}
+                {/* 事件盒：新建 / 编辑弹窗（删掉事件状态和备注，新增检索关键词填写） */}
                 {boxDialog && (
                     <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={() => setBoxDialog(null)}>
                         <div className="modal-sheet mem-edit-sheet" data-ui="modal-sheet" onClick={ev => ev.stopPropagation()}>
@@ -2485,30 +2466,13 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                     />
                                 </div>
                                 <div className="mem-edit-field-row">
-                                    <label className="mem-edit-field-label">事件状态</label>
-                                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                                        {(Object.keys(EVENT_BOX_STATUS_META) as EventBoxStatus[]).map(st => (
-                                            <button
-                                                key={st}
-                                                type="button"
-                                                className="ui-chip"
-                                                style={{ fontSize: 11, padding: "4px 10px" }}
-                                                data-selected={boxDialog.status === st ? "" : undefined}
-                                                onClick={() => setBoxDialog(prev => prev ? { ...prev, status: st } : prev)}
-                                            >
-                                                {EVENT_BOX_STATUS_META[st].label}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                                <div className="mem-edit-field-row">
-                                    <label className="mem-edit-field-label">备注说明（可选）</label>
+                                    <label className="mem-edit-field-label">检索关键词</label>
                                     <input
                                         type="text"
                                         className="ui-input ts-12"
-                                        placeholder="一句话记录这件事的背景"
-                                        value={boxDialog.note}
-                                        onChange={e => setBoxDialog(prev => prev ? { ...prev, note: e.target.value } : prev)}
+                                        placeholder="用顿号或逗号分隔（生成总结时也会自动生成）"
+                                        value={boxDialog.keywordsText}
+                                        onChange={e => setBoxDialog(prev => prev ? { ...prev, keywordsText: e.target.value } : prev)}
                                     />
                                 </div>
                                 <button
@@ -2564,7 +2528,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                             onClick={() => {
                                                 const pid = boxMoveEntryId;
                                                 setBoxMoveEntryId(null);
-                                                setBoxDialog({ title: "", status: "active", note: "", pendingEntryId: pid });
+                                                setBoxDialog({ title: "", keywordsText: "", pendingEntryId: pid });
                                             }}
                                         >
                                             <Plus size={18} />

@@ -38,6 +38,7 @@ export type MemoryEventBox = {
     title: string;
     note?: string;
     status: EventBoxStatus;
+    keywords?: string[];
     createdAt: string;
     updatedAt: string;
     /** 摘要记忆条目在 memories 表里的 id */
@@ -77,6 +78,7 @@ function normalizeBox(raw: unknown, characterId: string): MemoryEventBox | null 
         title: item.title.trim(),
         note: typeof item.note === "string" && item.note.trim() ? item.note.trim() : undefined,
         status: normalizeStatus(item.status),
+        keywords: Array.isArray(item.keywords) ? item.keywords.map(String).map(s => s.trim()).filter(Boolean) : undefined,
         createdAt: typeof item.createdAt === "string" ? item.createdAt : now,
         updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : now,
         digestEntryId: typeof item.digestEntryId === "string" && item.digestEntryId ? item.digestEntryId : undefined,
@@ -112,14 +114,17 @@ export function createEventBox(
     title: string,
     status: EventBoxStatus = "active",
     note?: string,
+    keywords?: string[],
 ): MemoryEventBox {
     const now = new Date().toISOString();
+    const cleanKws = Array.isArray(keywords) ? keywords.map(s => s.trim()).filter(Boolean) : [];
     const box: MemoryEventBox = {
         id: `box_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         characterId,
         title: title.trim() || "未命名事件",
         note: note?.trim() || undefined,
         status,
+        ...(cleanKws.length > 0 ? { keywords: cleanKws } : {}),
         createdAt: now,
         updatedAt: now,
     };
@@ -131,7 +136,7 @@ export function createEventBox(
 export function updateEventBox(
     characterId: string,
     boxId: string,
-    patch: Partial<Pick<MemoryEventBox, "title" | "note" | "status" | "digestEntryId" | "digestHistory">>,
+    patch: Partial<Pick<MemoryEventBox, "title" | "note" | "status" | "keywords" | "digestEntryId" | "digestHistory">>,
 ): MemoryEventBox[] {
     const now = new Date().toISOString();
     const next = loadEventBoxes(characterId).map(box =>
@@ -244,6 +249,7 @@ export async function moveEntryToBox(entry: MemoryEntry, boxId: string): Promise
         metadata,
     };
     await saveMemoryEntry(next);
+    updateEventBox(entry.characterId, boxId, {});
     return next;
 }
 
@@ -395,9 +401,10 @@ export async function summarizeEventBoxManually(
         return { success: false, error: "总结内容为空" };
     }
 
-    // 合并模型提取的关键词 + 盒内条目的核心关键词（最多 10 个）
+    // 合并模型提取的关键词 + 事件盒已有关键词 + 盒内条目的核心关键词（最多 10 个）
     const combinedKeywords = uniqueKeywords([
         ...parsedMeta.keywords,
+        ...(box.keywords ?? []),
         ...allMemberEntries.flatMap(readEntryKeywords),
     ]).slice(0, 10);
 
@@ -486,6 +493,7 @@ export async function summarizeEventBoxManually(
     updateEventBox(characterId, box.id, {
         digestEntryId: digestId,
         digestHistory: nextHistory,
+        keywords: combinedKeywords,
     });
 
     return { success: true, digestEntry };
