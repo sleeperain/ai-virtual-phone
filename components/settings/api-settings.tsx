@@ -789,14 +789,14 @@ export function ApiSettings() {
                                                 onChange={(v) => updateConfig(config.id, { preventEmptyGenerateRambling: v })}
                                             />
                                         </div>
-                                        {/* 生成参数：跟着这条 API 配置（= 这个模型/线路）走 */}
+                                        {/* 生成参数：一条配置一套（服务商 + 模型），不再放预设里 */}
                                         <div className="ui-collapsible mt-2">
                                             <div
                                                 onClick={() => setGenerationParamsOpen(!generationParamsOpen)}
                                                 className="ui-collapsible-header flex justify-between items-center select-none"
                                                 data-open={generationParamsOpen}
                                             >
-                                                <span className="menu-label ts-13 font-semibold">生成参数（按模型）</span>
+                                                <span className="menu-label ts-13 font-semibold">生成参数</span>
                                                 <ChevronDown
                                                     size={16}
                                                     className="text-[var(--c-text)]"
@@ -817,7 +817,7 @@ export function ApiSettings() {
                                                     {config.generationParameters ? (
                                                         <>
                                                             <span className="ui-slider-hint">
-                                                                开启后从默认值（温度 0.8、Top P 1.0 等）起算，按需调整。只有勾选的字段会真的发给服务商——不同模型支持的字段不同（例如 Anthropic 不认 frequency_penalty / presence_penalty，部分本地模型不认 top_a）。
+                                                                温度、Top P、Max Tokens 等模型采样参数在这里配置，一条配置一套，不再和预设绑在一起。只有勾选的字段才会发给服务商——不同接口支持的字段不同（例如 Anthropic 不认 frequency_penalty / presence_penalty，部分本地模型不认 top_a）。
                                                             </span>
                                                             <div className="grid grid-cols-2 gap-3">
                                                                 {GENERATION_PARAM_CONTROLS.map(control => {
