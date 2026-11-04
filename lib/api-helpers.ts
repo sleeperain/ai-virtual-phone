@@ -3,6 +3,7 @@
 // request headers, and response parsing. All LLM-calling modules should use these.
 
 import type { ApiConfig } from "./settings-types";
+import { resolveGenerationParameters } from "./generation-parameters";
 import { pushApiLog } from "./api-log-store";
 
 const SIMPLE_ANTHROPIC_AUTO_MAX_TOKENS = 8192;
@@ -114,17 +115,14 @@ export function buildSimpleLLMRequest(
     if (!baseUrl || !config.apiKey) return null;
 
     const headers = buildRequestHeaders(config, baseUrl);
-    // 后台小调用（测试连接、摘要、反省等）：优先尊重 API 配置里的生成参数（以及是否启用了 temperature 发送）
-    // 像 Kimi K2.5 等模型强制要求 temperature=1，若用户在 API 配置里设了 1 或关掉了 temperature 发送，不能被后台调用硬编码的 0.2/0.7 覆盖报错
-    const apiParams = config.generationParameters;
-    const tempEnabled = !apiParams?.enabled || apiParams.enabled.includes("temperature");
-    const temperature = tempEnabled
-        ? (apiParams?.temperature ?? options?.temperature ?? 0.7)
+    // 后台小调用（测试连接、摘要、反省等）与主聊天一样，全部从 API 配置的 generationParameters 读取已启用的采样参数
+    const { enabled, values } = resolveGenerationParameters(config);
+    const hasExplicitTemp = typeof config.generationParameters?.temperature === "number";
+    const temperature = enabled.has("temperature")
+        ? (hasExplicitTemp ? values.temperature : (options?.temperature ?? values.temperature))
         : undefined;
     const max_tokens = options?.max_tokens
-        ?? (apiParams?.max_tokens && apiParams.max_tokens > 0
-            ? apiParams.max_tokens
-            : undefined);
+        ?? (enabled.has("max_tokens") && values.max_tokens > 0 ? values.max_tokens : undefined);
 
     if (isNativeAnthropicApi(config)) {
         // Anthropic Messages API
@@ -140,6 +138,8 @@ export function buildSimpleLLMRequest(
                 messages: anthropicMessages,
                 ...(systemMsg ? { system: systemMsg.content } : {}),
                 ...(temperature !== undefined ? { temperature } : {}),
+                ...(enabled.has("top_p") ? { top_p: values.top_p } : {}),
+                ...(enabled.has("top_k") ? { top_k: values.top_k } : {}),
                 // Anthropic requires max_tokens. Keep this helper aligned with
                 // the main chat engine instead of silently capping output low.
                 max_tokens: max_tokens ?? SIMPLE_ANTHROPIC_AUTO_MAX_TOKENS,
@@ -164,6 +164,8 @@ export function buildSimpleLLMRequest(
                 contents: parts,
                 generationConfig: {
                     ...(temperature !== undefined ? { temperature } : {}),
+                    ...(enabled.has("top_p") ? { topP: values.top_p } : {}),
+                    ...(enabled.has("top_k") ? { topK: values.top_k } : {}),
                     ...(max_tokens ? { maxOutputTokens: max_tokens } : {}),
                 },
             }),
@@ -178,6 +180,13 @@ export function buildSimpleLLMRequest(
             model: config.defaultModel,
             messages,
             ...(temperature !== undefined ? { temperature } : {}),
+            ...(enabled.has("top_p") ? { top_p: values.top_p } : {}),
+            ...(enabled.has("top_k") ? { top_k: values.top_k } : {}),
+            ...(enabled.has("min_p") ? { min_p: values.min_p } : {}),
+            ...(enabled.has("top_a") ? { top_a: values.top_a } : {}),
+            ...(enabled.has("repetition_penalty") ? { repetition_penalty: values.repetition_penalty } : {}),
+            ...(enabled.has("frequency_penalty") ? { frequency_penalty: values.frequency_penalty } : {}),
+            ...(enabled.has("presence_penalty") ? { presence_penalty: values.presence_penalty } : {}),
             ...(max_tokens ? { max_tokens } : {}),
             ...(stream ? { stream: true } : {}),
         }),

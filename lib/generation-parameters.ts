@@ -82,34 +82,39 @@ function readPresetValues(preset: PresetConfig | null): Record<GenerationParamet
     };
 }
 
+export const DEFAULT_ENABLED_GENERATION_PARAMETERS: readonly GenerationParameterKey[] = [
+    "temperature",
+    "top_p",
+    "frequency_penalty",
+    "presence_penalty",
+];
+
 /**
- * 生成参数的解析入口：API 配置里有 generationParameters 就用它，
- * 否则完全走预设（升级前的行为）。数值缺省时仍回退到预设值，
- * 这样用户只改温度时，其他参数不会突然变默认。
+ * 生成参数的解析入口：生成参数统一由 API 配置管理（不再从预设读取，避免旧预设里的残留温度/惩罚值串进 API 请求）。
+ * 若某条旧 API 配置尚未编辑过 generationParameters，则使用全局默认参数与默认启用集合。
  */
 export function resolveGenerationParameters(
     config: ApiConfig | null | undefined,
-    preset: PresetConfig | null,
+    preset?: PresetConfig | null,
     /** 单次调用覆盖（聊天插件 llm.request 改写、工坊输出护栏等），优先级最高 */
     overrides?: Partial<Record<GenerationParameterKey, number>>,
 ): ResolvedGenerationParameters {
-    const presetValues = readPresetValues(preset);
+    void preset;
     const fromApi = config?.generationParameters;
-    let resolved: ResolvedGenerationParameters;
+    const values: Record<GenerationParameterKey, number> = { ...GENERATION_PARAMETER_FALLBACKS };
 
-    if (!fromApi || Object.keys(fromApi).length === 0) {
-        resolved = { enabled: resolveEnabledGenerationParameters(preset), values: presetValues, source: "preset" };
-    } else {
-        const values = { ...presetValues };
+    if (fromApi) {
         for (const key of GENERATION_PARAMETER_KEYS) {
             const value = fromApi[key];
             if (typeof value === "number" && Number.isFinite(value)) values[key] = value;
         }
-        const enabled = fromApi.enabled
-            ? new Set(fromApi.enabled.filter(isGenerationParameterKey))
-            : new Set(GENERATION_PARAMETER_KEYS.filter(key => typeof fromApi[key] === "number"));
-        resolved = { enabled, values, source: "api" };
     }
+
+    const enabled = fromApi?.enabled
+        ? new Set(fromApi.enabled.filter(isGenerationParameterKey))
+        : new Set<GenerationParameterKey>(DEFAULT_ENABLED_GENERATION_PARAMETERS);
+
+    const resolved: ResolvedGenerationParameters = { enabled, values, source: "api" };
 
     if (overrides) {
         for (const key of GENERATION_PARAMETER_KEYS) {
