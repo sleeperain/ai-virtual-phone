@@ -4380,12 +4380,13 @@
   overflow-wrap: anywhere;
 }
 
-/* 首字：2 倍字号 + 1.62 倍行高（相对自身字号）= 正好占两行，
-   浮起来让后文绕排，就是报纸那种下沉大字。 */
+/* 首字下沉：浮块高度要「略小于」两行行高，才不会把第三行一起挤开。
+   两行行高 = 13px × 1.62 × 2 = 42.12px；这里 26px × 1.58 = 41.08px，留 1px 余量。
+   若改成正好相等的 1.62，浮块底边对齐会把第三行也绕排掉，变成占三行。 */
 .diary-book-excerpt::first-letter {
   float: left;
   font-size: 2em;
-  line-height: 1.62;
+  line-height: 1.58;
   font-weight: 700;
   margin-right: 4px;
   color: #24221f;
@@ -4399,21 +4400,24 @@
   color: rgba(74, 65, 56, 0.55);
 }
 
-/* 末行：左侧加粗「本报记者 角色名」，右侧日期，字号一致 */
+/* 末行：左侧加粗「角色名/文」，右侧「日期 记」，字号一致。
+   line-height 不能给 1——中文字形约 1.15em 高，会给卡片 overflow 裁掉下半截。 */
 .diary-book-foot {
+  flex: 0 0 auto;
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 10px;
-  margin-top: 2px;
-  padding-top: 6px;
+  margin-top: 3px;
+  padding-top: 8px;
   border-top: 1px solid rgba(58, 48, 34, 0.16);
   font-size: calc(10.5px*var(--app-text-scale,1));
-  line-height: 1;
+  line-height: 1.5;
 }
 
 .diary-book-reporter {
   min-width: 0;
+  padding-bottom: 1px;
   font-family: var(--app-font-family);
   font-weight: 700;
   letter-spacing: 0.2px;
@@ -4425,6 +4429,7 @@
 
 .diary-book-date {
   flex: 0 0 auto;
+  padding-bottom: 1px;
   font-family: "Courier New", monospace;
   font-weight: 400;
   letter-spacing: 1.1px;

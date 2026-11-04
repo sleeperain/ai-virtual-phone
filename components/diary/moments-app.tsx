@@ -624,8 +624,8 @@ function MomentBookCover({ book, index, onOpen }: { book: MomentBook; index: num
         </span>
       </span>
       <span className="diary-book-foot">
-        <span className="diary-book-reporter">本报记者 {book.characterName}</span>
-        <time className="diary-book-date">{momentDate(latest)}</time>
+        <span className="diary-book-reporter">{book.characterName}/文</span>
+        <time className="diary-book-date">{momentDate(latest)} 记</time>
       </span>
     </button>
   );
