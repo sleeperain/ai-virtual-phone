@@ -4247,44 +4247,65 @@
 
 }
 
-/* ---- 日记本书架（角色日记列表，双栏瀑布流） ---- */
-
-/* ---- 角色列表：方形身份卡片，一个角色一行 ---- */
+/* ---- 角色列表：身份档案卡（尖角、无边框、靠阴影起立体），一个角色一行 ---- */
 
 .diary-shelf {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 10px;
+  /* 卡片没有边框，靠阴影分层，间距要给够，不然投影会互相压住 */
+  gap: 12px;
   align-items: start;
-  padding: 6px 0 4px;
+  padding: 4px 2px 8px;
 }
 
 .diary-book {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 11px;
+  gap: 10px;
   width: 100%;
-  border: 1px solid rgba(35, 36, 42, 0.1);
-  border-radius: 12px;
-  padding: 12px 15px 13px;
-  background: linear-gradient(180deg, #ffffff, #fbfaf7);
-  color: #252525;
+  /* 尖角 + 无边框：形体和层次全部交给阴影 */
+  border: none;
+  border-radius: 0;
+  padding: 12px 14px 13px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(250, 247, 240, 0.94)),
+    #fbf9f4;
+  color: #24221f;
   font-family: var(--app-font-family);
   text-align: left;
   cursor: pointer;
   touch-action: manipulation;
   box-shadow:
-    0 1px 2px rgba(31, 29, 24, 0.05),
-    0 3px 10px rgba(31, 29, 24, 0.045);
-  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+    0 1px 1px rgba(58, 48, 34, 0.07),
+    0 3px 7px rgba(58, 48, 34, 0.08),
+    0 10px 22px rgba(58, 48, 34, 0.09);
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
   overflow: hidden;
 }
 
+/* 一层很淡的斜向光，纸面不至于平得发死 */
+.diary-book::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(114deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 42%);
+  opacity: 0.7;
+}
+
+.diary-book-head,
+.diary-book-id {
+  position: relative;
+  z-index: 1;
+}
+
+/* 按下去时投影收紧，像被压向纸面 */
 .diary-book:active {
-  transform: scale(0.994);
-  border-color: rgba(35, 36, 42, 0.17);
-  box-shadow: 0 1px 2px rgba(31, 29, 24, 0.05);
+  transform: translateY(1px) scale(0.995);
+  box-shadow:
+    0 1px 1px rgba(58, 48, 34, 0.08),
+    0 2px 4px rgba(58, 48, 34, 0.07);
 }
 
 /* 第一行：左侧小字序号 */
@@ -4299,47 +4320,50 @@
 .diary-book-archive {
   min-width: 0;
   font-family: "Courier New", monospace;
-  font-size: calc(9px*var(--app-text-scale,1));
+  font-size: calc(10px*var(--app-text-scale,1));
   line-height: 1;
-  letter-spacing: 1.9px;
+  letter-spacing: 1.5px;
   text-transform: uppercase;
-  color: rgba(37, 37, 37, 0.42);
+  color: rgba(74, 65, 56, 0.52);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* 第二行：左边证件照，右边信息列（名字在上、日期贴底） */
+/* 第二行：左边放大的证件照，右边信息列（名字在上、日期贴底） */
 .diary-book-id {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 14px;
   align-items: stretch;
 }
 
 .diary-book-avatar {
-  width: 46px;
-  height: 61px;
-  border-radius: 4px;
+  width: 76px;
+  height: 96px;
+  border-radius: 0;
   overflow: hidden;
-  border: 1px solid rgba(35, 36, 42, 0.1);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(232, 231, 226, 0.9));
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(233, 229, 220, 0.94));
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: rgba(37, 37, 37, 0.42);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  color: rgba(74, 65, 56, 0.38);
+  /* 照片自己也用阴影浮起来，和卡片同语言 */
+  box-shadow:
+    0 1px 2px rgba(58, 48, 34, 0.16),
+    0 4px 10px rgba(58, 48, 34, 0.14);
 }
 
 .diary-book-avatar img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  display: block;
 }
 
 .diary-book-info {
   min-width: 0;
-  min-height: 61px;
+  min-height: 96px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -4350,11 +4374,12 @@
   display: block;
   max-width: 100%;
   align-self: flex-start;
-  font-size: calc(21px*var(--app-text-scale,1));
-  line-height: 1.15;
+  padding-top: 2px;
+  font-size: calc(22px*var(--app-text-scale,1));
+  line-height: 1.18;
   font-weight: 600;
-  letter-spacing: 0.4px;
-  color: #252525;
+  letter-spacing: 0.3px;
+  color: #24221f;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4362,11 +4387,11 @@
 
 /* 正在写日记时的小字，落在名字下面的空白里 */
 .diary-book-status {
-  margin-top: 5px;
+  margin-top: 6px;
   align-self: flex-start;
   font-style: normal;
   font-size: calc(11px*var(--app-text-scale,1));
-  color: rgba(37, 37, 37, 0.5);
+  color: rgba(74, 65, 56, 0.55);
 }
 
 /* 最右小字日期：上方细分割线只压日期这段宽度，底边与头像底边同高 */
@@ -4374,12 +4399,12 @@
   align-self: flex-end;
   margin-top: auto;
   padding-top: 5px;
-  border-top: 1px solid rgba(37, 37, 37, 0.14);
+  border-top: 1px solid rgba(58, 48, 34, 0.18);
   font-family: "Courier New", monospace;
-  font-size: calc(9.5px*var(--app-text-scale,1));
+  font-size: calc(10.5px*var(--app-text-scale,1));
   line-height: 1;
-  letter-spacing: 1.2px;
-  color: rgba(37, 37, 37, 0.5);
+  letter-spacing: 1.1px;
+  color: rgba(74, 65, 56, 0.58);
   white-space: nowrap;
 }
 

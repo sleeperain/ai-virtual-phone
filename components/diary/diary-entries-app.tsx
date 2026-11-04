@@ -608,7 +608,7 @@ function DiaryBookCover({ book, index, busy, onOpen }: {
       </span>
       <span className="diary-book-id">
         <span className="diary-book-avatar">
-          {book.avatar ? <img src={book.avatar} alt="" /> : <Bot size={22} />}
+          {book.avatar ? <img src={book.avatar} alt="" /> : <Bot size={30} strokeWidth={1.5} />}
         </span>
         <span className="diary-book-info">
           <strong>{book.characterName}</strong>
