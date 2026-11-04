@@ -6,6 +6,7 @@ import type {
     RegexConfig,
     RegexRule,
     ApiConfig,
+    ApiGenerationParameters,
     VoiceApiConfig,
     ImageGenerationSettings,
     OpenAiImagePreset,
@@ -45,7 +46,7 @@ import { loadApiConfigFolders, loadApiConfigRootOrder } from "./api-config-folde
 import { loadWorldBookFolders, loadWorldBookRootOrder } from "./worldbook-folders";
 import { loadRegexFolders, loadRegexRootOrder } from "./regex-folders";
 import { kvGet, kvSet, kvRemove, registerKvMigration } from "./kv-db";
-import { isGenerationParameterKey } from "./generation-parameters";
+import { GENERATION_PARAMETER_KEYS, isGenerationParameterKey } from "./generation-parameters";
 
 // --- Unsupported import format detection ---
 export const UNSUPPORTED_IMPORT_FORMAT = "UNSUPPORTED_IMPORT_FORMAT";
@@ -644,6 +645,25 @@ type LegacyApiConfig = ApiConfig & {
     toolProtocol?: "text" | "openai-compatible" | "anthropic" | "gemini";
 };
 
+/** 生成参数清洗：只留合法键、数值规整（滑块 step="any" 会产生长浮点），空对象视为未配置。 */
+function normalizeApiGenerationParameters(value: unknown): ApiGenerationParameters | undefined {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const raw = value as Record<string, unknown>;
+    const numbers: Partial<Record<GenerationParameterKey, number>> = {};
+    for (const key of GENERATION_PARAMETER_KEYS) {
+        const num = raw[key];
+        if (typeof num !== "number" || !Number.isFinite(num)) continue;
+        numbers[key] = key === "max_tokens"
+            ? Math.max(0, Math.round(num))
+            : Math.round(num * 100) / 100;
+    }
+    const enabled = Array.isArray(raw.enabled)
+        ? raw.enabled.filter(isGenerationParameterKey)
+        : undefined;
+    if (Object.keys(numbers).length === 0 && !enabled) return undefined;
+    return { ...numbers, ...(enabled ? { enabled } : {}) };
+}
+
 function normalizeApiConfig(config: LegacyApiConfig): ApiConfig {
     const rest: Partial<LegacyApiConfig> = { ...config };
     delete rest.toolProtocol;
@@ -655,6 +675,7 @@ function normalizeApiConfig(config: LegacyApiConfig): ApiConfig {
         preventEmptyGenerateRambling: typeof config.preventEmptyGenerateRambling === "boolean"
             ? config.preventEmptyGenerateRambling
             : true,
+        generationParameters: normalizeApiGenerationParameters(config.generationParameters),
     };
 }
 

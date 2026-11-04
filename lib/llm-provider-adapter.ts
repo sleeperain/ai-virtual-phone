@@ -1,5 +1,5 @@
 import type { LLMContentPart, LLMMessage } from "./llm-prompt-assembler";
-import type { ApiConfig, PresetConfig } from "./settings-types";
+import type { ApiConfig, GenerationParameterKey, PresetConfig } from "./settings-types";
 import {
     buildChatCompletionsUrl,
     buildRequestHeaders,
@@ -8,7 +8,7 @@ import {
     isNativeGoogleApi,
     stripHallucinatedTimestamps,
 } from "./api-helpers";
-import { resolveEnabledGenerationParameters } from "./generation-parameters";
+import { resolveGenerationParameters } from "./generation-parameters";
 
 export type LlmProviderKind = "openai-compatible" | "anthropic" | "gemini";
 export type NativeToolProtocol = "openai-compatible" | "anthropic" | "gemini";
@@ -72,6 +72,8 @@ type ProviderRequestOptions = {
     tools?: LlmToolDefinition[];
     /** 单次最大输出 token：按调用覆盖预设值（工坊输出护栏用）。不填则沿用预设/各家默认 */
     maxTokens?: number;
+    /** 单次采样参数覆盖（聊天插件 llm.request 改写），优先级高于 API 配置与预设 */
+    samplingOverrides?: Partial<Record<GenerationParameterKey, number>>;
 };
 
 const ANTHROPIC_AUTO_MAX_TOKENS = 8192;
@@ -294,20 +296,43 @@ export function parseProviderStreamDelta(providerKind: LlmProviderKind, data: un
     return parseOpenAICompatibleStreamDelta(data);
 }
 
-function buildSamplingBody(preset: PresetConfig | null): Record<string, unknown> {
-    const enabled = resolveEnabledGenerationParameters(preset);
+/**
+ * 调用方显式传的 max_tokens（如工坊输出护栏）能否覆盖配置值：
+ * - API 配置里的 max_tokens 表示「常规生成上限」，留空即自动，所以按调用覆盖始终允许；
+ * - 预设模式下沿用旧规则：预设显式声明过白名单且不含 max_tokens 时不覆盖。
+ */
+function allowsPerCallMaxTokens(
+    config: ApiConfig,
+    preset: PresetConfig | null,
+    overrides?: Partial<Record<GenerationParameterKey, number>>,
+): boolean {
+    const { source, enabled } = resolveGenerationParameters(config, preset, overrides);
+    if (source === "api") return true;
+    return !preset?.enabled_generation_parameters || enabled.has("max_tokens");
+}
+
+/**
+ * 采样参数统一从 resolveGenerationParameters 取：优先 API 配置里的模型参数，
+ * 没配才回退到预设（升级前的行为）。
+ */
+function buildSamplingBody(
+    config: ApiConfig,
+    preset: PresetConfig | null,
+    overrides?: Partial<Record<GenerationParameterKey, number>>,
+): Record<string, unknown> {
+    const { enabled, values } = resolveGenerationParameters(config, preset, overrides);
     const body: Record<string, unknown> = {};
-    if (enabled.has("temperature")) body.temperature = preset?.temperature ?? 0.8;
-    if (enabled.has("top_p")) body.top_p = preset?.top_p ?? 1.0;
-    if (enabled.has("frequency_penalty")) body.frequency_penalty = preset?.frequency_penalty ?? 0;
-    if (enabled.has("presence_penalty")) body.presence_penalty = preset?.presence_penalty ?? 0;
-    if (enabled.has("max_tokens") && preset?.openai_max_tokens && preset.openai_max_tokens > 0) {
-        body.max_tokens = preset.openai_max_tokens;
+    if (enabled.has("temperature")) body.temperature = values.temperature;
+    if (enabled.has("top_p")) body.top_p = values.top_p;
+    if (enabled.has("frequency_penalty")) body.frequency_penalty = values.frequency_penalty;
+    if (enabled.has("presence_penalty")) body.presence_penalty = values.presence_penalty;
+    if (enabled.has("max_tokens") && values.max_tokens > 0) {
+        body.max_tokens = values.max_tokens;
     }
-    if (enabled.has("repetition_penalty")) body.repetition_penalty = preset?.repetition_penalty ?? 1;
-    if (enabled.has("top_k")) body.top_k = preset?.top_k ?? 0;
-    if (enabled.has("min_p")) body.min_p = preset?.min_p ?? 0;
-    if (enabled.has("top_a")) body.top_a = preset?.top_a ?? 0;
+    if (enabled.has("repetition_penalty")) body.repetition_penalty = values.repetition_penalty;
+    if (enabled.has("top_k")) body.top_k = values.top_k;
+    if (enabled.has("min_p")) body.min_p = values.min_p;
+    if (enabled.has("top_a")) body.top_a = values.top_a;
     return body;
 }
 
@@ -520,13 +545,9 @@ function buildOpenAICompatibleRequest(
             }
             return { role: message.role, content: openAIContent(message.content) };
         }),
-        ...buildSamplingBody(preset),
+        ...buildSamplingBody(config, preset, options.samplingOverrides),
     };
-    if (
-        options.maxTokens
-        && options.maxTokens > 0
-        && (!preset?.enabled_generation_parameters || resolveEnabledGenerationParameters(preset).has("max_tokens"))
-    ) {
+    if (options.maxTokens && options.maxTokens > 0 && allowsPerCallMaxTokens(config, preset, options.samplingOverrides)) {
         body.max_tokens = Math.floor(options.maxTokens);
     }
     if (options.stream) body.stream = true;
@@ -568,19 +589,19 @@ function buildAnthropicRequest(
 ): LlmRequestPayload {
     const { systemText: system, rest } = splitLeadingSystemMessages(messages);
     const bodyMessages = compactAnthropicMessages(rest);
-    const enabled = resolveEnabledGenerationParameters(preset);
+    const { enabled, values } = resolveGenerationParameters(config, preset, options.samplingOverrides);
     const body: Record<string, unknown> = {
         model: config.defaultModel,
         messages: bodyMessages,
         max_tokens: options.maxTokens && options.maxTokens > 0
             ? Math.floor(options.maxTokens)
-            : enabled.has("max_tokens") && preset?.openai_max_tokens && preset.openai_max_tokens > 0
-                ? preset.openai_max_tokens
+            : enabled.has("max_tokens") && values.max_tokens > 0
+                ? values.max_tokens
                 : ANTHROPIC_AUTO_MAX_TOKENS,
     };
-    if (enabled.has("temperature")) body.temperature = preset?.temperature ?? 0.8;
-    if (preset && enabled.has("top_p")) body.top_p = preset.top_p ?? 1;
-    if (enabled.has("top_k")) body.top_k = preset?.top_k ?? 0;
+    if (enabled.has("temperature")) body.temperature = values.temperature;
+    if (enabled.has("top_p")) body.top_p = values.top_p;
+    if (enabled.has("top_k")) body.top_k = values.top_k;
     if (system) body.system = system;
     if (options.stream) body.stream = true;
     if (options.tools?.length) {
@@ -639,19 +660,15 @@ function buildGeminiRequest(
     const { systemText, rest } = splitLeadingSystemMessages(messages);
     const headers = buildRequestHeaders(config, baseUrl);
     delete headers.Authorization;
-    const enabled = resolveEnabledGenerationParameters(preset);
+    const { enabled, values } = resolveGenerationParameters(config, preset, options.samplingOverrides);
     const generationConfig: Record<string, unknown> = {};
-    if (enabled.has("temperature")) generationConfig.temperature = preset?.temperature ?? 0.8;
-    if (enabled.has("top_p")) generationConfig.topP = preset?.top_p ?? 1;
-    if (enabled.has("top_k")) generationConfig.topK = preset?.top_k ?? 0;
-    if (
-        options.maxTokens
-        && options.maxTokens > 0
-        && (!preset?.enabled_generation_parameters || enabled.has("max_tokens"))
-    ) {
+    if (enabled.has("temperature")) generationConfig.temperature = values.temperature;
+    if (enabled.has("top_p")) generationConfig.topP = values.top_p;
+    if (enabled.has("top_k")) generationConfig.topK = values.top_k;
+    if (options.maxTokens && options.maxTokens > 0 && allowsPerCallMaxTokens(config, preset, options.samplingOverrides)) {
         generationConfig.maxOutputTokens = Math.floor(options.maxTokens);
-    } else if (enabled.has("max_tokens") && preset?.openai_max_tokens && preset.openai_max_tokens > 0) {
-        generationConfig.maxOutputTokens = preset.openai_max_tokens;
+    } else if (enabled.has("max_tokens") && values.max_tokens > 0) {
+        generationConfig.maxOutputTokens = values.max_tokens;
     }
     const body: Record<string, unknown> = {
         contents: compactGeminiContents(rest),

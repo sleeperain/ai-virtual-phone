@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useContext } from "react";
-import { Plus, RefreshCw, Rss, AlertCircle, FileEdit, Trash2, X, Check, Copy, Folder, FolderPlus, FolderInput, Pencil, ChevronRight, Pin, List } from "lucide-react";
+import { Plus, RefreshCw, Rss, AlertCircle, FileEdit, Trash2, X, Check, Copy, Folder, FolderPlus, FolderInput, Pencil, ChevronRight, ChevronDown, Pin, List } from "lucide-react";
 import { SettingsContext } from "../phone-settings-app";
 import { useLongPressReorder } from "./use-long-press-reorder";
 import { applyGroupOrder } from "@/lib/list-order";
@@ -14,7 +14,7 @@ import {
     saveApiConfigRootOrder,
     type ApiConfigFolder,
 } from "@/lib/api-config-folders";
-import type { ApiConfig } from "@/lib/settings-types";
+import type { ApiConfig, ApiGenerationParameters, GenerationParameterKey } from "@/lib/settings-types";
 import { loadApiConfigs, removeApiConfigReferences, saveApiConfigs } from "@/lib/settings-storage";
 import { generateEmbedding, isEmbeddingModelName } from "@/lib/memory-embedding";
 import { BottomSheet, ConfirmDialog, ContentDialog } from "@/components/ui/modal";
@@ -34,6 +34,44 @@ const DEFAULT_CONFIGS: ApiConfig[] = [
         enableImageGeneration: true,
         preventEmptyGenerateRambling: true,
     }
+];
+
+// 生成参数（采样参数）跟着模型/线路走：勾选的字段才会真正发给服务商。
+// 默认勾选集合与迁移前「总是发送」的字段保持一致，避免一开启就改变请求内容。
+const DEFAULT_API_GENERATION_PARAMETERS: ApiGenerationParameters = {
+    temperature: 0.8,
+    top_p: 1,
+    top_k: 0,
+    min_p: 0,
+    top_a: 0,
+    repetition_penalty: 1,
+    frequency_penalty: 0,
+    presence_penalty: 0,
+    max_tokens: 0,
+    enabled: ["temperature", "top_p", "frequency_penalty", "presence_penalty"],
+};
+
+type GenerationParameterControl = {
+    key: GenerationParameterKey;
+    label: string;
+    min: number;
+    max: number;
+    step: number;
+    hintLeft: string;
+    hintRight: string;
+    integer?: boolean;
+};
+
+const GENERATION_PARAM_CONTROLS: GenerationParameterControl[] = [
+    { key: "temperature", label: "Temperature", min: 0, max: 2, step: 0.01, hintLeft: "稳定保守", hintRight: "发散创造" },
+    { key: "top_p", label: "Top P", min: 0, max: 1, step: 0.01, hintLeft: "用词精准", hintRight: "词汇丰富" },
+    { key: "top_k", label: "Top K", min: 0, max: 100, step: 1, hintLeft: "用词精准", hintRight: "词汇丰富", integer: true },
+    { key: "min_p", label: "Min P", min: 0, max: 1, step: 0.01, hintLeft: "发散跳跃", hintRight: "逻辑连贯" },
+    { key: "top_a", label: "Top A", min: 0, max: 1, step: 0.01, hintLeft: "自由发散", hintRight: "限制胡言乱语" },
+    { key: "repetition_penalty", label: "Repetition Penalty", min: 1, max: 2, step: 0.01, hintLeft: "允许重复", hintRight: "极力惩罚重复" },
+    { key: "frequency_penalty", label: "Frequency Penalty", min: 0, max: 2, step: 0.01, hintLeft: "自然口癖", hintRight: "杜绝车轱辘话" },
+    { key: "presence_penalty", label: "Presence Penalty", min: 0, max: 2, step: 0.01, hintLeft: "聚焦当前话题", hintRight: "积极拓展新话题" },
+    { key: "max_tokens", label: "Max Tokens", min: 0, max: 8192, step: 128, hintLeft: "自动 (推荐)", hintRight: "限制回复长度", integer: true },
 ];
 
 function getNativeToolProtocolLabel(config: ApiConfig): string {
@@ -58,6 +96,7 @@ export function ApiSettings() {
     const [isNewConfig, setIsNewConfig] = useState(false);
     const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
     const [isLoaded, setIsLoaded] = useState(false);
+    const [generationParamsOpen, setGenerationParamsOpen] = useState(false);
 
     // Testing and Fetching states
     const [isFetching, setIsFetching] = useState<Record<string, boolean>>({});
@@ -224,6 +263,22 @@ export function ApiSettings() {
 
     const updateConfig = (id: string, updates: Partial<ApiConfig>) => {
         persist(configs.map(c => c.id === id ? { ...c, ...updates } : c));
+    };
+
+    // 生成参数（模型采样参数）跟着 API 配置走；改动只影响这一条配置
+    const updateGenerationParams = (config: ApiConfig, patch: Partial<ApiGenerationParameters>) => {
+        const current = { ...DEFAULT_API_GENERATION_PARAMETERS, ...(config.generationParameters ?? {}) };
+        updateConfig(config.id, { generationParameters: { ...current, ...patch } });
+    };
+
+    const toggleGenerationParamKey = (config: ApiConfig, key: GenerationParameterKey, on: boolean) => {
+        const current = { ...DEFAULT_API_GENERATION_PARAMETERS, ...(config.generationParameters ?? {}) };
+        const enabled = new Set(current.enabled ?? []);
+        if (on) enabled.add(key);
+        else enabled.delete(key);
+        updateGenerationParams(config, {
+            enabled: GENERATION_PARAM_CONTROLS.map(control => control.key).filter(item => enabled.has(item)),
+        });
     };
 
     const removeConfig = (id: string) => {
@@ -734,6 +789,95 @@ export function ApiSettings() {
                                                 onChange={(v) => updateConfig(config.id, { preventEmptyGenerateRambling: v })}
                                             />
                                         </div>
+                                        {/* 生成参数：跟着这条 API 配置（= 这个模型/线路）走 */}
+                                        <div className="ui-collapsible mt-2">
+                                            <div
+                                                onClick={() => setGenerationParamsOpen(!generationParamsOpen)}
+                                                className="ui-collapsible-header flex justify-between items-center select-none"
+                                                data-open={generationParamsOpen}
+                                            >
+                                                <span className="menu-label ts-13 font-semibold">生成参数（按模型）</span>
+                                                <ChevronDown
+                                                    size={16}
+                                                    className="text-[var(--c-text)]"
+                                                    style={{ transition: "transform 0.2s", transform: generationParamsOpen ? "rotate(180deg)" : "rotate(0deg)" }}
+                                                />
+                                            </div>
+                                            {generationParamsOpen && (
+                                                <div className="p-[14px] flex flex-col gap-3">
+                                                    <div className="ui-toggle-row">
+                                                        <span className="menu-label font-medium">使用此配置的生成参数</span>
+                                                        <Toggle
+                                                            checked={Boolean(config.generationParameters)}
+                                                            onChange={(value) => updateConfig(config.id, {
+                                                                generationParameters: value ? { ...DEFAULT_API_GENERATION_PARAMETERS } : undefined,
+                                                            })}
+                                                        />
+                                                    </div>
+                                                    {config.generationParameters ? (
+                                                        <>
+                                                            <span className="ui-slider-hint">
+                                                                开启后从默认值（温度 0.8、Top P 1.0 等）起算，按需调整。只有勾选的字段会真的发给服务商——不同模型支持的字段不同（例如 Anthropic 不认 frequency_penalty / presence_penalty，部分本地模型不认 top_a）。
+                                                            </span>
+                                                            <div className="grid grid-cols-2 gap-3">
+                                                                {GENERATION_PARAM_CONTROLS.map(control => {
+                                                                    const params = { ...DEFAULT_API_GENERATION_PARAMETERS, ...config.generationParameters };
+                                                                    const active = (params.enabled ?? []).includes(control.key);
+                                                                    const value = typeof params[control.key] === "number" ? params[control.key] as number : 0;
+                                                                    return (
+                                                                        <div
+                                                                            key={control.key}
+                                                                            className={`generation-parameter-control flex flex-col gap-1 ${control.key === "max_tokens" ? "col-span-full" : ""}`}
+                                                                            data-disabled={active ? undefined : ""}
+                                                                        >
+                                                                            <div className="flex items-center justify-between gap-2">
+                                                                                <label className="ui-slider-label">{control.label}</label>
+                                                                                <label className="ui-mini-toggle" aria-label={`发送 ${control.label}`}>
+                                                                                    <input
+                                                                                        type="checkbox"
+                                                                                        checked={active}
+                                                                                        onChange={(e) => toggleGenerationParamKey(config, control.key, e.target.checked)}
+                                                                                    />
+                                                                                </label>
+                                                                            </div>
+                                                                            <span className="ui-slider-value">
+                                                                                {control.key === "max_tokens"
+                                                                                    ? (value > 0 ? value : "自动")
+                                                                                    : control.integer ? value : value.toFixed(2)}
+                                                                            </span>
+                                                                            <input
+                                                                                className="ui-slider"
+                                                                                type="range"
+                                                                                min={control.min}
+                                                                                max={control.max}
+                                                                                step={control.step}
+                                                                                value={value}
+                                                                                disabled={!active}
+                                                                                onChange={(e) => {
+                                                                                    const next = control.integer
+                                                                                        ? parseInt(e.target.value, 10)
+                                                                                        : Math.round(parseFloat(e.target.value) * 100) / 100;
+                                                                                    updateGenerationParams(config, { [control.key]: next } as Partial<ApiGenerationParameters>);
+                                                                                }}
+                                                                            />
+                                                                            <div className="ui-slider-hints">
+                                                                                <span className="ui-slider-hint">{control.hintLeft}</span>
+                                                                                <span className="ui-slider-hint">{control.hintRight}</span>
+                                                                            </div>
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        </>
+                                                    ) : (
+                                                        <span className="ui-slider-hint">
+                                                            关闭时沿用预设里的生成参数（升级前的行为），老配置不受影响。
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+
                                         <button type="button" onClick={() => duplicateConfig(config)} className="ui-btn ui-btn-soft-action mt-2 w-full">
                                             <Copy size={16} /> 复制这个配置
                                         </button>

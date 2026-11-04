@@ -50,6 +50,31 @@ export type GenerationParameterKey =
     | "presence_penalty"
     | "max_tokens";
 
+/**
+ * 采样参数的具体数值。键名统一用「请求口径」（max_tokens），
+ * 和预设里的历史字段 openai_max_tokens 区分开，转换在 generation-parameters 里做。
+ */
+export type GenerationParameterValues = {
+    temperature?: number;
+    top_p?: number;
+    top_k?: number;
+    min_p?: number;
+    top_a?: number;
+    repetition_penalty?: number;
+    frequency_penalty?: number;
+    presence_penalty?: number;
+    max_tokens?: number;
+};
+
+/**
+ * 挂在 API 配置上的模型参数：是否被支持、合理取值都取决于具体模型和线路，
+ * 所以从预设迁到这里（预设里仍保留同名字段，作为未配置时的回退）。
+ */
+export type ApiGenerationParameters = GenerationParameterValues & {
+    /** 显式白名单：只发送列出的参数。缺省时按「有数值的字段」推导。 */
+    enabled?: GenerationParameterKey[];
+};
+
 export type Prompt = {
     identifier: string;
     name: string;
@@ -163,6 +188,11 @@ export type ApiConfig = {
     enableImageRecognition: boolean;
     enableImageGeneration: boolean;
     preventEmptyGenerateRambling?: boolean;
+    /**
+     * 该线路/模型的生成参数（温度、top_p…）。缺省 = 沿用预设里的参数（旧行为），
+     * 保证老用户升级后请求内容完全不变。
+     */
+    generationParameters?: ApiGenerationParameters;
     /** 置顶：排在所有地方的最前面（在文件夹里的只在那个文件夹里排前面） */
     pinned?: boolean;
     /** 所在文件夹（lib/api-config-folders）；没有或文件夹已删就是未分类 */

@@ -23,7 +23,7 @@ import {
     isSessionStreamingEnabled,
 } from "./chat-storage";
 import { extractTextToolDirectiveText, stripTextToolDirectives } from "./text-tool-protocol";
-import type { ApiConfig, PresetConfig, Prompt, PromptOrderEntry, RegexConfig } from "./settings-types";
+import type { ApiConfig, GenerationParameterKey, PresetConfig, Prompt, PromptOrderEntry, RegexConfig } from "./settings-types";
 import type { CustomAppPromptProfile } from "./custom-app-types";
 import {
     resolveBinding,
@@ -575,7 +575,13 @@ async function applyChatPluginLlmRequest<T extends { role: string }>(
     sessionId?: string,
     characterId?: string,
     extra?: { appTags?: string[]; preview?: boolean },
-): Promise<{ messages: T[]; preset: PresetConfig | null }> {
+): Promise<{
+    messages: T[];
+    preset: PresetConfig | null;
+    /** 插件改写的采样参数：作为单次请求覆盖传给 buildProviderRequest，
+     *  这样即使生成参数存在 API 配置里，插件的改写也照样生效 */
+    samplingOverrides?: Partial<Record<GenerationParameterKey, number>>;
+}> {
     if (typeof window === "undefined") return { messages, preset };
     const payload = await runChatPluginTransform("llm.request", {
         messages: messages as unknown as LlmRequestPayload["messages"],
@@ -586,6 +592,13 @@ async function applyChatPluginLlmRequest<T extends { role: string }>(
         preview: extra?.preview,
     });
     let nextPreset = preset;
+    const samplingOverrides: Partial<Record<GenerationParameterKey, number>> = {};
+    if (payload.temperature !== undefined && Number.isFinite(payload.temperature)) {
+        samplingOverrides.temperature = payload.temperature;
+    }
+    if (payload.maxTokens !== undefined && Number.isFinite(payload.maxTokens)) {
+        samplingOverrides.max_tokens = payload.maxTokens;
+    }
     if (preset && (payload.temperature !== undefined || payload.maxTokens !== undefined)) {
         nextPreset = { ...preset };
         if (payload.temperature !== undefined) nextPreset.temperature = payload.temperature;
@@ -594,7 +607,11 @@ async function applyChatPluginLlmRequest<T extends { role: string }>(
     const nextMessages = Array.isArray(payload.messages)
         ? payload.messages as unknown as T[]
         : messages;
-    return { messages: nextMessages, preset: nextPreset };
+    return {
+        messages: nextMessages,
+        preset: nextPreset,
+        samplingOverrides: Object.keys(samplingOverrides).length > 0 ? samplingOverrides : undefined,
+    };
 }
 
 /**
@@ -841,7 +858,10 @@ export async function sendLLMStreamRequest(
         },
     } : undefined;
     const requestMessages = toLlmRequestMessages(afterPlugins.messages);
-    const request = buildProviderRequest(config, effectivePreset, requestMessages, { stream: true });
+    const request = buildProviderRequest(config, effectivePreset, requestMessages, {
+        stream: true,
+        samplingOverrides: afterPlugins.samplingOverrides,
+    });
     publishDebugPromptSnapshot({ request, config, preset: effectivePreset, meta, options, requestKind: "completion" });
     const llmAbort = new AbortController();
     const llmTimeout = setTimeout(() => llmAbort.abort(), 500_000);
@@ -984,7 +1004,9 @@ export async function sendLLMRequest(
     const afterPlugins = await applyChatPluginLlmRequest(preset, messages, pluginPurpose, options?.debugSessionId, options?.characterId, { appTags: options?.appTags });
     const effectivePreset = afterPlugins.preset;
     const requestMessages = toLlmRequestMessages(afterPlugins.messages);
-    const request = buildProviderRequest(config, effectivePreset, requestMessages);
+    const request = buildProviderRequest(config, effectivePreset, requestMessages, {
+        samplingOverrides: afterPlugins.samplingOverrides,
+    });
     publishDebugPromptSnapshot({ request, config, preset: effectivePreset, meta, options, requestKind: "completion" });
     const requestBodyJson = JSON.stringify(request.body);
     const requestBodySize = requestBodyJson.length;
@@ -1181,7 +1203,12 @@ export async function sendLLMToolStreamRequest(
     const pluginPurpose = options?.appId ?? "chat";
     const afterPlugins = await applyChatPluginLlmRequest(preset, messages, pluginPurpose, options?.debugSessionId, options?.characterId, { appTags: options?.appTags });
     const effectivePreset = afterPlugins.preset;
-    const request = buildProviderRequest(config, effectivePreset, afterPlugins.messages, { tools, stream: true, maxTokens: options?.maxTokens });
+    const request = buildProviderRequest(config, effectivePreset, afterPlugins.messages, {
+        tools,
+        stream: true,
+        maxTokens: options?.maxTokens,
+        samplingOverrides: afterPlugins.samplingOverrides,
+    });
     publishDebugPromptSnapshot({ request, config, preset: effectivePreset, meta, options, requestKind: "native-tools-stream", tools });
     const llmAbort = new AbortController();
     const llmTimeout = setTimeout(() => llmAbort.abort(), 500_000);
@@ -1337,7 +1364,10 @@ export async function sendLLMToolRequest(
     const pluginPurpose = options?.appId ?? "chat";
     const afterPlugins = await applyChatPluginLlmRequest(preset, messages, pluginPurpose, options?.debugSessionId, options?.characterId, { appTags: options?.appTags });
     const effectivePreset = afterPlugins.preset;
-    const request = buildProviderRequest(config, effectivePreset, afterPlugins.messages, { tools });
+    const request = buildProviderRequest(config, effectivePreset, afterPlugins.messages, {
+        tools,
+        samplingOverrides: afterPlugins.samplingOverrides,
+    });
     publishDebugPromptSnapshot({ request, config, preset: effectivePreset, meta, options, requestKind: "native-tools", tools });
     const llmAbort = new AbortController();
     const llmTimeout = setTimeout(() => llmAbort.abort(), 500_000);

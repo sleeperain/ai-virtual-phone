@@ -1274,7 +1274,7 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
                                                 className="ui-collapsible-header flex justify-between items-center select-none"
                                                 data-open={paramsOpen}
                                             >
-                                                <span className="menu-label ts-13 font-semibold">生成参数</span>
+                                                <span className="menu-label ts-13 font-semibold">生成参数（回退值）</span>
                                                 <div className="generation-parameter-header-actions">
                                                     <button
                                                         type="button"
@@ -1293,6 +1293,9 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
                                             </div>
                                             {paramsOpen && (
                                                 <div className="p-[14px]">
+                                                    <p className="ui-slider-hint mb-3">
+                                                        生成参数已迁到「设置 → API 设置 → 编辑配置 → 生成参数（按模型）」：那边按线路/模型配置，切模型不会串味。这里保留的旧值只在该 API 配置没设置生成参数时作回退。
+                                                    </p>
                                                     <div className="grid grid-cols-2 gap-3">
                                                         <div className="generation-parameter-control flex flex-col gap-1" data-disabled={enabledGenerationParameters.has("temperature") ? undefined : ""}>
                                                             <div className="flex justify-between">

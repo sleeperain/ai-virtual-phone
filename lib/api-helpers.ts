@@ -114,8 +114,12 @@ export function buildSimpleLLMRequest(
     if (!baseUrl || !config.apiKey) return null;
 
     const headers = buildRequestHeaders(config, baseUrl);
-    const temperature = options?.temperature ?? 0.7;
-    const max_tokens = options?.max_tokens;
+    // 后台小调用（摘要、反省等）：调用方显式指定 > API 配置里的生成参数 > 旧默认值
+    const temperature = options?.temperature ?? config.generationParameters?.temperature ?? 0.7;
+    const max_tokens = options?.max_tokens
+        ?? (config.generationParameters?.max_tokens && config.generationParameters.max_tokens > 0
+            ? config.generationParameters.max_tokens
+            : undefined);
 
     if (isNativeAnthropicApi(config)) {
         // Anthropic Messages API
