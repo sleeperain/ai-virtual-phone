@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useContext } from "react";
-import { Plus, RefreshCw, Rss, AlertCircle, FileEdit, Trash2, X, Check, Copy, Folder, FolderPlus, FolderInput, Pencil, ChevronRight, ChevronDown, Pin, List } from "lucide-react";
+import { Plus, RefreshCw, Rss, AlertCircle, FileEdit, Trash2, X, Check, Copy, Folder, FolderPlus, FolderInput, Pencil, ChevronRight, ChevronDown, Pin, List, MoreHorizontal } from "lucide-react";
 import { SettingsContext } from "../phone-settings-app";
 import { useLongPressReorder } from "./use-long-press-reorder";
 import { applyGroupOrder } from "@/lib/list-order";
@@ -54,6 +54,7 @@ const DEFAULT_API_GENERATION_PARAMETERS: ApiGenerationParameters = {
 type GenerationParameterControl = {
     key: GenerationParameterKey;
     label: string;
+    pickerLabel: string;
     min: number;
     max: number;
     step: number;
@@ -63,15 +64,15 @@ type GenerationParameterControl = {
 };
 
 const GENERATION_PARAM_CONTROLS: GenerationParameterControl[] = [
-    { key: "temperature", label: "Temperature", min: 0, max: 2, step: 0.01, hintLeft: "稳定保守", hintRight: "发散创造" },
-    { key: "top_p", label: "Top P", min: 0, max: 1, step: 0.01, hintLeft: "用词精准", hintRight: "词汇丰富" },
-    { key: "top_k", label: "Top K", min: 0, max: 100, step: 1, hintLeft: "用词精准", hintRight: "词汇丰富", integer: true },
-    { key: "min_p", label: "Min P", min: 0, max: 1, step: 0.01, hintLeft: "发散跳跃", hintRight: "逻辑连贯" },
-    { key: "top_a", label: "Top A", min: 0, max: 1, step: 0.01, hintLeft: "自由发散", hintRight: "限制胡言乱语" },
-    { key: "repetition_penalty", label: "Repetition Penalty", min: 1, max: 2, step: 0.01, hintLeft: "允许重复", hintRight: "极力惩罚重复" },
-    { key: "frequency_penalty", label: "Frequency Penalty", min: 0, max: 2, step: 0.01, hintLeft: "自然口癖", hintRight: "杜绝车轱辘话" },
-    { key: "presence_penalty", label: "Presence Penalty", min: 0, max: 2, step: 0.01, hintLeft: "聚焦当前话题", hintRight: "积极拓展新话题" },
-    { key: "max_tokens", label: "Max Tokens", min: 0, max: 8192, step: 128, hintLeft: "自动 (推荐)", hintRight: "限制回复长度", integer: true },
+    { key: "temperature", label: "Temperature", pickerLabel: "Temperature", min: 0, max: 2, step: 0.01, hintLeft: "稳定保守", hintRight: "发散创造" },
+    { key: "top_p", label: "Top P", pickerLabel: "Top P", min: 0, max: 1, step: 0.01, hintLeft: "用词精准", hintRight: "词汇丰富" },
+    { key: "top_k", label: "Top K", pickerLabel: "Top K", min: 0, max: 100, step: 1, hintLeft: "用词精准", hintRight: "词汇丰富", integer: true },
+    { key: "min_p", label: "Min P", pickerLabel: "Min P", min: 0, max: 1, step: 0.01, hintLeft: "发散跳跃", hintRight: "逻辑连贯" },
+    { key: "top_a", label: "Top A", pickerLabel: "Top A", min: 0, max: 1, step: 0.01, hintLeft: "自由发散", hintRight: "限制胡言乱语" },
+    { key: "repetition_penalty", label: "Repetition Penalty", pickerLabel: "重复惩罚", min: 1, max: 2, step: 0.01, hintLeft: "允许重复", hintRight: "极力惩罚重复" },
+    { key: "frequency_penalty", label: "Frequency Penalty", pickerLabel: "频率惩罚", min: 0, max: 2, step: 0.01, hintLeft: "自然口癖", hintRight: "杜绝车轱辘话" },
+    { key: "presence_penalty", label: "Presence Penalty", pickerLabel: "存在惩罚", min: 0, max: 2, step: 0.01, hintLeft: "聚焦当前话题", hintRight: "积极拓展新话题" },
+    { key: "max_tokens", label: "Max Tokens", pickerLabel: "Max Tokens", min: 0, max: 8192, step: 128, hintLeft: "自动 (推荐)", hintRight: "限制回复长度", integer: true },
 ];
 
 function getNativeToolProtocolLabel(config: ApiConfig): string {
@@ -97,6 +98,7 @@ export function ApiSettings() {
     const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
     const [isLoaded, setIsLoaded] = useState(false);
     const [generationParamsOpen, setGenerationParamsOpen] = useState(false);
+    const [generationParamPickerOpen, setGenerationParamPickerOpen] = useState(false);
 
     // Testing and Fetching states
     const [isFetching, setIsFetching] = useState<Record<string, boolean>>({});
@@ -790,19 +792,32 @@ export function ApiSettings() {
                                             />
                                         </div>
                                         {/* 生成参数：一条配置一套（服务商 + 模型），不再放预设里 */}
-                                        <div className="ui-collapsible mt-2 shrink-0" style={{ border: "0.5px solid var(--c-card-border)" }}>
-                                            <button
-                                                type="button"
+                                        <div className="ui-collapsible mt-2 shrink-0">
+                                            <div
                                                 onClick={() => setGenerationParamsOpen(!generationParamsOpen)}
                                                 className="ui-collapsible-header flex justify-between items-center select-none"
                                                 data-open={generationParamsOpen}
                                             >
-                                                <span className="menu-label ts-13 font-semibold">生成参数 (Temperature / Top P / Max Tokens)</span>
-                                                <ChevronDown size={16} className="text-[var(--c-text)]" style={{ transition: "transform 0.2s", transform: generationParamsOpen ? "rotate(180deg)" : "rotate(0deg)" }} />
-                                            </button>
+                                                <span className="menu-label ts-13 font-semibold">生成参数</span>
+                                                <div className="generation-parameter-header-actions">
+                                                    <button
+                                                        type="button"
+                                                        className="generation-parameter-picker-btn"
+                                                        aria-label="选择发送的生成参数"
+                                                        title="选择发送的生成参数"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setGenerationParamPickerOpen(true);
+                                                        }}
+                                                    >
+                                                        <MoreHorizontal size={16} />
+                                                    </button>
+                                                    <ChevronDown size={16} className="text-[var(--c-text)]" style={{ transition: "transform 0.2s", transform: generationParamsOpen ? "rotate(180deg)" : "rotate(0deg)" }} />
+                                                </div>
+                                            </div>
                                             {generationParamsOpen && (
-                                                <div className="p-[14px] pt-1">
-                                                    <div className="grid grid-cols-2 gap-4">
+                                                <div className="p-[14px]">
+                                                    <div className="grid grid-cols-2 gap-3">
                                                         {GENERATION_PARAM_CONTROLS.map(control => {
                                                             const params = { ...DEFAULT_API_GENERATION_PARAMETERS, ...config.generationParameters };
                                                             const active = (params.enabled ?? []).includes(control.key);
@@ -813,24 +828,13 @@ export function ApiSettings() {
                                                                     className={`generation-parameter-control flex flex-col gap-1 ${control.key === "max_tokens" ? "col-span-full" : ""}`}
                                                                     data-disabled={active ? undefined : ""}
                                                                 >
-                                                                    <div className="flex items-center justify-between gap-2">
+                                                                    <div className="flex justify-between">
                                                                         <label className="ui-slider-label">{control.label}</label>
-                                                                        <div className="flex items-center gap-2">
-                                                                            <span className="ui-slider-value" style={{ width: "auto" }}>
-                                                                                {control.key === "max_tokens"
-                                                                                    ? (value > 0 ? value : "自动")
-                                                                                    : control.integer ? value : value.toFixed(2)}
-                                                                            </span>
-                                                                            <label className="ui-mini-toggle" aria-label={`发送 ${control.label}`}>
-                                                                                <input
-                                                                                    type="checkbox"
-                                                                                    className="ui-mini-toggle-track"
-                                                                                    checked={active}
-                                                                                    onChange={(e) => toggleGenerationParamKey(config, control.key, e.target.checked)}
-                                                                                />
-                                                                                <span className="ui-mini-toggle-thumb" />
-                                                                            </label>
-                                                                        </div>
+                                                                        <span className="ui-slider-value" style={control.key === "max_tokens" ? { width: "auto" } : undefined}>
+                                                                            {control.key === "max_tokens"
+                                                                                ? (value > 0 ? value : "自动")
+                                                                                : control.integer ? value : value.toFixed(2)}
+                                                                        </span>
                                                                     </div>
                                                                     <input
                                                                         className="ui-slider"
@@ -870,6 +874,42 @@ export function ApiSettings() {
                     </div>
                 </div>
             )}
+
+            {generationParamPickerOpen && editingId && (() => {
+                const config = configs.find(c => c.id === editingId);
+                if (!config) return null;
+                const params = { ...DEFAULT_API_GENERATION_PARAMETERS, ...config.generationParameters };
+                const enabledSet = new Set(params.enabled ?? []);
+                return (
+                    <BottomSheet title="选择发送的参数" onClose={() => setGenerationParamPickerOpen(false)}>
+                        <div className="generation-parameter-picker">
+                            <p className="menu-desc generation-parameter-picker-desc">
+                                高亮参数允许随请求发送；未选择的参数会从请求中移除，并在设置中置灰。接口不适用的参数会自动忽略。
+                            </p>
+                            <div className="generation-parameter-chips" role="group" aria-label="生成参数发送开关">
+                                {GENERATION_PARAM_CONTROLS.map(control => {
+                                    const selected = enabledSet.has(control.key);
+                                    return (
+                                        <button
+                                            key={control.key}
+                                            type="button"
+                                            className="generation-parameter-chip"
+                                            data-selected={selected ? "" : undefined}
+                                            aria-pressed={selected}
+                                            onClick={() => toggleGenerationParamKey(config, control.key, !selected)}
+                                        >
+                                            {control.pickerLabel}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            <p className="ui-slider-hint generation-parameter-picker-note">
+                                原生 Anthropic 接口要求 Max Tokens 必须存在；关闭后仍会使用安全默认值，其余接口会正常省略。
+                            </p>
+                        </div>
+                    </BottomSheet>
+                );
+            })()}
 
             {folderNameDialog && (
                 <ContentDialog
