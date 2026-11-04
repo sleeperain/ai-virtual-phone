@@ -96,7 +96,6 @@ export function ApiSettings() {
     const [isNewConfig, setIsNewConfig] = useState(false);
     const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
     const [isLoaded, setIsLoaded] = useState(false);
-    const [generationParamsOpen, setGenerationParamsOpen] = useState(false);
 
     // Testing and Fetching states
     const [isFetching, setIsFetching] = useState<Record<string, boolean>>({});
@@ -790,33 +789,9 @@ export function ApiSettings() {
                                             />
                                         </div>
                                         {/* 生成参数：一条配置一套（服务商 + 模型），不再放预设里 */}
-                                        <div className="ui-collapsible mt-2">
-                                            <div
-                                                onClick={() => setGenerationParamsOpen(!generationParamsOpen)}
-                                                className="ui-collapsible-header flex justify-between items-center select-none"
-                                                data-open={generationParamsOpen}
-                                            >
-                                                <span className="menu-label ts-13 font-semibold">生成参数</span>
-                                                <ChevronDown
-                                                    size={16}
-                                                    className="text-[var(--c-text)]"
-                                                    style={{ transition: "transform 0.2s", transform: generationParamsOpen ? "rotate(180deg)" : "rotate(0deg)" }}
-                                                />
-                                            </div>
-                                            {generationParamsOpen && (
-                                                <div className="p-[14px] flex flex-col gap-3">
-                                                    <div className="ui-toggle-row">
-                                                        <span className="menu-label font-medium">使用此配置的生成参数</span>
-                                                        <Toggle
-                                                            checked={Boolean(config.generationParameters)}
-                                                            onChange={(value) => updateConfig(config.id, {
-                                                                generationParameters: value ? { ...DEFAULT_API_GENERATION_PARAMETERS } : undefined,
-                                                            })}
-                                                        />
-                                                    </div>
-                                                    {config.generationParameters && (
-                                                        <>
-                                                            <div className="grid grid-cols-2 gap-3">
+                                        <div className="ui-entry-card mt-2" style={{ cursor: "default" }}>
+                                            <label className="menu-label ts-13 font-semibold ml-1">生成参数</label>
+                                            <div className="grid grid-cols-2 gap-3">
                                                                 {GENERATION_PARAM_CONTROLS.map(control => {
                                                                     const params = { ...DEFAULT_API_GENERATION_PARAMETERS, ...config.generationParameters };
                                                                     const active = (params.enabled ?? []).includes(control.key);
@@ -864,11 +839,7 @@ export function ApiSettings() {
                                                                         </div>
                                                                     );
                                                                 })}
-                                                            </div>
-                                                        </>
-                                                    )}
-                                                </div>
-                                            )}
+                                            </div>
                                         </div>
 
                                         <button type="button" onClick={() => duplicateConfig(config)} className="ui-btn ui-btn-soft-action mt-2 w-full">
