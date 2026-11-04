@@ -1,9 +1,64 @@
 "use client";
 
-// 日程图标的渲染器：路径数据在 lib/calendar-icons.ts，这里只负责画。
-// 风格和日历其它线条图标一致（24×24、无填充、1.8 描边、圆头圆角）。
+// 日程图标的渲染器：直接使用 Lucide 官方组件库，保证与日历顶栏及全站线条图标视觉完全一致。
 
-import { CALENDAR_ICON_PATHS, isCalendarIconKey } from "@/lib/calendar-icons";
+import {
+  Activity,
+  BookOpen,
+  Briefcase,
+  Cake,
+  Coffee,
+  Dumbbell,
+  Film,
+  Gamepad2,
+  Heart,
+  Home,
+  Hospital,
+  Laptop,
+  Moon,
+  Music,
+  Palette,
+  PawPrint,
+  Phone,
+  Pin,
+  Plane,
+  ShoppingBag,
+  ShoppingCart,
+  Sparkles,
+  Star,
+  Users,
+  Utensils,
+  type LucideIcon,
+} from "lucide-react";
+import { isCalendarIconKey, type CalendarIconKey } from "@/lib/calendar-icons";
+
+const LUCIDE_SCHEDULE_ICONS: Record<CalendarIconKey, LucideIcon> = {
+  pin: Pin,
+  star: Star,
+  briefcase: Briefcase,
+  book: BookOpen,
+  laptop: Laptop,
+  activity: Activity,
+  dumbbell: Dumbbell,
+  utensils: Utensils,
+  coffee: Coffee,
+  film: Film,
+  gamepad: Gamepad2,
+  music: Music,
+  cart: ShoppingCart,
+  bag: ShoppingBag,
+  plane: Plane,
+  hospital: Hospital,
+  phone: Phone,
+  moon: Moon,
+  heart: Heart,
+  cake: Cake,
+  palette: Palette,
+  broom: Sparkles,
+  paw: PawPrint,
+  users: Users,
+  home: Home,
+};
 
 export function ScheduleIcon({
   name,
@@ -15,22 +70,14 @@ export function ScheduleIcon({
   className?: string;
 }) {
   if (!isCalendarIconKey(name)) return null;
+  const Icon = LUCIDE_SCHEDULE_ICONS[name];
+  if (!Icon) return null;
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
+    <Icon
+      size={size}
+      strokeWidth={1.85}
       className={className}
       aria-hidden="true"
-    >
-      {CALENDAR_ICON_PATHS[name].map((d, index) => (
-        <path key={index} d={d} />
-      ))}
-    </svg>
+    />
   );
 }

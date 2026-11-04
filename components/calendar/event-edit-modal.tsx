@@ -518,18 +518,6 @@ export function CalendarEventEditModal({
                     {draft.emoji}
                   </button>
                 ) : null}
-                {draft.iconKey ? (
-                  <button
-                    type="button"
-                    className="calendar-icon-preset"
-                    data-active="true"
-                    onClick={() => onChange({ ...draft, iconKey: undefined })}
-                    aria-label="取消图标"
-                    title="取消图标"
-                  >
-                    <ScheduleIcon name={draft.iconKey} size={18} />
-                  </button>
-                ) : null}
                 {CALENDAR_ICON_KEYS.map(key => (
                   <button
                     key={key}
