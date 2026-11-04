@@ -44,27 +44,10 @@ type MomentBook = {
   moments: Moment[];
 };
 
-const BOOK_COVER_COUNT = 6;
-
-function hashText(value: string): number {
-  let hash = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
-  }
-  return hash;
-}
-
 function formatDate(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, "0")}.${String(date.getDate()).padStart(2, "0")}`;
-}
-
-/** 封面上的月.日；书只有手机半屏宽，带年份的话左边的段数会被挤成省略号 */
-function formatMonthDay(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return `${String(date.getMonth() + 1).padStart(2, "0")}.${String(date.getDate()).padStart(2, "0")}`;
 }
 
 function momentDate(moment: Moment): string {
@@ -421,12 +404,13 @@ export function MomentsApp({ onBack, onNotice }: MomentsAppProps) {
           </div>
         ) : (
           <div className="diary-shelf">
-            {[0, 1].map(column => (
-              <div className="diary-shelf-column" key={column}>
-                {books.filter((_, index) => index % 2 === column).map(book => (
-                  <MomentBookCover key={book.characterId} book={book} onOpen={() => setActiveCharacterId(book.characterId)} />
-                ))}
-              </div>
+            {books.map((book, index) => (
+              <MomentBookCover
+                key={book.characterId}
+                book={book}
+                index={index}
+                onOpen={() => setActiveCharacterId(book.characterId)}
+              />
             ))}
           </div>
         )}
@@ -608,27 +592,27 @@ export function MomentsApp({ onBack, onNotice }: MomentsAppProps) {
   );
 }
 
-function MomentBookCover({ book, onOpen }: { book: MomentBook; onOpen: () => void }) {
+/**
+ * 角色列表里的一张身份卡片：
+ * 第一行左侧 ARCHIVE 序号（按列表顺序 01、02…）；
+ * 第二行左侧证件照尺寸的头像，右侧上方角色名、右下角日期，
+ * 日期贴着信息列底部，所以它和头像的下边线是对齐的。
+ */
+function MomentBookCover({ book, index, onOpen }: { book: MomentBook; index: number; onOpen: () => void }) {
   const latest = book.moments[0];
   return (
-    <button
-      type="button"
-      className="diary-book"
-      data-cover={hashText(book.characterId) % BOOK_COVER_COUNT}
-      onClick={onOpen}
-    >
-      <span className="diary-book-spine" aria-hidden="true" />
-      <span className="diary-book-frame" aria-hidden="true" />
-      <span className="diary-book-label">
-        <span className="diary-book-avatar">
-          {book.avatar ? <img src={book.avatar} alt="" /> : <Bot size={20} />}
-        </span>
-        <strong>{book.characterName}</strong>
-        <em>的片刻纪事</em>
+    <button type="button" className="diary-book" onClick={onOpen}>
+      <span className="diary-book-head">
+        <span className="diary-book-archive">ARCHIVE {String(index + 1).padStart(2, "0")}</span>
       </span>
-      <span className="diary-book-meta">
-        <span>{book.moments.length} 段</span>
-        <time>{formatMonthDay(latest.createdAt)}</time>
+      <span className="diary-book-id">
+        <span className="diary-book-avatar">
+          {book.avatar ? <img src={book.avatar} alt="" /> : <Bot size={22} />}
+        </span>
+        <span className="diary-book-info">
+          <strong>{book.characterName}</strong>
+          <time className="diary-book-date">{formatDate(latest.createdAt)}</time>
+        </span>
       </span>
     </button>
   );

@@ -4249,185 +4249,86 @@
 
 /* ---- 日记本书架（角色日记列表，双栏瀑布流） ---- */
 
+/* ---- 角色列表：方形身份卡片，一个角色一行 ---- */
+
 .diary-shelf {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  column-gap: 22px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
   align-items: start;
-  padding: 30px 24px 12px;
-}
-
-.diary-shelf-column {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 26px;
+  padding: 6px 0 4px;
 }
 
 .diary-book {
   position: relative;
   display: flex;
   flex-direction: column;
+  gap: 11px;
   width: 100%;
-  aspect-ratio: 1 / 1.42;
-  border: none;
-  border-radius: 4px 12px 12px 4px;
-  padding: 0;
-  background:
-    linear-gradient(118deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0) 46%),
-    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.07) 0 1px, transparent 1px 3px),
-    repeating-linear-gradient(90deg, rgba(58, 48, 38, 0.022) 0 1px, transparent 1px 3px),
-    linear-gradient(158deg, var(--book-cover-light), var(--book-cover) 52%, var(--book-cover-deep));
-  color: var(--book-accent);
+  border: 1px solid rgba(35, 36, 42, 0.1);
+  border-radius: 12px;
+  padding: 12px 15px 13px;
+  background: linear-gradient(180deg, #ffffff, #fbfaf7);
+  color: #252525;
+  font-family: var(--app-font-family);
+  text-align: left;
   cursor: pointer;
   touch-action: manipulation;
   box-shadow:
-    0 1px 1px rgba(56, 46, 34, 0.06),
-    0 5px 12px rgba(56, 46, 34, 0.1),
-    inset 0 1px 0 rgba(255, 255, 255, 0.46),
-    inset -2px 0 3px rgba(255, 255, 255, 0.26);
-  transform: rotate(var(--book-tilt, -0.5deg));
-  transition: transform 0.16s ease, box-shadow 0.16s ease;
+    0 1px 2px rgba(31, 29, 24, 0.05),
+    0 3px 10px rgba(31, 29, 24, 0.045);
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
   overflow: hidden;
-}
-
-.diary-shelf .diary-book:nth-child(2n) {
-  --book-tilt: 0.5deg;
-}
-
-.diary-shelf .diary-book:nth-child(3n) {
-  --book-tilt: -0.25deg;
 }
 
 .diary-book:active {
-  transform: translateY(2px) rotate(0deg) scale(0.985);
-  box-shadow:
-    0 1px 1px rgba(56, 46, 34, 0.06),
-    0 3px 7px rgba(56, 46, 34, 0.09),
-    inset 0 1px 0 rgba(255, 255, 255, 0.46);
+  transform: scale(0.994);
+  border-color: rgba(35, 36, 42, 0.17);
+  box-shadow: 0 1px 2px rgba(31, 29, 24, 0.05);
 }
 
-.diary-book[data-cover="0"] {
-  --book-cover-light: #f1dee1;
-  --book-cover: #e8cdd2;
-  --book-cover-deep: #dab8bf;
-  --book-spine: rgba(177, 128, 138, 0.5);
-  --book-accent: #9c6b76;
-}
-
-.diary-book[data-cover="1"] {
-  --book-cover-light: #dee7ee;
-  --book-cover: #cddbe7;
-  --book-cover-deep: #b9cada;
-  --book-spine: rgba(125, 152, 178, 0.5);
-  --book-accent: #647e9a;
-}
-
-.diary-book[data-cover="2"] {
-  --book-cover-light: #e0e9de;
-  --book-cover: #d0decd;
-  --book-cover-deep: #bdceba;
-  --book-spine: rgba(134, 158, 130, 0.5);
-  --book-accent: #6a8468;
-}
-
-.diary-book[data-cover="3"] {
-  --book-cover-light: #f3e8d9;
-  --book-cover: #ebdac3;
-  --book-cover-deep: #ddc7a9;
-  --book-spine: rgba(187, 157, 119, 0.5);
-  --book-accent: #97784f;
-}
-
-.diary-book[data-cover="4"] {
-  --book-cover-light: #e6e0ed;
-  --book-cover: #d9d0e3;
-  --book-cover-deep: #c7bad5;
-  --book-spine: rgba(152, 135, 174, 0.5);
-  --book-accent: #7b6a93;
-}
-
-.diary-book[data-cover="5"] {
-  --book-cover-light: #dde9e7;
-  --book-cover: #ccdfdc;
-  --book-cover-deep: #b6ceca;
-  --book-spine: rgba(123, 159, 153, 0.5);
-  --book-accent: #5f827c;
-}
-
-.diary-book-spine {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  z-index: 1;
-  width: 15px;
-  background: linear-gradient(90deg, var(--book-spine) 0 8px, rgba(58, 48, 38, 0.06) 8px 10px, rgba(255, 255, 255, 0.24) 10px 11px, transparent 11px);
-  pointer-events: none;
-}
-
-.diary-book-spine::after {
-  content: "";
-  position: absolute;
-  top: 9px;
-  bottom: 9px;
-  left: 11px;
-  width: 0;
-  border-left: 1px dashed currentColor;
-  color: var(--book-accent);
-  opacity: 0.4;
-}
-
-.diary-book-frame {
-  position: absolute;
-  inset: 8px 9px 8px 20px;
-  z-index: 1;
-  border: 1px solid currentColor;
-  border-radius: 2px 8px 8px 2px;
-  opacity: 0.4;
-  pointer-events: none;
-}
-
-.diary-book-frame::before {
-  content: "";
-  position: absolute;
-  inset: 3px;
-  border: 1px solid currentColor;
-  border-radius: 1px 6px 6px 1px;
-  opacity: 0.5;
-}
-
-.diary-book-label {
-  position: relative;
-  z-index: 2;
-  margin: auto 24px auto 30px;
+/* 第一行：左侧小字序号 */
+.diary-book-head {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 11px 8px 10px;
-  border-radius: 3px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0)),
-    #fffdf6;
-  box-shadow: 0 2px 5px rgba(72, 60, 44, 0.13), inset 0 0 0 1px rgba(120, 96, 56, 0.1);
-  color: #4a4138;
-  font-family: var(--diary-entry-font-family);
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.diary-book-archive {
+  min-width: 0;
+  font-family: "Courier New", monospace;
+  font-size: calc(9px*var(--app-text-scale,1));
+  line-height: 1;
+  letter-spacing: 1.9px;
+  text-transform: uppercase;
+  color: rgba(37, 37, 37, 0.42);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 第二行：左边证件照，右边信息列（名字在上、日期贴底） */
+.diary-book-id {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: stretch;
 }
 
 .diary-book-avatar {
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
+  width: 46px;
+  height: 61px;
+  border-radius: 4px;
   overflow: hidden;
-  border: 2px solid rgba(120, 96, 56, 0.2);
-  background: #f3efe6;
+  border: 1px solid rgba(35, 36, 42, 0.1);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(232, 231, 226, 0.9));
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: rgba(74, 65, 56, 0.55);
-  box-shadow: 0 1px 3px rgba(72, 60, 44, 0.14);
-  flex: 0 0 auto;
+  color: rgba(37, 37, 37, 0.42);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
 }
 
 .diary-book-avatar img {
@@ -4436,50 +4337,50 @@
   object-fit: cover;
 }
 
-.diary-book-label strong {
-  max-width: 100%;
-  font-size: calc(17px*var(--app-text-scale,1));
-  line-height: 1.25;
-  font-weight: 400;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.diary-book-info {
+  min-width: 0;
+  min-height: 61px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: stretch;
 }
 
-.diary-book-label em {
+.diary-book-info strong {
+  display: block;
+  max-width: 100%;
+  align-self: flex-start;
+  font-size: calc(21px*var(--app-text-scale,1));
+  line-height: 1.15;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  color: #252525;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 正在写日记时的小字，落在名字下面的空白里 */
+.diary-book-status {
+  margin-top: 5px;
+  align-self: flex-start;
   font-style: normal;
   font-size: calc(11px*var(--app-text-scale,1));
-  line-height: 1.2;
-  letter-spacing: 0.22em;
-  margin-right: -0.22em;
-  color: rgba(74, 65, 56, 0.5);
+  color: rgba(37, 37, 37, 0.5);
 }
 
-.diary-book-meta {
-  position: relative;
-  z-index: 2;
-  margin: 0 24px 15px 30px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+/* 最右小字日期：上方细分割线只压日期这段宽度，底边与头像底边同高 */
+.diary-book-date {
+  align-self: flex-end;
+  margin-top: auto;
+  padding-top: 5px;
+  border-top: 1px solid rgba(37, 37, 37, 0.14);
   font-family: "Courier New", monospace;
   font-size: calc(9.5px*var(--app-text-scale,1));
-  line-height: 1.2;
-  letter-spacing: 0.06em;
-  color: var(--book-accent);
-  opacity: 0.92;
+  line-height: 1;
+  letter-spacing: 1.2px;
+  color: rgba(37, 37, 37, 0.5);
   white-space: nowrap;
-}
-
-.diary-book-meta span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.diary-book-meta time {
-  flex: 0 0 auto;
 }
 
 /* Floating "generating" toast — visible whenever any diary entry is being

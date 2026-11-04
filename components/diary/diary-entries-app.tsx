@@ -410,17 +410,14 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
           </div>
         ) : (
           <div className="diary-shelf">
-            {[0, 1].map(column => (
-              <div className="diary-shelf-column" key={column}>
-                {books.filter((_, index) => index % 2 === column).map(book => (
-                  <DiaryBookCover
-                    key={book.characterId}
-                    book={book}
-                    busy={generatingCharacterIds.includes(book.characterId)}
-                    onOpen={() => setActiveCharacterId(book.characterId)}
-                  />
-                ))}
-              </div>
+            {books.map((book, index) => (
+              <DiaryBookCover
+                key={book.characterId}
+                book={book}
+                index={index}
+                busy={generatingCharacterIds.includes(book.characterId)}
+                onOpen={() => setActiveCharacterId(book.characterId)}
+              />
             ))}
           </div>
         )}
@@ -591,38 +588,37 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
   );
 }
 
-const DIARY_BOOK_COVER_COUNT = 6;
-
-function hashText(value: string): number {
-  let hash = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
-  }
-  return hash;
-}
-
-function DiaryBookCover({ book, busy, onOpen }: { book: DiaryBook; busy: boolean; onOpen: () => void }) {
-  const hash = hashText(book.characterId);
+/**
+ * 角色日记列表里的一张身份卡片：
+ * 第一行左侧 ARCHIVE 序号（按列表顺序 01、02…）；
+ * 第二行左侧证件照尺寸的头像，右侧上方角色名、下方右对齐日期。
+ * 头像与右侧信息列等高，日期贴着信息列底部，所以日期下边线和头像下边线自动对齐。
+ */
+function DiaryBookCover({ book, index, busy, onOpen }: {
+  book: DiaryBook;
+  index: number;
+  busy: boolean;
+  onOpen: () => void;
+}) {
   const latest = book.entries[0];
   return (
-    <button
-      type="button"
-      className="diary-book"
-      data-cover={hash % DIARY_BOOK_COVER_COUNT}
-      onClick={onOpen}
-    >
-      <span className="diary-book-spine" aria-hidden="true" />
-      <span className="diary-book-frame" aria-hidden="true" />
-      <span className="diary-book-label">
-        <span className="diary-book-avatar">
-          {book.avatar ? <img src={book.avatar} alt="" /> : <Bot size={20} />}
-        </span>
-        <strong>{book.characterName}</strong>
-        <em>{busy ? <DiaryWritingStatus /> : "的日记本"}</em>
+    <button type="button" className="diary-book" onClick={onOpen}>
+      <span className="diary-book-head">
+        <span className="diary-book-archive">ARCHIVE {String(index + 1).padStart(2, "0")}</span>
       </span>
-      <span className="diary-book-meta">
-        <span>{book.entries.length} 篇</span>
-        <time>{formatEntryTime(latest.createdAt)}</time>
+      <span className="diary-book-id">
+        <span className="diary-book-avatar">
+          {book.avatar ? <img src={book.avatar} alt="" /> : <Bot size={22} />}
+        </span>
+        <span className="diary-book-info">
+          <strong>{book.characterName}</strong>
+          {busy ? (
+            <em className="diary-book-status">
+              <DiaryWritingStatus />
+            </em>
+          ) : null}
+          <time className="diary-book-date">{formatEntryTime(latest.createdAt)}</time>
+        </span>
       </span>
     </button>
   );
