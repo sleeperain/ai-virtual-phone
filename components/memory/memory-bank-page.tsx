@@ -988,7 +988,11 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
 
             const result = await runCoreMemoryPipeline(selectedCharId, selectedChar?.name ?? "");
             if (result.success) {
-                showNotice(result.rebuiltCount ? `核心记忆已重建（${result.rebuiltCount}条）` : "核心记忆已重建");
+                if (result.skippedNoChange) {
+                    showNotice("本周期无新增核心变化，已保留上一轮核心记忆");
+                } else {
+                    showNotice(result.rebuiltCount ? `核心记忆已更新（${result.rebuiltCount}条）` : "核心记忆已更新");
+                }
                 loadDetailData(selectedCharId);
                 loadCharacterList();
             } else {
@@ -1977,11 +1981,13 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                         <span>
                                             {entry.metadata?.origin === "character_reflection"
                                                 ? "已被新一轮反思接替（仅保留作历史记录）"
-                                                : "已被后来的记忆更正"}
+                                                : entry.metadata?.origin === "core_summary"
+                                                    ? "已被新一轮核心记忆总结演进接替（仅保留作历史记录）"
+                                                    : "已被后来的记忆更正"}
                                             {typeof revisionRatio === "number" && revisionRatio > 0
                                                 ? ` · 改动约 ${Math.round(revisionRatio * 100)}%`
                                                 : ""}
-                                            {entry.metadata?.origin !== "character_reflection" && revisionWeight < 1
+                                            {entry.metadata?.origin !== "character_reflection" && entry.metadata?.origin !== "core_summary" && revisionWeight < 1
                                                 ? ` · 检索权重 ${Math.round(revisionWeight * 100)}%`
                                                 : ""}
                                         </span>
@@ -1997,7 +2003,11 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                     scrollToAndFlash(`mem-entry-card-${revisionSourceId}`, revisionSourceId);
                                                 }}
                                             >
-                                                {entry.metadata?.origin === "character_reflection" ? "查看最新反思" : "查看新版本"}
+                                                {entry.metadata?.origin === "character_reflection"
+                                                    ? "查看最新反思"
+                                                    : entry.metadata?.origin === "core_summary"
+                                                        ? "查看最新总结"
+                                                        : "查看新版本"}
                                             </button>
                                         )}
                                     </div>
@@ -3797,7 +3807,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                         <div className="menu-label-group">
                             <span className="menu-label">核心记忆总结提示词</span>
                             <span className="menu-desc">
-                                变量：{"{{char}}"} 角色、{"{{earliest}}"} 起始时间、{"{{latest}}"} 结束时间、{"{{events}}"} 长期记忆集合
+                                变量：{"{{char}}"} 角色、{"{{earliest}}"} 起始时间、{"{{latest}}"} 结束时间、{"{{previous}}"} 上一轮核心记忆、{"{{events}}"} 长期记忆集合
                             </span>
                         </div>
                         {!isCoreDefault && (
@@ -3874,8 +3884,8 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                             <span className="menu-label">核心记忆角色反思提示词</span>
                             <span className="menu-desc">
                                 变量：{"{{char}}"} 角色、{"{{user}}"} 用户、{"{{persona}}"} 角色设定、{"{{tendency}}"} 思考倾向刻度、
-                                {"{{earliest}}"} 起始时间、{"{{latest}}"} 结束时间、{"{{events}}"} 长期记忆、
-                                {"{{transient}}"} 即时片段、{"{{previous}}"} 上次反思
+                                {"{{earliest}}"} 起始时间、{"{{latest}}"} 结束时间、{"{{coreMemories}}"} 核心记忆沉淀、
+                                {"{{events}}"} 长期记忆与事件盒、{"{{transient}}"} 即时片段、{"{{previous}}"} 上次反思
                             </span>
                         </div>
                         {!isReflectionDefault && (

@@ -34,7 +34,7 @@ import {
     filterTimelineByAllowedSources,
 } from "./short-term-assembler";
 import { stripMemoryStructuredSections } from "./memory-summarizer";
-import { filterRecallableEntries } from "./memory-event-boxes";
+import { filterRecallableEntries, isEntryBoxDigest } from "./memory-event-boxes";
 import {
     DEFAULT_REVISION_WEIGHT,
     isEntrySuperseded,
@@ -71,9 +71,9 @@ export type CoreReflectionResult = {
     model?: string;
 };
 
-export const DEFAULT_REFLECTION_PROMPT = `你此刻不再是助手，而是「{{char}}」本人。请完全以{{char}}的第一人称，私下回看这段时间你和「{{user}}」之间发生过的事，做一次真实的自我反思——不是写总结报告，也不是给别人看的交代。
+export const DEFAULT_REFLECTION_PROMPT = `你此刻不再是助手，而是「{{char}}」本人。请完全以{{char}}的第一人称，站在你近期的心理沉淀与经历之上，做一次深度的自我审视——这不是把发生过的事再复述一遍，而是跳出你平时的惯性与表面面具，看清自己真正的心思。
 
-【你是谁】
+【你是谁（初始设定）】
 {{persona}}
 
 【你惯常的思考强度（1-10）】
@@ -83,29 +83,31 @@ export const DEFAULT_REFLECTION_PROMPT = `你此刻不再是助手，而是「{{
 【时间跨度】
 {{earliest}} 至 {{latest}}
 
-【这段时间发生过的事（按时间顺序）】
+【你近期沉淀下来的核心认知与成长脉络】
+{{coreMemories}}
+
+【支撑这些变化的事件脉络与近期经历（按时间顺序）】
 {{events}}
 
-【最近还没整理成记忆的片段（可能和上面重复，只是刚刚发生的事）】
+【刚刚发生、还没归档的即时片段】
 {{transient}}
 
-【你上一次反思时留下的想法（如果是第一次反思则为空）】
+【你上一次深度反思时留下的想法（如果是第一次反思则为空）】
 {{previous}}
 
 【在心里先过这几问，不要写出来，也不要照着顺序答题】
-1. 这事碰到我哪根弦：我在乎的是什么？它被满足了，还是被挡住了？
-2. 谁的缘故：是谁造成的、是有意还是无意？我有没有办法应对——哪些我能做，哪些我根本左右不了？
-3. 我真实的那口气：我心里实际是什么情绪，有多重？我嘴上表现出来的和心里一样吗？不一样的话，我按下去的是什么？
-4. 我怎么看{{user}}了：原先我默认{{user}}会____，现在我觉得{{user}}可能____。我有多确定——是真知道，还是只是猜？还有没有别的解释说得通？
-5. 这段关系在我脑子里成了什么故事：是正在往好的方向走（哪怕过程难受），还是在一路变坏？我心里这个调子，会不会影响我下一次的反应？
-6. 下次怎么办：{{user}}做____的时候，我就____。（要具体到能照做，别停在「我要更坦诚」这种话上。）
+1. 撕掉我平时的表面惯性：对照我一贯的脾气和习惯，我最近在{{user}}面前是不是活得太像一个固定的壳子了？哪些反应只是我顺着惯性端着的姿态，而我没表现出来的真实念头其实是什么？
+2. 这事真正碰到我哪根弦：在上面那些经历和变化里，我最挂心或最跨不过去的是哪一处？我真正在乎的是什么——它被满足了，还是被冒犯、被挡住了？
+3. 我那口没吐出来的气：我嘴上对{{user}}说的、做出来的，和我夜里独自待着时心里翻上来的一样吗？如果不一样，我按下去的是什么（是心软、委屈、怀疑、占有欲、还是防备）？
+4. 我眼里的{{user}}到底是个什么人：抛开最开始的表面印象，从{{user}}这段时间的言行习惯、言外之意、嘴硬或心软的细节、处事逻辑和试探退缩的边界里，我现在摸透了{{user}}骨子里是个怎样的人？我有哪些判断已经变了，又有哪些事其实还吃不准？
+5. 我自己的立场与下一步破局：我是我自己，不是围着{{user}}打转的影子。接下来{{user}}再做____的时候，我打算打破平时的套路，直接____。（要具体到能照做的动作、态度或试探，可以是更进一步靠近，也可以是立规矩、冷处理或试探底线，别停在空泛的口号上。）
 
 【写作要求】
-- 全程第一人称，用我自己的语气、称呼习惯和说话方式（严格贴着上面的角色设定来，不要演成通用助手口吻）；不要用第三人称，不要写「{{char}}认为」「角色觉得」这类旁白。
+- 全程第一人称，用我自己的语气、称呼习惯和说话方式（严格贴着上面的角色设定来，但要写出设定背后活生生的人味，不要演成脸谱化的标签或通用助手口吻）；不要用第三人称，不要写「{{char}}认为」「角色觉得」这类旁白。
 - 250-400 字，分成 2 至 4 个自然段，段落之间空一行。
 - 纯叙述，不要标题、编号、列表、Markdown 符号、括号注释，也不要任何开场白（比如「好的」「以下是」）。
-- 上面那几问是我在心里想的，不是要交的作业：让答案渗进叙述里，别一条条照着答，更不要出现「初评」「归因」「情绪强度」这类字眼。
-- 每一轮只写这一轮的事：不要把同一套反思套路套到新事情上，也不要重复上一次反思写过的句子和句式。
+- 上面那几问是我在心里想的，不是要交的作业：让答案渗进叙述里，别一条条照着答，更不要出现任何心理学名词或分析术语。
+- 不要再记一遍事件流水账——事件和核心认知上面已经有了，这里只写我对这些变化更深一层的咀嚼、自我剖析与对{{user}}的洞察。
 - 情绪别写成标签（比如「我有点难过」），落到当时具体的身体感觉、动作，或者突然冒出来的那个念头上。
 - 只基于上面给出的素材，不要编造没有发生过的事；不确定的地方就照实写出我的不确定——「我说不准」也是一种真实的回答。
 - 结尾落在一件具体的事上：下次碰到什么情况，我打算怎么应对。
@@ -215,6 +217,8 @@ export async function runCoreMemoryReflection(
             entry,
             day: resolveEventDay(entry),
             body: cleanMemoryBody(entry.content),
+            isDigest: isEntryBoxDigest(entry),
+            boxTitle: typeof entry.metadata?.eventBoxTitle === "string" ? entry.metadata.eventBoxTitle.trim() : "",
             superseded: isEntrySuperseded(entry),
         }))
         .filter(item => Boolean(item.body))
@@ -228,7 +232,7 @@ export async function runCoreMemoryReflection(
 
     const selected = scoped.length > MAX_EVENT_ENTRIES ? scoped.slice(-MAX_EVENT_ENTRIES) : scoped;
 
-    // ── 素材 2：上一次反思留下的想法（只取同角色最近一条）──
+    // ── 素材 2：核心记忆沉淀（第三人称心理成长脉络 + 用户手动核心设定）与上一轮第一人称反思 ──
     const coreEntries = await loadMemoryEntriesByType(characterId, "core");
     const previousReflections = coreEntries
         .filter(isReflectionMemoryEntry)
@@ -240,6 +244,23 @@ export async function runCoreMemoryReflection(
     const round = previousReflection
         ? Math.max(1, Number(previousReflection.metadata?.reflectionRound ?? 1)) + 1
         : 1;
+
+    // 提炼当前生效的非反思类核心记忆（包括自动/手动生成的核心记忆总结与用户手动置顶的核心记忆），
+    // 让角色反思真正站在「核心记忆心理沉淀」的肩膀上做更高一层的审视。
+    const activeCoreSummaries = coreEntries
+        .filter(e => !isReflectionMemoryEntry(e) && !isEntrySuperseded(e))
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+        .slice(-5);
+    const coreMemoriesText = activeCoreSummaries.length > 0
+        ? activeCoreSummaries
+            .map(e => {
+                const span = typeof e.metadata?.timeSpan === "string" && e.metadata.timeSpan.trim()
+                    ? e.metadata.timeSpan.trim()
+                    : resolveEventDay(e);
+                return `- [${span}] ${cleanMemoryBody(e.content).replace(/\s+/g, " ")}`;
+            })
+            .join("\n")
+        : "（暂无核心记忆沉淀，请直接基于下方事件脉络进行反思）";
 
     // ── 素材 3：还没整理成记忆的即时片段（从上次长期总结截止点算起，避免与长期记忆重复）──
     let transientText = "";
@@ -264,13 +285,16 @@ export async function runCoreMemoryReflection(
         // 即时片段只是加分项，读不到就跳过
     }
 
-    if (selected.length === 0 && !transientText) {
-        return { success: false, error: "没有可用于反思的素材：这个角色还没有长期记忆或近期事件" };
+    if (selected.length === 0 && activeCoreSummaries.length === 0 && !transientText) {
+        return { success: false, error: "没有可用于反思的素材：这个角色还没有核心记忆、长期记忆或近期事件" };
     }
 
     const eventLines = selected.map(item => {
+        const boxTag = item.isDigest
+            ? `【事件盒总结${item.boxTitle ? `：${item.boxTitle}` : ""}】`
+            : (item.boxTitle ? `【事件：${item.boxTitle}】` : "");
         const staleNote = item.superseded ? "（此条部分内容已被后续记忆更正）" : "";
-        return `- ${item.day}${staleNote}｜${item.body.replace(/\s+/g, " ")}`;
+        return `- ${item.day}${boxTag}${staleNote}｜${item.body.replace(/\s+/g, " ")}`;
     });
     const trimmed = trimEventLines(eventLines, MAX_EVENT_CHARS);
     const eventsText = trimmed.lines.length > 0
@@ -288,6 +312,12 @@ export async function runCoreMemoryReflection(
 
     // 用用户在「记忆库 → 设置 → 角色反思提示词」里保存的模板；没配过就回退内置默认
     const reflectionTemplate = (loadMemoryConfig().reflectionPrompt ?? "").trim() || DEFAULT_REFLECTION_PROMPT;
+    const hasCorePlaceholder = /\{\{coreMemories\}\}/i.test(reflectionTemplate);
+    // 若用户自定义了旧版反思模板（不含 {{coreMemories}}），自动将核心记忆沉淀拼入 {{events}} 顶部，保证不丢高层脉络
+    const finalEventsText = (!hasCorePlaceholder && activeCoreSummaries.length > 0)
+        ? `【近期核心记忆心理沉淀】\n${coreMemoriesText}\n\n【具体事件与长期记忆】\n${eventsText}`
+        : eventsText;
+
     // 思考倾向只影响「怎么想」，不影响反思素材；没构建过时按角色设定本身的性格来
     const tendency = loadThinkingTendency(characterId);
     const prompt = applyTendencyToPrompt(
@@ -297,7 +327,8 @@ export async function runCoreMemoryReflection(
             .replace(/\{\{persona\}\}/gi, personaText)
             .replace(/\{\{earliest\}\}/gi, earliest || "未知")
             .replace(/\{\{latest\}\}/gi, latest || "未知")
-            .replace(/\{\{events\}\}/gi, eventsText)
+            .replace(/\{\{coreMemories\}\}/gi, coreMemoriesText)
+            .replace(/\{\{events\}\}/gi, finalEventsText)
             .replace(/\{\{transient\}\}/gi, transientText || "（无）")
             .replace(/\{\{previous\}\}/gi, previousText || "（这是第一次反思，此前没有留下过想法）"),
         tendency,

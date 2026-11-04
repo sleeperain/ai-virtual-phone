@@ -8,7 +8,7 @@ import { generateEmbedding, resolveEmbeddingModel, computeHybridMemoryScore } fr
 import { estimateTokens } from "./token-counter";
 import { extractMemoryStructuredMeta } from "./memory-summarizer";
 import { sortMemoriesByDateThenImportance } from "./memory-injector";
-import { effectiveImportance } from "./memory-revision";
+import { effectiveImportance, isEntrySuperseded } from "./memory-revision";
 import { filterRecallableEntries, getEntryBoxId, isEntryBoxDigest } from "./memory-event-boxes";
 
 /**
@@ -107,15 +107,27 @@ export async function retrieveCoreMemoriesForPrompt(
     const coreEntries = await loadMemoryEntriesByType(characterId, "core");
     if (coreEntries.length === 0) return [];
 
-    // 角色反思只保留最新一条参与提示词注入：
-    // 旧轮次的反思仍保留在核心记忆库供回看，但不注入对话上下文，防止过期心境与当前心态冲突。
+    // 角色反思与增量演进的核心记忆总结均只保留未被接替（或最新一轮）的条目参与对话注入：
+    // 旧轮次的历史记录仍保留在核心记忆库供回看，但不注入当前对话上下文，防止过期心境或已推翻的旧判断干扰当前扮演。
     const reflections = coreEntries
         .filter(e => e.metadata?.origin === "character_reflection")
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     const latestReflectionId = reflections[0]?.id;
-    const candidateEntries = coreEntries.filter(
-        e => e.metadata?.origin !== "character_reflection" || e.id === latestReflectionId,
-    );
+
+    const autoCoreSummaries = coreEntries
+        .filter(e => e.metadata?.origin === "core_summary")
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const latestCoreSummaryId = autoCoreSummaries[0]?.id;
+
+    const candidateEntries = coreEntries.filter(e => {
+        if (e.metadata?.origin === "character_reflection") {
+            return e.id === latestReflectionId;
+        }
+        if (e.metadata?.origin === "core_summary") {
+            return e.id === latestCoreSummaryId;
+        }
+        return !isEntrySuperseded(e);
+    });
 
     // Selection stage: active & effective importance first so budget never drops critical milestones
     const prioritySorted = [...candidateEntries].sort((a, b) => {
