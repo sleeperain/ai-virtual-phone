@@ -43,7 +43,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { runCoreMemoryPipeline } from "@/lib/core-memory-builder";
-import { runCoreMemoryReflection, type ReflectionScope } from "@/lib/core-memory-reflection";
+import { DEFAULT_REFLECTION_PROMPT, runCoreMemoryReflection, type ReflectionScope } from "@/lib/core-memory-reflection";
 import { resolveAuxiliaryApiConfig, resolveUserIdentity } from "@/lib/settings-storage";
 import {
     generateEmbedding,
@@ -62,6 +62,7 @@ import {
     sliceSupersededText,
 } from "@/lib/memory-revision";
 import {
+    DEFAULT_EVENT_BOX_SUMMARY_PROMPT,
     EVENT_BOX_STATUS_META,
     buildSmartBoxSuggestions,
     createEventBox,
@@ -363,6 +364,8 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     } | null>(null);
     const [editingPrompt, setEditingPrompt] = useState<string | null>(null);
     const [editingCorePrompt, setEditingCorePrompt] = useState<string | null>(null);
+    const [editingEventBoxPrompt, setEditingEventBoxPrompt] = useState<string | null>(null);
+    const [editingReflectionPrompt, setEditingReflectionPrompt] = useState<string | null>(null);
     const [confirmDeleteEntryId, setConfirmDeleteEntryId] = useState<string | null>(null);
     const [confirmClearAll, setConfirmClearAll] = useState(false);
     const [pickedCharId, setPickedCharId] = useState<string | null>(null);
@@ -525,6 +528,8 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         if (view !== "settings") {
             setEditingPrompt(null);
             setEditingCorePrompt(null);
+            setEditingEventBoxPrompt(null);
+            setEditingReflectionPrompt(null);
         }
     }, [view]);
 
@@ -1074,6 +1079,39 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         setConfig(next);
         saveMemoryConfig(next);
         showNotice("核心记忆提示词已恢复默认");
+    };
+
+    // 事件盒 / 角色反思提示词：存空串表示跟随内置默认
+    const handleSaveEventBoxPrompt = () => {
+        if (editingEventBoxPrompt === null) return;
+        const next = { ...config, eventBoxSummaryPrompt: editingEventBoxPrompt };
+        setConfig(next);
+        saveMemoryConfig(next);
+        showNotice("事件盒提示词已保存");
+    };
+
+    const handleResetEventBoxPrompt = () => {
+        setEditingEventBoxPrompt("");
+        const next = { ...config, eventBoxSummaryPrompt: "" };
+        setConfig(next);
+        saveMemoryConfig(next);
+        showNotice("事件盒提示词已恢复默认");
+    };
+
+    const handleSaveReflectionPrompt = () => {
+        if (editingReflectionPrompt === null) return;
+        const next = { ...config, reflectionPrompt: editingReflectionPrompt };
+        setConfig(next);
+        saveMemoryConfig(next);
+        showNotice("角色反思提示词已保存");
+    };
+
+    const handleResetReflectionPrompt = () => {
+        setEditingReflectionPrompt("");
+        const next = { ...config, reflectionPrompt: "" };
+        setConfig(next);
+        saveMemoryConfig(next);
+        showNotice("角色反思提示词已恢复默认");
     };
 
     const createManualMemoryId = (type: MemoryEntry["type"]) => (
@@ -3068,6 +3106,17 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         const isCoreModified = currentCorePrompt !== (config.coreMemoryPrompt ?? DEFAULT_CORE_MEMORY_PROMPT);
         const isCoreDefault = (config.coreMemoryPrompt ?? DEFAULT_CORE_MEMORY_PROMPT) === DEFAULT_CORE_MEMORY_PROMPT;
 
+        // 这两项：空串 = 跟随内置默认，编辑框里直接显示默认全文，方便对照修改
+        const savedEventBoxPrompt = (config.eventBoxSummaryPrompt ?? "").trim();
+        const currentEventBoxPrompt = editingEventBoxPrompt ?? (savedEventBoxPrompt || DEFAULT_EVENT_BOX_SUMMARY_PROMPT);
+        const isEventBoxModified = currentEventBoxPrompt !== (savedEventBoxPrompt || DEFAULT_EVENT_BOX_SUMMARY_PROMPT);
+        const isEventBoxDefault = !savedEventBoxPrompt || savedEventBoxPrompt === DEFAULT_EVENT_BOX_SUMMARY_PROMPT;
+
+        const savedReflectionPrompt = (config.reflectionPrompt ?? "").trim();
+        const currentReflectionPrompt = editingReflectionPrompt ?? (savedReflectionPrompt || DEFAULT_REFLECTION_PROMPT);
+        const isReflectionModified = currentReflectionPrompt !== (savedReflectionPrompt || DEFAULT_REFLECTION_PROMPT);
+        const isReflectionDefault = !savedReflectionPrompt || savedReflectionPrompt === DEFAULT_REFLECTION_PROMPT;
+
         return (
             <div className="page-menu memory-settings-menu">
                 {/* Manual summarize */}
@@ -3544,6 +3593,86 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                 className="ui-btn ui-btn-primary p-2.5 w-full"
                             >
                                 <Archive size={14} className="mr-1.5" /> 保存核心记忆提词配置
+                            </button>
+                        )}
+                    </div>
+                </div>
+
+                {/* 事件盒提示词编辑器 */}
+                <p className="menu-group-desc mx-2">事件盒提示词</p>
+                <div className="menu-group">
+                    <div className="menu-item">
+                        <MemorySettingsIcon icon={Folder} color={BINDING_ACCENTS.memory} />
+                        <div className="menu-label-group">
+                            <span className="menu-label">事件盒总结提示词</span>
+                            <span className="menu-desc">
+                                变量：{"{{char}}"} 角色、{"{{title}}"} 事件盒名称、{"{{earliest}}"} 起始时间、
+                                {"{{latest}}"} 结束时间、{"{{previousDigestSection}}"} 先前总结、{"{{events}}"} 本次事件记录
+                            </span>
+                        </div>
+                        {!isEventBoxDefault && (
+                            <div className="menu-right">
+                                <button onClick={handleResetEventBoxPrompt} className="menu-label menu-label-danger ts-12 underline">
+                                    恢复默认
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                    <div className="px-4 pb-4 flex flex-col gap-3">
+                        <textarea
+                            value={currentEventBoxPrompt}
+                            onChange={e => setEditingEventBoxPrompt(e.target.value)}
+                            className="ui-textarea w-full min-h-[200px] ts-14 leading-relaxed resize-y"
+                        />
+                        <p className="ts-11 text-secondary" style={{ margin: 0 }}>
+                            末尾必须保留「**事件标题** / **重要性** / **检索关键词**」三行输出要求，否则总结后无法自动更新盒名、重要性与向量。
+                        </p>
+                        {isEventBoxModified && (
+                            <button
+                                onClick={handleSaveEventBoxPrompt}
+                                className="ui-btn ui-btn-primary p-2.5 w-full"
+                            >
+                                <Zap size={14} className="mr-1.5" /> 保存事件盒提词配置
+                            </button>
+                        )}
+                    </div>
+                </div>
+
+                {/* 角色反思提示词编辑器 */}
+                <p className="menu-group-desc mx-2">角色反思提示词</p>
+                <div className="menu-group">
+                    <div className="menu-item">
+                        <MemorySettingsIcon icon={Heart} color={BINDING_ACCENTS.voice} />
+                        <div className="menu-label-group">
+                            <span className="menu-label">核心记忆角色反思提示词</span>
+                            <span className="menu-desc">
+                                变量：{"{{char}}"} 角色、{"{{user}}"} 用户、{"{{persona}}"} 角色设定、{"{{earliest}}"} 起始时间、
+                                {"{{latest}}"} 结束时间、{"{{events}}"} 长期记忆、{"{{transient}}"} 即时片段、{"{{previous}}"} 上次反思
+                            </span>
+                        </div>
+                        {!isReflectionDefault && (
+                            <div className="menu-right">
+                                <button onClick={handleResetReflectionPrompt} className="menu-label menu-label-danger ts-12 underline">
+                                    恢复默认
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                    <div className="px-4 pb-4 flex flex-col gap-3">
+                        <textarea
+                            value={currentReflectionPrompt}
+                            onChange={e => setEditingReflectionPrompt(e.target.value)}
+                            className="ui-textarea w-full min-h-[200px] ts-14 leading-relaxed resize-y"
+                        />
+                        <p className="ts-11 text-secondary" style={{ margin: 0 }}>
+                            反思用角色自己绑定的聊天 API；角色设定始终完整注入，改这里只调整反思的问法与写作要求。
+                        </p>
+                        {isReflectionModified && (
+                            <button
+                                onClick={handleSaveReflectionPrompt}
+                                className="ui-btn ui-btn-primary p-2.5 w-full"
+                            >
+                                <Heart size={14} className="mr-1.5" /> 保存反思提词配置
                             </button>
                         )}
                     </div>

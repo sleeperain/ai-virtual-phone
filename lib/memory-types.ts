@@ -35,6 +35,10 @@ export type MemoryConfig = {
     summarizationPrompt: string;            // user-editable prompt template for memory summarization
     coreMemoryPrompt: string;               // user-editable prompt template for core-memory extraction
     vnSummaryPrompt: string;                // user-editable prompt for VN chapter summarization
+    /** 事件盒总结提示词：留空则使用内置 DEFAULT_EVENT_BOX_SUMMARY_PROMPT */
+    eventBoxSummaryPrompt?: string;
+    /** 角色反思提示词：留空则使用内置 DEFAULT_REFLECTION_PROMPT */
+    reflectionPrompt?: string;
     shortTermAllowedSources?: {
         chat?: boolean;
         group_chat?: boolean;
@@ -166,6 +170,9 @@ export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
     summarizationPrompt: DEFAULT_SUMMARIZATION_PROMPT,
     coreMemoryPrompt: DEFAULT_CORE_MEMORY_PROMPT,
     vnSummaryPrompt: "",
+    // 这两项留空表示「跟随内置默认」，避免 memory-types 反向依赖各模块的默认常量
+    eventBoxSummaryPrompt: "",
+    reflectionPrompt: "",
     shortTermAllowedSources: {
         chat: true,
         group_chat: true,

@@ -8,7 +8,7 @@
 
 import type { MemoryEntry } from "./memory-types";
 import { kvGet, kvSet, registerDynamicPrefix } from "./kv-db";
-import { saveMemoryEntry, deleteMemoryEntry } from "./memory-storage";
+import { saveMemoryEntry, deleteMemoryEntry, loadMemoryConfig } from "./memory-storage";
 import { resolveAuxiliaryApiConfig } from "./settings-storage";
 import { generateEmbedding, resolveEmbeddingModel, cosineSimilarity, keywordOverlapRatio } from "./memory-embedding";
 import { simpleLLMCall } from "./api-helpers";
@@ -398,7 +398,9 @@ export async function summarizeEventBoxManually(
         })
         .join("\n");
 
-    const prompt = DEFAULT_EVENT_BOX_SUMMARY_PROMPT
+    // 用用户在「记忆库 → 设置 → 事件盒提示词」里保存的模板；没配过就回退内置默认
+    const promptTemplate = (loadMemoryConfig().eventBoxSummaryPrompt ?? "").trim() || DEFAULT_EVENT_BOX_SUMMARY_PROMPT;
+    const prompt = promptTemplate
         .replace(/\{\{char\}\}/gi, characterName || "角色")
         .replace(/\{\{title\}\}/gi, box.title)
         .replace(/\{\{earliest\}\}/gi, earliest)

@@ -286,7 +286,9 @@ export async function runCoreMemoryReflection(
         ? buildPersonaText(character, userName)
         : `你的名字是「${resolvedName || "这个角色"}」，你在和「${userName}」相处。`;
 
-    const prompt = DEFAULT_REFLECTION_PROMPT
+    // 用用户在「记忆库 → 设置 → 角色反思提示词」里保存的模板；没配过就回退内置默认
+    const reflectionTemplate = (loadMemoryConfig().reflectionPrompt ?? "").trim() || DEFAULT_REFLECTION_PROMPT;
+    const prompt = reflectionTemplate
         .replace(/\{\{char\}\}/gi, resolvedName || "这个角色")
         .replace(/\{\{user\}\}/gi, userName)
         .replace(/\{\{persona\}\}/gi, personaText)
