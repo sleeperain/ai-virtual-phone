@@ -38,7 +38,7 @@ import type {
 } from "@/lib/diary-entry-types";
 import { cancelDiaryReply, scheduleDiaryReply } from "@/lib/diary-reply-service";
 import { inheritedCharacterAppApiLabel, loadCharacterAppApiId } from "@/lib/app-api-binding";
-import { loadApiConfigs } from "@/lib/settings-storage";
+import { loadApiConfigs, resolveUserIdentity } from "@/lib/settings-storage";
 import { AppApiPickerDialog } from "@/components/settings/app-api-picker-dialog";
 import { useDiaryFont } from "./use-diary-font";
 import { useDragToTrash } from "./use-drag-to-trash";
@@ -637,20 +637,30 @@ function DiaryBookCover({ book, index, busy, onOpen }: {
 
 function DiaryEntryCardContent({ entry }: { entry: DiaryEntry }) {
   const preview = entry.blocks.map(blockPlainText).filter(Boolean).join(" ");
-  const markers = getEntryMarkers(entry);
+  const text = clipText(preview || entry.body, 240);
+  const markers = getEntryMarkers(entry).slice(0, 4);
+  const chars = Array.from(text);
+  const dropcap = chars[0] ?? "";
+  const rest = chars.slice(1).join("");
+  // 角色写的署角色名；我写的那篇署我自己的身份名
+  const authorName = entry.authorType === "user"
+    ? resolveUserIdentity(entry.characterId)?.name?.trim() || "我"
+    : entry.characterName;
   return (
     <>
-      <span className="diary-entry-card-kicker">DIARY</span>
+      <span className="diary-entry-card-title">{entry.title}</span>
       {markers.length > 0 ? (
-        <span className="diary-entry-card-markers">
-          {markers.map(marker => <span key={marker} className="diary-entry-marker">{marker}</span>)}
+        <span className="diary-entry-card-tags">
+          {markers.map(marker => <span key={marker} className="diary-entry-card-tag">{marker}</span>)}
         </span>
       ) : null}
-      <strong>{entry.title}</strong>
-      <span className="diary-entry-card-text">{clipText(preview || entry.body, 130)}</span>
-      <span className="diary-entry-card-meta">
-        <span>{entry.characterName}</span>
-        <time>{formatEntryTime(entry.createdAt)}</time>
+      <span className="diary-entry-card-body">
+        {dropcap ? <span className="diary-entry-card-dropcap" aria-hidden="true">{dropcap}</span> : null}
+        {rest}
+      </span>
+      <span className="diary-entry-card-foot">
+        <span className="diary-entry-card-author">文/{authorName}</span>
+        <time className="diary-entry-card-date">{formatEntryTime(entry.createdAt)}</time>
       </span>
     </>
   );

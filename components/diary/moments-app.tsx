@@ -641,38 +641,40 @@ function MomentChatSnap({ line, url, scale = 1 }: { line: Extract<MomentChatLine
     : <span className="moment-chat-snap" data-speaker={line.speaker} style={{ width, height }} />;
 }
 
+/** 「我」的名字：取这个角色那里的身份名，取不到就用「我」 */
+function momentUserName(characterId: string): string {
+  return resolveUserIdentity(characterId)?.name?.trim() || "我";
+}
+
+/** 卡片正文：聊天收的取文字气泡，其它取段落，都摊平成一段 */
+function momentCardText(moment: Moment): string {
+  const text = moment.source === "chat"
+    ? (moment.lines ?? []).flatMap(line => (line.kind === "text" ? [line.text] : [])).join(" ")
+    : moment.paragraphs.join(" ");
+  return clipText(text.replace(/\s+/g, " ").trim(), 240);
+}
+
 function MomentCardContent({ moment, assetUrls }: { moment: Moment; assetUrls: Record<string, string> }) {
-  if (moment.source === "chat") {
-    const lines = moment.lines ?? [];
-    // 纸条外面：他靠左、我靠右，不加框，放前几条，多了渐隐
-    return (
-      <>
-        <span className="diary-entry-card-kicker">CHAT</span>
-        <span className="diary-entry-card-markers">
-          <span className="diary-entry-marker">{sourceLabel(moment)}</span>
-        </span>
-        <span className={`moment-chat-lines${lines.length > 5 || moment.paragraphs.join("").length > 70 ? " is-clipped" : ""}`}>
-          {lines.slice(0, 6).map((line, index) => line.kind === "text"
-            ? <span key={index} className="moment-chat-line" data-speaker={line.speaker}>{line.text}</span>
-            : <MomentChatSnap key={index} line={line} url={assetUrls[line.asset]} scale={0.6} />)}
-        </span>
-        <span className="diary-entry-card-meta">
-          <span>{lines.length} 条</span>
-          <time>{momentDate(moment)}</time>
-        </span>
-      </>
-    );
-  }
+  const text = momentCardText(moment);
+  const chars = Array.from(text);
+  const dropcap = chars[0] ?? "";
+  const rest = chars.slice(1).join("");
+  // 我写的署我的名字，角色写的署角色的名字
+  const authorName = moment.speaker === "user" ? momentUserName(moment.characterId) : moment.speakerName;
   return (
     <>
-      <span className="diary-entry-card-kicker">{moment.source === "extra" ? "EXTRA" : "STORY"}</span>
-      <span className="diary-entry-card-markers">
-        <span className="diary-entry-marker">{sourceLabel(moment)}</span>
+      <span className="diary-entry-card-title">{sourceLabel(moment)}</span>
+      <span className="diary-entry-card-tags">
+        <span className="diary-entry-card-tag">{moment.source === "chat" ? "聊天" : moment.source === "extra" ? "番外" : "正篇"}</span>
+        <span className="diary-entry-card-tag">{moment.speaker === "user" ? "我" : "TA"}</span>
       </span>
-      <span className="diary-entry-card-text" data-speaker={moment.speaker}>{clipText(moment.paragraphs.join(" "), 130)}</span>
-      <span className="diary-entry-card-meta">
-        <span>{moment.speakerName}</span>
-        <time>{momentDate(moment)}</time>
+      <span className="diary-entry-card-body" data-speaker={moment.speaker}>
+        {dropcap ? <span className="diary-entry-card-dropcap" aria-hidden="true">{dropcap}</span> : null}
+        {rest}
+      </span>
+      <span className="diary-entry-card-foot">
+        <span className="diary-entry-card-author" data-speaker={moment.speaker}>文/{authorName}</span>
+        <time className="diary-entry-card-date">{momentDate(moment)}</time>
       </span>
     </>
   );
