@@ -1159,17 +1159,20 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         showNotice("核心记忆提示词已恢复默认");
     };
 
-    // 事件盒 / 角色反思提示词：存空串表示跟随内置默认
+    // 事件盒 / 角色反思提示词：存空串表示跟随内置默认；恢复默认时将 editing 状态置回 null，输入框立刻显示内置默认全文
     const handleSaveEventBoxPrompt = () => {
         if (editingEventBoxPrompt === null) return;
-        const next = { ...config, eventBoxSummaryPrompt: editingEventBoxPrompt };
+        const trimmed = editingEventBoxPrompt.trim();
+        const stored = (!trimmed || trimmed === DEFAULT_EVENT_BOX_SUMMARY_PROMPT) ? "" : editingEventBoxPrompt;
+        const next = { ...config, eventBoxSummaryPrompt: stored };
+        setEditingEventBoxPrompt(null);
         setConfig(next);
         saveMemoryConfig(next);
         showNotice("事件盒提示词已保存");
     };
 
     const handleResetEventBoxPrompt = () => {
-        setEditingEventBoxPrompt("");
+        setEditingEventBoxPrompt(null);
         const next = { ...config, eventBoxSummaryPrompt: "" };
         setConfig(next);
         saveMemoryConfig(next);
@@ -1178,14 +1181,17 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
 
     const handleSaveReflectionPrompt = () => {
         if (editingReflectionPrompt === null) return;
-        const next = { ...config, reflectionPrompt: editingReflectionPrompt };
+        const trimmed = editingReflectionPrompt.trim();
+        const stored = (!trimmed || trimmed === DEFAULT_REFLECTION_PROMPT) ? "" : editingReflectionPrompt;
+        const next = { ...config, reflectionPrompt: stored };
+        setEditingReflectionPrompt(null);
         setConfig(next);
         saveMemoryConfig(next);
         showNotice("角色反思提示词已保存");
     };
 
     const handleResetReflectionPrompt = () => {
-        setEditingReflectionPrompt("");
+        setEditingReflectionPrompt(null);
         const next = { ...config, reflectionPrompt: "" };
         setConfig(next);
         saveMemoryConfig(next);
