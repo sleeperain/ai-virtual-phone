@@ -1243,9 +1243,6 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
                                             </div>
                                             {paramsOpen && (
                                                 <div className="p-[14px]">
-                                                    <p className="ui-slider-hint mb-3">
-                                                        温度、Top P、Max Tokens 等模型采样参数在「设置 → API 设置 → 编辑配置 → 生成参数」里按配置调整。
-                                                    </p>
                                                     <div className="grid grid-cols-1 gap-3">
                                                         <div className="flex flex-col gap-2 col-span-full">
                                                             <label className="ui-slider-label">剧情/线下模式摘要字段</label>

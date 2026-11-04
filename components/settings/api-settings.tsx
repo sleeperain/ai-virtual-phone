@@ -814,11 +814,8 @@ export function ApiSettings() {
                                                             })}
                                                         />
                                                     </div>
-                                                    {config.generationParameters ? (
+                                                    {config.generationParameters && (
                                                         <>
-                                                            <span className="ui-slider-hint">
-                                                                温度、Top P、Max Tokens 等模型采样参数在这里配置，一条配置一套，不再和预设绑在一起。只有勾选的字段才会发给服务商——不同接口支持的字段不同（例如 Anthropic 不认 frequency_penalty / presence_penalty，部分本地模型不认 top_a）。
-                                                            </span>
                                                             <div className="grid grid-cols-2 gap-3">
                                                                 {GENERATION_PARAM_CONTROLS.map(control => {
                                                                     const params = { ...DEFAULT_API_GENERATION_PARAMETERS, ...config.generationParameters };
@@ -869,10 +866,6 @@ export function ApiSettings() {
                                                                 })}
                                                             </div>
                                                         </>
-                                                    ) : (
-                                                        <span className="ui-slider-hint">
-                                                            关闭时沿用预设里的生成参数（升级前的行为），老配置不受影响。
-                                                        </span>
                                                     )}
                                                 </div>
                                             )}
