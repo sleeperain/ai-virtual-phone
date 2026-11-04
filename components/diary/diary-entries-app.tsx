@@ -588,11 +588,18 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
   );
 }
 
+/** 卡片正文预览：把最新那篇的 blocks 摊成一段纯文本，没有 blocks 就退回 body */
+function diaryExcerpt(entry?: DiaryEntry): string {
+  if (!entry) return "";
+  const fromBlocks = entry.blocks.map(blockPlainText).filter(Boolean).join(" ");
+  return (fromBlocks || entry.body || "").replace(/\s+/g, " ").trim();
+}
+
 /**
- * 角色日记列表里的一张身份卡片：
+ * 角色日记列表里的一张身份卡片（报纸式排版）：
  * 第一行左侧 ARCHIVE 序号（按列表顺序 01、02…）；
- * 第二行左侧证件照尺寸的头像，右侧上方角色名、下方右对齐日期。
- * 头像与右侧信息列等高，日期贴着信息列底部，所以日期下边线和头像下边线自动对齐。
+ * 第二行左侧证件照尺寸的头像，右侧是最新一篇的正文预览（首字下沉、显示前七行）；
+ * 最后一行左侧加粗「本报记者 角色名」，右侧日期，字号一致。
  */
 function DiaryBookCover({ book, index, busy, onOpen }: {
   book: DiaryBook;
@@ -601,24 +608,28 @@ function DiaryBookCover({ book, index, busy, onOpen }: {
   onOpen: () => void;
 }) {
   const latest = book.entries[0];
+  const excerpt = diaryExcerpt(latest);
   return (
     <button type="button" className="diary-book" onClick={onOpen}>
       <span className="diary-book-head">
         <span className="diary-book-archive">ARCHIVE {String(index + 1).padStart(2, "0")}</span>
+        {busy ? (
+          <span className="diary-book-status">
+            <DiaryWritingStatus />
+          </span>
+        ) : null}
       </span>
       <span className="diary-book-id">
         <span className="diary-book-avatar">
           {book.avatar ? <img src={book.avatar} alt="" /> : <Bot size={30} strokeWidth={1.5} />}
         </span>
-        <span className="diary-book-info">
-          <strong>{book.characterName}</strong>
-          {busy ? (
-            <em className="diary-book-status">
-              <DiaryWritingStatus />
-            </em>
-          ) : null}
-          <time className="diary-book-date">{formatEntryTime(latest.createdAt)}</time>
+        <span className="diary-book-excerpt">
+          {excerpt || "这一页还空着。"}
         </span>
+      </span>
+      <span className="diary-book-foot">
+        <span className="diary-book-reporter">本报记者 {book.characterName}</span>
+        <time className="diary-book-date">{formatEntryTime(latest.createdAt)}</time>
       </span>
     </button>
   );

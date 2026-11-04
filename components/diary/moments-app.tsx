@@ -592,14 +592,24 @@ export function MomentsApp({ onBack, onNotice }: MomentsAppProps) {
   );
 }
 
+/** 卡片正文预览：聊天收的那段取文字气泡，其它取段落；都摊成一段纯文本 */
+function momentExcerpt(moment?: Moment): string {
+  if (!moment) return "";
+  const text = moment.source === "chat"
+    ? (moment.lines ?? []).flatMap(line => (line.kind === "text" ? [line.text] : [])).join(" ")
+    : moment.paragraphs.join(" ");
+  return text.replace(/\s+/g, " ").trim();
+}
+
 /**
- * 角色列表里的一张身份卡片：
+ * 角色列表里的一张身份卡片（报纸式排版）：
  * 第一行左侧 ARCHIVE 序号（按列表顺序 01、02…）；
- * 第二行左侧证件照尺寸的头像，右侧上方角色名、右下角日期，
- * 日期贴着信息列底部，所以它和头像的下边线是对齐的。
+ * 第二行左侧证件照尺寸的头像，右侧是最新一段的正文预览（首字下沉、显示前七行）；
+ * 最后一行左侧加粗「本报记者 角色名」，右侧日期，字号一致。
  */
 function MomentBookCover({ book, index, onOpen }: { book: MomentBook; index: number; onOpen: () => void }) {
   const latest = book.moments[0];
+  const excerpt = momentExcerpt(latest);
   return (
     <button type="button" className="diary-book" onClick={onOpen}>
       <span className="diary-book-head">
@@ -609,10 +619,13 @@ function MomentBookCover({ book, index, onOpen }: { book: MomentBook; index: num
         <span className="diary-book-avatar">
           {book.avatar ? <img src={book.avatar} alt="" /> : <Bot size={30} strokeWidth={1.5} />}
         </span>
-        <span className="diary-book-info">
-          <strong>{book.characterName}</strong>
-          <time className="diary-book-date">{formatDate(latest.createdAt)}</time>
+        <span className="diary-book-excerpt">
+          {excerpt || "这一页还空着。"}
         </span>
+      </span>
+      <span className="diary-book-foot">
+        <span className="diary-book-reporter">本报记者 {book.characterName}</span>
+        <time className="diary-book-date">{momentDate(latest)}</time>
       </span>
     </button>
   );

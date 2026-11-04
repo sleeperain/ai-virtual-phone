@@ -4295,7 +4295,8 @@
 }
 
 .diary-book-head,
-.diary-book-id {
+.diary-book-id,
+.diary-book-foot {
   position: relative;
   z-index: 1;
 }
@@ -4330,12 +4331,12 @@
   text-overflow: ellipsis;
 }
 
-/* 第二行：左边放大的证件照，右边信息列（名字在上、日期贴底） */
+/* 第二行：左边放大的证件照，右边是最新一篇的正文预览 */
 .diary-book-id {
   display: grid;
   grid-template-columns: 76px minmax(0, 1fr);
   gap: 14px;
-  align-items: stretch;
+  align-items: start;
 }
 
 .diary-book-avatar {
@@ -4361,48 +4362,71 @@
   display: block;
 }
 
-.diary-book-info {
+/* 正文预览：报纸式首字下沉，只露前七行。
+   行数和字号绑在一起算，改行数只改 --book-excerpt-lines 即可。 */
+.diary-book-excerpt {
+  --book-excerpt-size: calc(13px*var(--app-text-scale,1));
+  --book-excerpt-lines: 7;
+  display: block;
   min-width: 0;
-  min-height: 96px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  align-items: stretch;
+  font-family: var(--diary-entry-font-family);
+  font-size: var(--book-excerpt-size);
+  line-height: 1.62;
+  color: rgba(42, 39, 34, 0.82);
+  text-align: justify;
+  /* 固定行高 × 行数 = 精确切在第 7 行末，多余部分裁掉 */
+  max-height: calc(var(--book-excerpt-size) * 1.62 * var(--book-excerpt-lines));
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 
-.diary-book-info strong {
-  display: block;
-  max-width: 100%;
-  align-self: flex-start;
-  padding-top: 2px;
-  font-size: calc(22px*var(--app-text-scale,1));
-  line-height: 1.18;
-  font-weight: 600;
-  letter-spacing: 0.3px;
+/* 首字：2 倍字号 + 1.62 倍行高（相对自身字号）= 正好占两行，
+   浮起来让后文绕排，就是报纸那种下沉大字。 */
+.diary-book-excerpt::first-letter {
+  float: left;
+  font-size: 2em;
+  line-height: 1.62;
+  font-weight: 700;
+  margin-right: 4px;
   color: #24221f;
+}
+
+/* 正在写日记时的小字：挪到第一行右侧，不再和正文抢地方 */
+.diary-book-status {
+  flex: 0 0 auto;
+  font-style: normal;
+  font-size: calc(10.5px*var(--app-text-scale,1));
+  color: rgba(74, 65, 56, 0.55);
+}
+
+/* 末行：左侧加粗「本报记者 角色名」，右侧日期，字号一致 */
+.diary-book-foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 2px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(58, 48, 34, 0.16);
+  font-size: calc(10.5px*var(--app-text-scale,1));
+  line-height: 1;
+}
+
+.diary-book-reporter {
+  min-width: 0;
+  font-family: var(--app-font-family);
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  color: rgba(36, 34, 31, 0.74);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* 正在写日记时的小字，落在名字下面的空白里 */
-.diary-book-status {
-  margin-top: 6px;
-  align-self: flex-start;
-  font-style: normal;
-  font-size: calc(11px*var(--app-text-scale,1));
-  color: rgba(74, 65, 56, 0.55);
-}
-
-/* 最右小字日期：上方细分割线只压日期这段宽度，底边与头像底边同高 */
 .diary-book-date {
-  align-self: flex-end;
-  margin-top: auto;
-  padding-top: 5px;
-  border-top: 1px solid rgba(58, 48, 34, 0.18);
+  flex: 0 0 auto;
   font-family: "Courier New", monospace;
-  font-size: calc(10.5px*var(--app-text-scale,1));
-  line-height: 1;
+  font-weight: 400;
   letter-spacing: 1.1px;
   color: rgba(74, 65, 56, 0.58);
   white-space: nowrap;
