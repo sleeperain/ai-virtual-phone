@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { ChevronLeft, Columns2, Palette, Settings2 } from "lucide-react";
+import { ChevronLeft, Columns2, Palette, Settings2, Users } from "lucide-react";
 import type { CalendarRoutineDayType, CalendarRoutineItem, CalendarScheduleItem } from "@/lib/calendar-types";
 import type { MenstrualDayState } from "@/lib/menstrual-storage";
 import { formatIsoDate, parseIsoDate, timeToMinutes } from "@/lib/calendar-utils";
@@ -564,7 +564,7 @@ export function CalendarRoutinePage({
           <Columns2 size={17} />
         </button>
         <button type="button" className="calendar-icon-btn caltool-access-button" onClick={onOpenAccess} aria-label="选择日历知情角色">
-          <span className="caltool-contact-icon" aria-hidden="true"><i /><b /></span>
+          <Users size={17} />
         </button>
         <button type="button" className="calendar-icon-btn" onClick={onOpenTheme} aria-label="主题与自定义">
           <Palette size={17} />

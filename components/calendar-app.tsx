@@ -825,7 +825,6 @@ export function PhoneCalendarApp({
             onOpenTheme={() => setShowThemePanel(true)}
             onOpenSettings={() => openSettings(null)}
             onOpenAccess={() => setToolView({ kind: "access" })}
-            onOpenViewPicker={selectedOwner?.ownerType === "character" ? () => setShowDaysPanel(true) : null}
           />
         ) : (
           <CalendarDetailPage

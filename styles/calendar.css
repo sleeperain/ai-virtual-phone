@@ -2498,36 +2498,6 @@
   color: var(--c-calendar-sub);
 }
 
-.calendar-app-shell .caltool-contact-icon {
-  position: relative;
-  display: block;
-  width: 19px;
-  height: 18px;
-}
-
-.calendar-app-shell .caltool-contact-icon i {
-  position: absolute;
-  left: 6px;
-  top: 0;
-  width: 7px;
-  height: 7px;
-  border: 1.7px solid currentColor;
-  border-radius: 50%;
-  box-sizing: border-box;
-}
-
-.calendar-app-shell .caltool-contact-icon b {
-  position: absolute;
-  left: 1px;
-  bottom: 0;
-  width: 17px;
-  height: 8px;
-  border: 1.7px solid currentColor;
-  border-bottom: 0;
-  border-radius: 10px 10px 2px 2px;
-  box-sizing: border-box;
-}
-
 .calendar-app-shell .caltool-access-intro {
   margin: 0;
   font-size: 12px;

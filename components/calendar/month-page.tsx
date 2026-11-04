@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { ChevronLeft, Columns2, Palette, Settings2 } from "lucide-react";
+import { ChevronLeft, Palette, Settings2, Users } from "lucide-react";
 import type { CalendarScheduleItem } from "@/lib/calendar-types";
 import type { MenstrualDayState } from "@/lib/menstrual-storage";
 import { formatIsoDate } from "@/lib/calendar-utils";
@@ -91,8 +91,6 @@ export function CalendarMonthPage({
   /** 日历设置（经期、读取范围、节假日、视图） */
   onOpenSettings: () => void;
   onOpenAccess: () => void;
-  /** 角色日历顶栏的视图切换弹窗入口（日程安排 / 生活节律） */
-  onOpenViewPicker?: (() => void) | null;
 }) {
   const mondayFirst = weekStartDay === "monday";
   const months = useMemo(() => buildMonths(todayIso, mondayFirst), [todayIso, mondayFirst]);
@@ -211,13 +209,8 @@ export function CalendarMonthPage({
             {titleYear}年
           </button>
           <span className="calendar-topbar-space" />
-          {onOpenViewPicker ? (
-            <button type="button" className="calendar-icon-btn" onClick={onOpenViewPicker} aria-label="视图与显示天数">
-              <Columns2 size={17} />
-            </button>
-          ) : null}
           <button type="button" className="calendar-icon-btn caltool-access-button" onClick={onOpenAccess} aria-label="选择日历知情角色">
-            <span className="caltool-contact-icon" aria-hidden="true"><i /><b /></span>
+            <Users size={17} />
           </button>
           <button type="button" className="calendar-icon-btn" onClick={onOpenTheme} aria-label="主题与自定义">
             <Palette size={17} />
