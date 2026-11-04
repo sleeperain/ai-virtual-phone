@@ -1975,11 +1975,15 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                 {isSuperseded && (
                                     <div className="mem-superseded-note">
                                         <span>
-                                            已被后来的记忆更正
+                                            {entry.metadata?.origin === "character_reflection"
+                                                ? "已被新一轮反思接替（仅保留作历史记录）"
+                                                : "已被后来的记忆更正"}
                                             {typeof revisionRatio === "number" && revisionRatio > 0
                                                 ? ` · 改动约 ${Math.round(revisionRatio * 100)}%`
                                                 : ""}
-                                            {revisionWeight < 1 ? ` · 检索权重 ${Math.round(revisionWeight * 100)}%` : ""}
+                                            {entry.metadata?.origin !== "character_reflection" && revisionWeight < 1
+                                                ? ` · 检索权重 ${Math.round(revisionWeight * 100)}%`
+                                                : ""}
                                         </span>
                                         {hasRevisionSource && (
                                             <button
@@ -1993,7 +1997,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                     scrollToAndFlash(`mem-entry-card-${revisionSourceId}`, revisionSourceId);
                                                 }}
                                             >
-                                                查看新版本
+                                                {entry.metadata?.origin === "character_reflection" ? "查看最新反思" : "查看新版本"}
                                             </button>
                                         )}
                                     </div>
@@ -3869,8 +3873,9 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                         <div className="menu-label-group">
                             <span className="menu-label">核心记忆角色反思提示词</span>
                             <span className="menu-desc">
-                                变量：{"{{char}}"} 角色、{"{{user}}"} 用户、{"{{persona}}"} 角色设定、{"{{earliest}}"} 起始时间、
-                                {"{{latest}}"} 结束时间、{"{{events}}"} 长期记忆、{"{{transient}}"} 即时片段、{"{{previous}}"} 上次反思
+                                变量：{"{{char}}"} 角色、{"{{user}}"} 用户、{"{{persona}}"} 角色设定、{"{{tendency}}"} 思考倾向刻度、
+                                {"{{earliest}}"} 起始时间、{"{{latest}}"} 结束时间、{"{{events}}"} 长期记忆、
+                                {"{{transient}}"} 即时片段、{"{{previous}}"} 上次反思
                             </span>
                         </div>
                         {!isReflectionDefault && (

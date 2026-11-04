@@ -13,7 +13,12 @@
 //   绝不在同一次调用里混合多个角色的素材。
 
 import type { MemoryEntry } from "./memory-types";
-import { loadMemoryConfig, loadMemoryEntriesByType, saveMemoryEntry } from "./memory-storage";
+import {
+    getLastSummarizedTimestamp,
+    loadMemoryConfig,
+    loadMemoryEntriesByType,
+    saveMemoryEntry,
+} from "./memory-storage";
 import { loadCharacters } from "./character-storage";
 import type { Character } from "./character-types";
 import { resolveUserIdentity } from "./settings-storage";
@@ -28,6 +33,13 @@ import {
     formatTimelineForSummarization,
     filterTimelineByAllowedSources,
 } from "./short-term-assembler";
+import { stripMemoryStructuredSections } from "./memory-summarizer";
+import { filterRecallableEntries } from "./memory-event-boxes";
+import {
+    DEFAULT_REVISION_WEIGHT,
+    isEntrySuperseded,
+    REVISION_META_KEYS,
+} from "./memory-revision";
 import { simpleLLMCall } from "./api-helpers";
 
 export type ReflectionScope = "recent7" | "recent30" | "all";
@@ -64,9 +76,9 @@ export const DEFAULT_REFLECTION_PROMPT = `你此刻不再是助手，而是「{{
 【你是谁】
 {{persona}}
 
-【你惯常的思考强度：沉思/反思/情绪，各 1-10】
+【你惯常的思考强度（1-10）】
 {{tendency}}
-这三个数只决定你把力气花在哪、写得多重。不要提到数字，不要解释它们，也不要拿它们当话题。
+这三个刻度只决定你把力气花在哪、写得多重。不要提到数字，不要解释它们，也不要拿它们当话题。
 
 【时间跨度】
 {{earliest}} 至 {{latest}}
@@ -114,16 +126,9 @@ function resolveEventDay(entry: MemoryEntry): string {
     return toLocalDayKey(entry.createdAt);
 }
 
-/** 去掉记忆正文里的结构化尾巴，避免把「重要性/检索关键词」喂给模型。 */
+/** 去掉记忆正文里的结构化尾巴与行内时间戳，统一复用 memory-summarizer 的清洗逻辑。 */
 function cleanMemoryBody(content: string): string {
-    return String(content || "")
-        .replace(/^###\s*事件总结\s*\n+/i, "")
-        .replace(/^###\s*未解决问题[\s\S]*?(?=\n###|$)/gim, "")
-        .replace(/\*\*事件日期\*\*[：:][^\n]*/g, "")
-        .replace(/\*\*重要性\*\*[：:][^\n]*/g, "")
-        .replace(/\*\*检索关键词\*\*[：:][^\n]*/g, "")
-        .replace(/\n{3,}/g, "\n\n")
-        .trim();
+    return stripMemoryStructuredSections(String(content || ""));
 }
 
 export function isReflectionMemoryEntry(entry: MemoryEntry): boolean {
@@ -195,11 +200,14 @@ export async function runCoreMemoryReflection(
         return { success: false, error: "未找到可用的 API：请先在「绑定配置」里给这个角色绑定 API，或到「设置 → API 设置」添加一个" };
     }
 
-    // ── 素材 1：该角色的长期记忆（按范围过滤，按事件日期升序）──
-    const allLongTerm = await loadMemoryEntriesByType(characterId, "long_term");
-    const startDayKey = scope === "all"
+    // ── 素材 1：该角色的长期记忆（先过滤事件盒中已归档的旧条目，再按范围过滤、按事件日期升序）──
+    const allLongTerm = filterRecallableEntries(await loadMemoryEntriesByType(characterId, "long_term"));
+    const scopeCutoffMs = scope === "all"
         ? undefined
-        : toLocalDayKey(new Date(Date.now() - REFLECTION_SCOPE_DAYS[scope] * 86400000).toISOString());
+        : Date.now() - REFLECTION_SCOPE_DAYS[scope] * 86400000;
+    const startDayKey = scopeCutoffMs !== undefined
+        ? toLocalDayKey(new Date(scopeCutoffMs).toISOString())
+        : undefined;
 
     const collectScoped = (from?: string) => allLongTerm
         .filter(entry => !from || resolveEventDay(entry) >= from)
@@ -207,13 +215,14 @@ export async function runCoreMemoryReflection(
             entry,
             day: resolveEventDay(entry),
             body: cleanMemoryBody(entry.content),
+            superseded: isEntrySuperseded(entry),
         }))
         .filter(item => Boolean(item.body))
         .sort((a, b) => a.day.localeCompare(b.day) || a.entry.createdAt.localeCompare(b.entry.createdAt));
 
     let scoped = collectScoped(startDayKey);
     if (scoped.length === 0 && scope !== "all") {
-        // 窗口里没素材时退回全部长期记忆，避免新角色第一次点反刍就空转
+        // 窗口里没素材时退回全部长期记忆，避免新角色第一次点反思就空转
         scoped = collectScoped(undefined);
     }
 
@@ -221,9 +230,10 @@ export async function runCoreMemoryReflection(
 
     // ── 素材 2：上一次反思留下的想法（只取同角色最近一条）──
     const coreEntries = await loadMemoryEntriesByType(characterId, "core");
-    const previousReflection = coreEntries
+    const previousReflections = coreEntries
         .filter(isReflectionMemoryEntry)
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const previousReflection = previousReflections[0];
     const previousText = previousReflection
         ? cleanMemoryBody(previousReflection.content)
         : "";
@@ -231,13 +241,19 @@ export async function runCoreMemoryReflection(
         ? Math.max(1, Number(previousReflection.metadata?.reflectionRound ?? 1)) + 1
         : 1;
 
-    // ── 素材 3：还没整理成记忆的即时片段 ──
+    // ── 素材 3：还没整理成记忆的即时片段（从上次长期总结截止点算起，避免与长期记忆重复）──
     let transientText = "";
     try {
         const config = loadMemoryConfig();
-        const afterIso = startDayKey
-            ? new Date(`${startDayKey}T00:00:00`).toISOString()
+        const scopeFloorIso = scopeCutoffMs !== undefined
+            ? new Date(scopeCutoffMs).toISOString()
             : new Date(Date.now() - ALL_SCOPE_TRANSIENT_DAYS * 86400000).toISOString();
+        const lastSumTs = getLastSummarizedTimestamp(characterId);
+        // 若已有长期记忆入选，优先只取「上次长期总结之后」的新鲜事件，消除与 events 的重叠；
+        // 若当前没有任何长期记忆，则回退按范围起点读取短期时间线兜底。
+        const afterIso = (selected.length > 0 && lastSumTs && lastSumTs > scopeFloorIso)
+            ? lastSumTs
+            : scopeFloorIso;
         const timeline = filterTimelineByAllowedSources(
             loadNativeTimeline(characterId, { afterTimestamp: afterIso }),
             config.shortTermAllowedSources,
@@ -252,7 +268,10 @@ export async function runCoreMemoryReflection(
         return { success: false, error: "没有可用于反思的素材：这个角色还没有长期记忆或近期事件" };
     }
 
-    const eventLines = selected.map(item => `- ${item.day}｜${item.body.replace(/\s+/g, " ")}`);
+    const eventLines = selected.map(item => {
+        const staleNote = item.superseded ? "（此条部分内容已被后续记忆更正）" : "";
+        return `- ${item.day}${staleNote}｜${item.body.replace(/\s+/g, " ")}`;
+    });
     const trimmed = trimEventLines(eventLines, MAX_EVENT_CHARS);
     const eventsText = trimmed.lines.length > 0
         ? `${trimmed.lines.join("\n")}${trimmed.truncated ? "\n（更早的记忆已省略）" : ""}`
@@ -280,7 +299,7 @@ export async function runCoreMemoryReflection(
             .replace(/\{\{latest\}\}/gi, latest || "未知")
             .replace(/\{\{events\}\}/gi, eventsText)
             .replace(/\{\{transient\}\}/gi, transientText || "（无）")
-            .replace(/\{\{previous\}\}/gi, previousText || "（这是第一次反刍，没有留下过想法）"),
+            .replace(/\{\{previous\}\}/gi, previousText || "（这是第一次反思，此前没有留下过想法）"),
         tendency,
     );
 
@@ -334,11 +353,12 @@ export async function runCoreMemoryReflection(
         sourceApp: dominantSource,
         type: "core",
         content: reflection,
-        importance: 0.94,
+        importance: 0.96,
         createdAt: now,
         updatedAt: now,
         metadata: {
             origin: "character_reflection",
+            active: true,
             reflectionFramework: "认知评价（初评/次评）+ 内部工作模型 + 心智化梯度 + 叙事序列 + 实施意图 if-then",
             reflectionScope: scope,
             reflectionRound: round,
@@ -351,6 +371,31 @@ export async function runCoreMemoryReflection(
         },
     };
     await saveMemoryEntry(coreEntry);
+
+    // 新一轮反思落盘后，将之前的旧反思标记为已被新反思接替并降权（取消 active），
+    // 历史记录仍留在核心记忆列表供用户回看，但避免多轮过期心境同时注入聊天导致角色精分。
+    for (const oldRefl of previousReflections) {
+        if (oldRefl.id === entryId) continue;
+        const alreadySuperseded = Boolean(oldRefl.metadata?.[REVISION_META_KEYS.by]);
+        const wasActive = Boolean(oldRefl.metadata?.active);
+        if (!alreadySuperseded || wasActive) {
+            await saveMemoryEntry({
+                ...oldRefl,
+                updatedAt: now,
+                metadata: {
+                    ...(oldRefl.metadata ?? {}),
+                    active: false,
+                    [REVISION_META_KEYS.by]: alreadySuperseded
+                        ? oldRefl.metadata?.[REVISION_META_KEYS.by]
+                        : entryId,
+                    [REVISION_META_KEYS.at]: alreadySuperseded
+                        ? oldRefl.metadata?.[REVISION_META_KEYS.at]
+                        : now,
+                    [REVISION_META_KEYS.weight]: DEFAULT_REVISION_WEIGHT,
+                },
+            });
+        }
+    }
 
     return {
         success: true,

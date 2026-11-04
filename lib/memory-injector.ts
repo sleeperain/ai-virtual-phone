@@ -144,7 +144,11 @@ export function formatCoreMemories(memories: MemoryEntry[]): string {
     for (const entry of sorted) {
         const eventDate = resolveEntryDateKey(entry);
         const cleanBody = (stripMemoryStructuredSections(entry.content) || entry.content).replace(/\s*\n+\s*/g, " ").trim();
-        lines.push(`- [${eventDate}] ${cleanBody}`);
+        const isReflection = entry.metadata?.origin === "character_reflection";
+        const prefix = isReflection
+            ? `[${eventDate}｜我近期的内心反思与应对打算]`
+            : `[${eventDate}]`;
+        lines.push(`- ${prefix} ${cleanBody}`);
     }
     return lines.join("\n");
 }

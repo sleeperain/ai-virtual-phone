@@ -278,12 +278,51 @@ export async function buildThinkingTendency(
 }
 
 /**
- * 拼成注入反思提示词的文本。
- * 刻意只有三个数字：任何形容词、示例或概述都会被模型当成素材搬进反思正文，
- * 所以这里一个多余的字都不给。
+ * 三个刻度的定义：只解释「这个数字在量什么」，不含任何角色专属的描写。
+ * 通用刻度可以给，角色专属的范例不能给——后者才会被模型照抄进反思正文。
+ */
+export const TENDENCY_SCALE_LEGEND = `沉思：被情绪触动后反复回到同一处、越想越窄的程度（越高越容易原地打转）
+反思：把纠结转成理解的程度（越高越能重新解释对方、修正自己的判断）
+情绪：情绪体验的强度与直接程度（越高情绪越重、越直给）`;
+
+/**
+ * 根据三个维度的分值区间，生成确定性的「思考结构与收尾方式」约束指令。
+ * 只约束独白的结构、节奏与结尾落点，绝不提供任何形容词或例句，防止模型照抄词句，
+ * 同时解决纯数字刻度容易被正向反思问题拉平、导致高沉思/低反思角色也写得过度通达的问题。
+ */
+export function deriveTendencyStructuralDirectives(tendency: ThinkingTendency): string {
+    const { brooding, reflection, acuity } = tendency;
+    const rules: string[] = [];
+
+    // 1. 沉思 vs 反思的组合决定「往深处钻牛角尖」还是「想通翻篇」
+    if (brooding >= 7 && reflection <= 4) {
+        rules.push("- 你目前很难真正想通这些事：重心应放在让你反复耿耿于怀的具体细节和未证实的猜测上，不要强行和解或原谅；结尾的「下次怎么办」可以是防备、试探、回避或暗中观察，不必写成建设性的坦诚沟通。");
+    } else if (brooding >= 7 && reflection >= 7) {
+        rules.push("- 你既会反复咀嚼那些刺痛或触动你的细节，也会逼自己从中理出头绪：前半段写出那种挥之不去的纠结感，后半段再落到你修正后的判断与具体应对上。");
+    } else if (brooding <= 4 && reflection >= 7) {
+        rules.push("- 你不习惯在情绪里原地打转：点出事情本身后，把重心放在重新理解对方动机、理清关系走向，以及干净利落的下一步行动上。");
+    } else if (brooding <= 4 && reflection <= 4) {
+        rules.push("- 你平时懒得把事情翻来覆去地深想：写得简短直接，只记下最直观的印象和下回碰到时的本能反应，不要长篇大论地剖析内心。");
+    }
+
+    // 2. 情绪锐度决定「情绪是直给还是压着」
+    if (acuity <= 3) {
+        rules.push("- 你习惯把情绪压平、隔离或绕开：叙述时多落在实际事务、客观细节或身体上的倦怠感上，避开直接承认自己在乎或难受。");
+    } else if (acuity >= 8) {
+        rules.push("- 你的情绪体验很重、很直接：心里那股劲（无论是委屈、恼火、动摇还是在乎）不用藏着掖着，顺着当时的生理反应或冲动直白地写出来。");
+    }
+
+    return rules.join("\n");
+}
+
+/**
+ * 拼成注入反思提示词的文本：刻度说明 + 本次三个数 + 结构约束。
+ * 不附带任何角色专属形容词或范例，避免被当成素材复述。
  */
 export function formatTendencyForPrompt(tendency: ThinkingTendency): string {
-    return `${tendency.brooding}/${tendency.reflection}/${tendency.acuity}`;
+    const directives = deriveTendencyStructuralDirectives(tendency);
+    return `${TENDENCY_SCALE_LEGEND}
+本次：沉思 ${tendency.brooding} · 反思 ${tendency.reflection} · 情绪 ${tendency.acuity}（均 1-10）${directives ? `\n\n【基于你思考习惯的本轮行文约束】\n${directives}` : ""}`;
 }
 
 /**
@@ -297,6 +336,6 @@ export function applyTendencyToPrompt(prompt: string, tendency: ThinkingTendency
     if (/\{\{tendency\}\}/i.test(prompt)) {
         return prompt.replace(/\{\{tendency\}\}/gi, body);
     }
-    // 自定义模板里没有占位符时仅前置这三个数字，不带任何说明文字
-    return `${body}\n\n${prompt}`;
+    // 自定义模板里没有占位符时前置「刻度说明 + 本次数值」，保证模型知道数字在量什么
+    return `【你惯常的思考强度】\n${body}\n\n${prompt}`;
 }

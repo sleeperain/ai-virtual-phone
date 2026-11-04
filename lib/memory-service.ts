@@ -107,13 +107,23 @@ export async function retrieveCoreMemoriesForPrompt(
     const coreEntries = await loadMemoryEntriesByType(characterId, "core");
     if (coreEntries.length === 0) return [];
 
-    // Selection stage: active & high importance first so budget never drops critical milestones
-    const prioritySorted = [...coreEntries].sort((a, b) => {
+    // 角色反思只保留最新一条参与提示词注入：
+    // 旧轮次的反思仍保留在核心记忆库供回看，但不注入对话上下文，防止过期心境与当前心态冲突。
+    const reflections = coreEntries
+        .filter(e => e.metadata?.origin === "character_reflection")
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const latestReflectionId = reflections[0]?.id;
+    const candidateEntries = coreEntries.filter(
+        e => e.metadata?.origin !== "character_reflection" || e.id === latestReflectionId,
+    );
+
+    // Selection stage: active & effective importance first so budget never drops critical milestones
+    const prioritySorted = [...candidateEntries].sort((a, b) => {
         const aActive = a.metadata?.active ? 1 : 0;
         const bActive = b.metadata?.active ? 1 : 0;
         if (aActive !== bActive) return bActive - aActive;
-        const impA = Number.isFinite(a.importance) ? a.importance : 0.95;
-        const impB = Number.isFinite(b.importance) ? b.importance : 0.95;
+        const impA = effectiveImportance(a, 0.95);
+        const impB = effectiveImportance(b, 0.95);
         if (Math.abs(impB - impA) > 0.001) return impB - impA;
         const aDate = String(a.metadata?.eventDate ?? a.updatedAt ?? a.createdAt);
         const bDate = String(b.metadata?.eventDate ?? b.updatedAt ?? b.createdAt);
