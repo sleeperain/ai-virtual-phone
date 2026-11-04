@@ -134,3 +134,21 @@
   transition: border-color 0.4s ease, box-shadow 0.4s ease;
 }
 
+/* ══════════════════════════════════════════
+   「放入事件盒」事件盒选项区
+   只显示三行，超出上下滑动选择；行高由组件实测后写进 inline max-height，
+   这里只负责排列与滚动手感（gap 与组件里的 CHIP_GAP 保持 6px 一致）
+   ══════════════════════════════════════════ */
+
+.mem-box-chip-scroll {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding-right: 2px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+

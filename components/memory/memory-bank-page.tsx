@@ -1,6 +1,6 @@
 "use client";
 
-import { Component, useState, useEffect, useCallback, type CSSProperties, type ReactNode } from "react";
+import { Component, useState, useEffect, useCallback, useRef, type CSSProperties, type ReactNode } from "react";
 import { Trash2, Zap, Clock, Users, Archive, Folder, AlertCircle, Search, Brain, FileText, MoreHorizontal, Plus, Edit3, X, Check, ChevronLeft, ChevronRight, Filter, SlidersHorizontal, Sparkles, Heart, RotateCcw, History, type LucideIcon } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { MemoryTimeline } from "./memory-timeline";
@@ -406,6 +406,11 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const [smartSelected, setSmartSelected] = useState<Record<string, boolean>>({});
     const [smartBusy, setSmartBusy] = useState(false);
 
+    // 「放入事件盒」模块：事件盒选项区最多显示三行，超出上下滑动。
+    // 行高由 chip 实测得出（不同主题/字号下不写死），量不到就整段展开不滚。
+    const boxChipScrollRef = useRef<HTMLDivElement | null>(null);
+    const [boxChipMaxHeight, setBoxChipMaxHeight] = useState<number | undefined>(undefined);
+
     const disabledSourceCount = MEMORY_SOURCE_OPTIONS
         .filter(source => (config.shortTermAllowedSources ?? {})[source.key] === false).length;
 
@@ -522,6 +527,25 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             setEditingCorePrompt(null);
         }
     }, [view]);
+
+    // 量出「放入事件盒」里单个 chip 的高度，把列表滚动区的最大高度压到三行以内
+    useEffect(() => {
+        const el = boxChipScrollRef.current;
+        if (!el) {
+            setBoxChipMaxHeight(undefined);
+            return;
+        }
+        const CHIP_GAP = 6; // 与 .mem-box-chip-scroll 的 gap 保持一致
+        const measure = () => {
+            const first = el.firstElementChild as HTMLElement | null;
+            const rowHeight = first?.offsetHeight ?? 0;
+            if (rowHeight <= 0) return;
+            setBoxChipMaxHeight(rowHeight * 3 + CHIP_GAP * 2);
+        };
+        measure();
+        window.addEventListener("resize", measure);
+        return () => window.removeEventListener("resize", measure);
+    }, [memoryEditor ? memoryEditor.entry?.id ?? "new" : null, boxes.length]);
 
     const handleSelectChar = (char: Character) => {
         onSelectChar(char.id);
@@ -2215,12 +2239,23 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                         </div>
                                                     </div>
 
-                                                    {/* 展开折叠区：近期事件（深色在前）+ 已归档事件（浅色在后）+ 最下方「+ 添加事件」 */}
+                                                    {/* 展开折叠区：近期事件（深色在前，行尾带「+ 添加事件」）+ 已归档事件（浅色在后） */}
                                                     {isBoxOpen && (
                                                         <div className="mem-box-drawer" onClick={ev => ev.stopPropagation()}>
-                                                            {/* 近期事件（深色） */}
+                                                            {/* 近期事件（深色）：标题在最左，「+ 添加事件」钉在同一行最右 */}
                                                             <div className="mem-box-layer-label" style={{ color: "var(--c-text)", fontWeight: 600 }}>
                                                                 <span>近期事件（{newEntries.length}）</span>
+                                                                <button
+                                                                    type="button"
+                                                                    className="mem-superseded-jump"
+                                                                    style={{ marginLeft: "auto", flexShrink: 0, textDecoration: "none" }}
+                                                                    onClick={() => {
+                                                                        setBoxAddSelectedIds({});
+                                                                        setBoxAddPickerOpen(true);
+                                                                    }}
+                                                                >
+                                                                    + 添加事件
+                                                                </button>
                                                             </div>
                                                             {newEntries.length > 0 ? (
                                                                 <div className="mem-box-chain-list">
@@ -2334,19 +2369,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                                 </>
                                                             )}
 
-                                                            {/* 罗列事件下方：+ 添加事件 */}
-                                                            <div className="mem-box-inline-actions">
-                                                                <button
-                                                                    type="button"
-                                                                    className="mem-superseded-jump"
-                                                                    onClick={() => {
-                                                                        setBoxAddSelectedIds({});
-                                                                        setBoxAddPickerOpen(true);
-                                                                    }}
-                                                                >
-                                                                    + 添加事件
-                                                                </button>
-                                                            </div>
+                                                            {/* 「+ 添加事件」已上移到「近期事件」行尾，这里不再重复 */}
                                                         </div>
                                                     )}
                                                 </div>
@@ -2625,36 +2648,48 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                 {!isCore && (!memoryEditor.entry || !isEntryBoxDigest(memoryEditor.entry)) && (
                                                     <div className="mem-edit-field-row">
                                                         <label className="mem-edit-field-label">放入事件盒</label>
-                                                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                                                            <button
-                                                                type="button"
-                                                                className="ui-chip"
-                                                                style={{ fontSize: 11, padding: "4px 10px" }}
-                                                                data-selected={!memoryEditor.eventBoxId ? "" : undefined}
-                                                                onClick={() => setMemoryEditor(prev => prev ? { ...prev, eventBoxId: "" } : prev)}
-                                                            >
-                                                                不放入
-                                                            </button>
-                                                            {boxes.map(b => (
+                                                        <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1, minWidth: 0 }}>
+                                                            {/* 第一行固定为「不放入」+「+ 新建事件盒」，不受下方列表滚动影响 */}
+                                                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
                                                                 <button
-                                                                    key={b.id}
                                                                     type="button"
                                                                     className="ui-chip"
                                                                     style={{ fontSize: 11, padding: "4px 10px" }}
-                                                                    data-selected={memoryEditor.eventBoxId === b.id ? "" : undefined}
-                                                                    onClick={() => setMemoryEditor(prev => prev ? { ...prev, eventBoxId: b.id } : prev)}
+                                                                    data-selected={!memoryEditor.eventBoxId ? "" : undefined}
+                                                                    onClick={() => setMemoryEditor(prev => prev ? { ...prev, eventBoxId: "" } : prev)}
                                                                 >
-                                                                    {b.title}
+                                                                    不放入
                                                                 </button>
-                                                            ))}
-                                                            <button
-                                                                type="button"
-                                                                className="ui-chip"
-                                                                style={{ fontSize: 11, padding: "4px 10px" }}
-                                                                onClick={() => setBoxDialog({ title: "", importance: 8, keywordsText: "" })}
-                                                            >
-                                                                + 新建事件盒
-                                                            </button>
+                                                                <button
+                                                                    type="button"
+                                                                    className="ui-chip"
+                                                                    style={{ fontSize: 11, padding: "4px 10px" }}
+                                                                    onClick={() => setBoxDialog({ title: "", importance: 8, keywordsText: "" })}
+                                                                >
+                                                                    + 新建事件盒
+                                                                </button>
+                                                            </div>
+                                                            {/* 之后罗列全部事件盒：只露三行，超出上下滑动浏览选择 */}
+                                                            {boxes.length > 0 && (
+                                                                <div
+                                                                    ref={boxChipScrollRef}
+                                                                    className="mem-box-chip-scroll"
+                                                                    style={{ maxHeight: boxChipMaxHeight }}
+                                                                >
+                                                                    {boxes.map(b => (
+                                                                        <button
+                                                                            key={b.id}
+                                                                            type="button"
+                                                                            className="ui-chip"
+                                                                            style={{ fontSize: 11, padding: "4px 10px" }}
+                                                                            data-selected={memoryEditor.eventBoxId === b.id ? "" : undefined}
+                                                                            onClick={() => setMemoryEditor(prev => prev ? { ...prev, eventBoxId: b.id } : prev)}
+                                                                        >
+                                                                            {b.title}
+                                                                        </button>
+                                                                    ))}
+                                                                </div>
+                                                            )}
                                                         </div>
                                                     </div>
                                                 )}
