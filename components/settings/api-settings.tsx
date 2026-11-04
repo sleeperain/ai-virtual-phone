@@ -790,65 +790,72 @@ export function ApiSettings() {
                                             />
                                         </div>
                                         {/* 生成参数：一条配置一套（服务商 + 模型），不再放预设里 */}
-                                        <div className="ui-collapsible">
-                                            <div
+                                        <div className="ui-collapsible mt-2 shrink-0" style={{ border: "0.5px solid var(--c-card-border)" }}>
+                                            <button
+                                                type="button"
                                                 onClick={() => setGenerationParamsOpen(!generationParamsOpen)}
                                                 className="ui-collapsible-header flex justify-between items-center select-none"
                                                 data-open={generationParamsOpen}
                                             >
-                                                <span className="menu-label ts-13 font-semibold">生成参数</span>
+                                                <span className="menu-label ts-13 font-semibold">生成参数 (Temperature / Top P / Max Tokens)</span>
                                                 <ChevronDown size={16} className="text-[var(--c-text)]" style={{ transition: "transform 0.2s", transform: generationParamsOpen ? "rotate(180deg)" : "rotate(0deg)" }} />
-                                            </div>
+                                            </button>
                                             {generationParamsOpen && (
-                                            <div className="grid grid-cols-2 gap-3">
-                                                                {GENERATION_PARAM_CONTROLS.map(control => {
-                                                                    const params = { ...DEFAULT_API_GENERATION_PARAMETERS, ...config.generationParameters };
-                                                                    const active = (params.enabled ?? []).includes(control.key);
-                                                                    const value = typeof params[control.key] === "number" ? params[control.key] as number : 0;
-                                                                    return (
-                                                                        <div
-                                                                            key={control.key}
-                                                                            className={`generation-parameter-control flex flex-col gap-1 ${control.key === "max_tokens" ? "col-span-full" : ""}`}
-                                                                            data-disabled={active ? undefined : ""}
-                                                                        >
-                                                                            <div className="flex items-center justify-between gap-2">
-                                                                                <label className="ui-slider-label">{control.label}</label>
-                                                                                <label className="ui-mini-toggle" aria-label={`发送 ${control.label}`}>
-                                                                                    <input
-                                                                                        type="checkbox"
-                                                                                        checked={active}
-                                                                                        onChange={(e) => toggleGenerationParamKey(config, control.key, e.target.checked)}
-                                                                                    />
-                                                                                </label>
-                                                                            </div>
-                                                                            <span className="ui-slider-value">
+                                                <div className="p-[14px] pt-1">
+                                                    <div className="grid grid-cols-2 gap-4">
+                                                        {GENERATION_PARAM_CONTROLS.map(control => {
+                                                            const params = { ...DEFAULT_API_GENERATION_PARAMETERS, ...config.generationParameters };
+                                                            const active = (params.enabled ?? []).includes(control.key);
+                                                            const value = typeof params[control.key] === "number" ? params[control.key] as number : 0;
+                                                            return (
+                                                                <div
+                                                                    key={control.key}
+                                                                    className={`generation-parameter-control flex flex-col gap-1 ${control.key === "max_tokens" ? "col-span-full" : ""}`}
+                                                                    data-disabled={active ? undefined : ""}
+                                                                >
+                                                                    <div className="flex items-center justify-between gap-2">
+                                                                        <label className="ui-slider-label">{control.label}</label>
+                                                                        <div className="flex items-center gap-2">
+                                                                            <span className="ui-slider-value" style={{ width: "auto" }}>
                                                                                 {control.key === "max_tokens"
                                                                                     ? (value > 0 ? value : "自动")
                                                                                     : control.integer ? value : value.toFixed(2)}
                                                                             </span>
-                                                                            <input
-                                                                                className="ui-slider"
-                                                                                type="range"
-                                                                                min={control.min}
-                                                                                max={control.max}
-                                                                                step={control.step}
-                                                                                value={value}
-                                                                                disabled={!active}
-                                                                                onChange={(e) => {
-                                                                                    const next = control.integer
-                                                                                        ? parseInt(e.target.value, 10)
-                                                                                        : Math.round(parseFloat(e.target.value) * 100) / 100;
-                                                                                    updateGenerationParams(config, { [control.key]: next } as Partial<ApiGenerationParameters>);
-                                                                                }}
-                                                                            />
-                                                                            <div className="ui-slider-hints">
-                                                                                <span className="ui-slider-hint">{control.hintLeft}</span>
-                                                                                <span className="ui-slider-hint">{control.hintRight}</span>
-                                                                            </div>
+                                                                            <label className="ui-mini-toggle" aria-label={`发送 ${control.label}`}>
+                                                                                <input
+                                                                                    type="checkbox"
+                                                                                    className="ui-mini-toggle-track"
+                                                                                    checked={active}
+                                                                                    onChange={(e) => toggleGenerationParamKey(config, control.key, e.target.checked)}
+                                                                                />
+                                                                                <span className="ui-mini-toggle-thumb" />
+                                                                            </label>
                                                                         </div>
-                                                                    );
-                                                                })}
-                                            </div>
+                                                                    </div>
+                                                                    <input
+                                                                        className="ui-slider"
+                                                                        type="range"
+                                                                        min={control.min}
+                                                                        max={control.max}
+                                                                        step={control.step}
+                                                                        value={value}
+                                                                        disabled={!active}
+                                                                        onChange={(e) => {
+                                                                            const next = control.integer
+                                                                                ? parseInt(e.target.value, 10)
+                                                                                : Math.round(parseFloat(e.target.value) * 100) / 100;
+                                                                            updateGenerationParams(config, { [control.key]: next } as Partial<ApiGenerationParameters>);
+                                                                        }}
+                                                                    />
+                                                                    <div className="ui-slider-hints">
+                                                                        <span className="ui-slider-hint">{control.hintLeft}</span>
+                                                                        <span className="ui-slider-hint">{control.hintRight}</span>
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </div>
                                             )}
                                         </div>
 
