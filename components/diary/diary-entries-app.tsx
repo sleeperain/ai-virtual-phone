@@ -38,7 +38,7 @@ import type {
 } from "@/lib/diary-entry-types";
 import { cancelDiaryReply, scheduleDiaryReply } from "@/lib/diary-reply-service";
 import { inheritedCharacterAppApiLabel, loadCharacterAppApiId } from "@/lib/app-api-binding";
-import { loadApiConfigs, resolveUserIdentity } from "@/lib/settings-storage";
+import { loadApiConfigs } from "@/lib/settings-storage";
 import { AppApiPickerDialog } from "@/components/settings/app-api-picker-dialog";
 import { useDiaryFont } from "./use-diary-font";
 import { useDragToTrash } from "./use-drag-to-trash";
@@ -410,14 +410,17 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
           </div>
         ) : (
           <div className="diary-shelf">
-            {books.map((book, index) => (
-              <DiaryBookCover
-                key={book.characterId}
-                book={book}
-                index={index}
-                busy={generatingCharacterIds.includes(book.characterId)}
-                onOpen={() => setActiveCharacterId(book.characterId)}
-              />
+            {[0, 1].map(column => (
+              <div className="diary-shelf-column" key={column}>
+                {books.filter((_, index) => index % 2 === column).map(book => (
+                  <DiaryBookCover
+                    key={book.characterId}
+                    book={book}
+                    busy={generatingCharacterIds.includes(book.characterId)}
+                    onOpen={() => setActiveCharacterId(book.characterId)}
+                  />
+                ))}
+              </div>
             ))}
           </div>
         )}
@@ -588,48 +591,38 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
   );
 }
 
-/** 卡片正文预览：把最新那篇的 blocks 摊成一段纯文本，没有 blocks 就退回 body */
-function diaryExcerpt(entry?: DiaryEntry): string {
-  if (!entry) return "";
-  const fromBlocks = entry.blocks.map(blockPlainText).filter(Boolean).join(" ");
-  return (fromBlocks || entry.body || "").replace(/\s+/g, " ").trim();
+const DIARY_BOOK_COVER_COUNT = 6;
+
+function hashText(value: string): number {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  }
+  return hash;
 }
 
-/**
- * 角色日记列表里的一张身份卡片（报纸式排版）：
- * 第一行左侧 ARCHIVE 序号（按列表顺序 01、02…）；
- * 第二行左侧证件照尺寸的头像，右侧是最新一篇的正文预览（首字下沉、显示前七行）；
- * 最后一行左侧加粗「本报记者 角色名」，右侧日期，字号一致。
- */
-function DiaryBookCover({ book, index, busy, onOpen }: {
-  book: DiaryBook;
-  index: number;
-  busy: boolean;
-  onOpen: () => void;
-}) {
+function DiaryBookCover({ book, busy, onOpen }: { book: DiaryBook; busy: boolean; onOpen: () => void }) {
+  const hash = hashText(book.characterId);
   const latest = book.entries[0];
-  const excerpt = diaryExcerpt(latest);
   return (
-    <button type="button" className="diary-book" onClick={onOpen}>
-      <span className="diary-book-head">
-        <span className="diary-book-archive">ARCHIVE {String(index + 1).padStart(2, "0")}</span>
-        {busy ? (
-          <span className="diary-book-status">
-            <DiaryWritingStatus />
-          </span>
-        ) : null}
-      </span>
-      <span className="diary-book-id">
+    <button
+      type="button"
+      className="diary-book"
+      data-cover={hash % DIARY_BOOK_COVER_COUNT}
+      onClick={onOpen}
+    >
+      <span className="diary-book-spine" aria-hidden="true" />
+      <span className="diary-book-frame" aria-hidden="true" />
+      <span className="diary-book-label">
         <span className="diary-book-avatar">
-          {book.avatar ? <img src={book.avatar} alt="" /> : <Bot size={30} strokeWidth={1.5} />}
+          {book.avatar ? <img src={book.avatar} alt="" /> : <Bot size={20} />}
         </span>
-        <span className="diary-book-excerpt">
-          {excerpt || "这一页还空着。"}
-        </span>
+        <strong>{book.characterName}</strong>
+        <em>{busy ? <DiaryWritingStatus /> : "的日记本"}</em>
       </span>
-      <span className="diary-book-foot">
-        <span className="diary-book-reporter">{book.characterName}/文</span>
-        <time className="diary-book-date">{formatEntryTime(latest.createdAt)} 记</time>
+      <span className="diary-book-meta">
+        <span>{book.entries.length} 篇</span>
+        <time>{formatEntryTime(latest.createdAt)}</time>
       </span>
     </button>
   );
@@ -637,30 +630,20 @@ function DiaryBookCover({ book, index, busy, onOpen }: {
 
 function DiaryEntryCardContent({ entry }: { entry: DiaryEntry }) {
   const preview = entry.blocks.map(blockPlainText).filter(Boolean).join(" ");
-  const text = clipText(preview || entry.body, 240);
-  const markers = getEntryMarkers(entry).slice(0, 4);
-  const chars = Array.from(text);
-  const dropcap = chars[0] ?? "";
-  const rest = chars.slice(1).join("");
-  // 角色写的署角色名；我写的那篇署我自己的身份名
-  const authorName = entry.authorType === "user"
-    ? resolveUserIdentity(entry.characterId)?.name?.trim() || "我"
-    : entry.characterName;
+  const markers = getEntryMarkers(entry);
   return (
     <>
-      <span className="diary-entry-card-title">{entry.title}</span>
+      <span className="diary-entry-card-kicker">DIARY</span>
       {markers.length > 0 ? (
-        <span className="diary-entry-card-tags">
-          {markers.map(marker => <span key={marker} className="diary-entry-card-tag">{marker}</span>)}
+        <span className="diary-entry-card-markers">
+          {markers.map(marker => <span key={marker} className="diary-entry-marker">{marker}</span>)}
         </span>
       ) : null}
-      <span className="diary-entry-card-body">
-        {dropcap ? <span className="diary-entry-card-dropcap" aria-hidden="true">{dropcap}</span> : null}
-        {rest}
-      </span>
-      <span className="diary-entry-card-foot">
-        <span className="diary-entry-card-author">文/{authorName}</span>
-        <time className="diary-entry-card-date">{formatEntryTime(entry.createdAt)}</time>
+      <strong>{entry.title}</strong>
+      <span className="diary-entry-card-text">{clipText(preview || entry.body, 130)}</span>
+      <span className="diary-entry-card-meta">
+        <span>{entry.characterName}</span>
+        <time>{formatEntryTime(entry.createdAt)}</time>
       </span>
     </>
   );
