@@ -71,7 +71,9 @@ export type CoreReflectionResult = {
     model?: string;
 };
 
-export const DEFAULT_REFLECTION_PROMPT = `你此刻不再是助手，而是「{{char}}」本人。请完全以{{char}}的第一人称，站在你近期的心理沉淀与经历之上，做一次深度的自我审视——这不是把发生过的事再复述一遍，而是跳出你平时的惯性与表面面具，看清自己真正的心思。
+export const DEFAULT_REFLECTION_PROMPT = `你此刻不再是助手，而是「{{char}}」本人。请完全以{{char}}的第一人称，针对这段时间你与「{{user}}」的相处，做一次抽离出具体日常琐事的**深层心理自省**。
+
+注意：**这是深度的自我剖析与关系洞察，绝不是写日常日记，更不是把发生过的事换个语气重讲一遍！**
 
 【你是谁（初始设定）】
 {{persona}}
@@ -86,31 +88,35 @@ export const DEFAULT_REFLECTION_PROMPT = `你此刻不再是助手，而是「{{
 【你近期沉淀下来的核心认知与成长脉络】
 {{coreMemories}}
 
-【支撑这些变化的事件脉络与近期经历（按时间顺序）】
+【供参考的近期经历背景（仅作心理剖析的依据，严禁在正文中复述这些具体事件）】
 {{events}}
-
-【刚刚发生、还没归档的即时片段】
-{{transient}}
 
 【你上一次深度反思时留下的想法（如果是第一次反思则为空）】
 {{previous}}
 
-【在心里先过这几问，不要写出来，也不要照着顺序答题】
-1. 撕掉我平时的表面惯性：对照我一贯的脾气和习惯，我最近在{{user}}面前是不是活得太像一个固定的壳子了？哪些反应只是我顺着惯性端着的姿态，而我没表现出来的真实念头其实是什么？
-2. 这事真正碰到我哪根弦：在上面那些经历和变化里，我最挂心或最跨不过去的是哪一处？我真正在乎的是什么——它被满足了，还是被冒犯、被挡住了？
-3. 我那口没吐出来的气：我嘴上对{{user}}说的、做出来的，和我夜里独自待着时心里翻上来的一样吗？如果不一样，我按下去的是什么（是心软、委屈、怀疑、占有欲、还是防备）？
-4. 我眼里的{{user}}到底是个什么人：抛开最开始的表面印象，从{{user}}这段时间的言行习惯、言外之意、嘴硬或心软的细节、处事逻辑和试探退缩的边界里，我现在摸透了{{user}}骨子里是个怎样的人？我有哪些判断已经变了，又有哪些事其实还吃不准？
-5. 我自己的立场与下一步破局：我是我自己，不是围着{{user}}打转的影子。接下来{{user}}再做____的时候，我打算打破平时的套路，直接____。（要具体到能照做的动作、态度或试探，可以是更进一步靠近，也可以是立规矩、冷处理或试探底线，别停在空泛的口号上。）
+═══ 严禁踩入的「日记体」雷区（铁律） ═══
+1. **严禁报菜名式复述具体事件与道具**：发生过什么事你心里早就清楚，不需要在独白里给自己背书！正文中严禁罗列吃了什么菜、去了什么地方、具体多少钱、生了什么具体病名、做了什么日常家务等流水账细节。只写这些事在你心里留下的**判断、刺痛、疑虑或领悟**。
+2. **严禁出现日记式时间词与日常行程收尾**：禁止出现“前几日”、“今日中午”、“这几天”、“今晚我得去买/炖……”这类日记口吻，也禁止在结尾写你手头正在干什么活、接下来要去做哪件家务。反思是超越具体时间点的心理沉淀。
+3. **严禁写成单向的“宠溺表忠心”或“检讨书”**：你有自己的主体性、傲气、私心、防卫机制甚至阴暗面，不是围着{{user}}转的完美保姆。
 
-【写作要求】
-- 全程第一人称，用我自己的语气、称呼习惯和说话方式（严格贴着上面的角色设定来，但要写出设定背后活生生的人味，不要演成脸谱化的标签或通用助手口吻）；不要用第三人称，不要写「{{char}}认为」「角色觉得」这类旁白。
-- 250-400 字，分成 2 至 4 个自然段，段落之间空一行。
-- 纯叙述，不要标题、编号、列表、Markdown 符号、括号注释，也不要任何开场白（比如「好的」「以下是」）。
-- 上面那几问是我在心里想的，不是要交的作业：让答案渗进叙述里，别一条条照着答，更不要出现任何心理学名词或分析术语。
-- 不要再记一遍事件流水账——事件和核心认知上面已经有了，这里只写我对这些变化更深一层的咀嚼、自我剖析与对{{user}}的洞察。
-- 情绪别写成标签（比如「我有点难过」），落到当时具体的身体感觉、动作，或者突然冒出来的那个念头上。
-- 只基于上面给出的素材，不要编造没有发生过的事；不确定的地方就照实写出我的不确定——「我说不准」也是一种真实的回答。
-- 结尾落在一件具体的事上：下次碰到什么情况，我打算怎么应对。
+═══ 你真正需要往深处剖的三个切面（融进自然段落里，不要分条） ═══
+一、剖开我自己的惯性与心理暗流
+  在这段时间的拉扯里，我暴露出了自己身上的什么旧习气、防卫本能或软肋？
+  我表面上对{{user}}摆出的姿态，和我心底压着的那口气（比如怕失控、怕被看穿、替对方兜底时的焦躁与无力感、或者没宣之于口的占有欲与怀疑）差在哪？
+
+二、看穿{{user}}的表象与骨子里的性子
+  抛开具体的小事，我如今摸透了{{user}}是个怎样的人？
+  {{user}}在面对压力、脆弱、亲密或冲突时，习惯用什么方式掩饰自己（比如嘴硬、插科打诨、逞强、退缩或试探）？{{user}}嘴上说的和心里真正渴求的安全感之间有什么反差？我有哪些关于{{user}}的旧看法被推翻了？
+
+三、我们之间的张力与我往后的分寸
+  我们这段关系眼下真正卡着的地方、或者心照不宣的拉扯是什么？
+  往后当{{user}}再表现出某种特定的习惯或状态（如逞强、回避、试探、闹别扭）时，我打算用什么态度和分寸去应对？（写的是人际互动与心理博弈的策略，绝不是“给TA炖汤做饭”这种家务动作。）
+
+═══ 写作要求 ═══
+- 全程第一人称，用我自己的语气、称呼习惯和说话方式，但只谈「人心、性子、关系与分寸」，不谈「菜名、琐事、行程」。
+- 220-350 字，分成 2 至 3 个自然段，段落之间空一行。
+- 纯叙述，不要标题、编号、列表、Markdown 符号、括号注释，也不要任何开场白。
+- 不要出现任何现代心理学名词或分析术语，把洞察完全化进我自己的语言体系里。
 
 直接开始写：`;
 
@@ -262,27 +268,27 @@ export async function runCoreMemoryReflection(
             .join("\n")
         : "（暂无核心记忆沉淀，请直接基于下方事件脉络进行反思）";
 
-    // ── 素材 3：还没整理成记忆的即时片段（从上次长期总结截止点算起，避免与长期记忆重复）──
+    // ── 素材 3：短期即时片段（仅在完全没有长期记忆与核心记忆沉淀时作兜底）──
+    // 一旦已有长期记忆或核心记忆沉淀，绝不再混入未总结的原始日常聊天记录：
+    // 原始聊天充满「正在吃什么、手头在干什么活」的琐碎细节，会触发强烈的近因效应，把深度反思直接带偏成「今日日记」。
     let transientText = "";
-    try {
-        const config = loadMemoryConfig();
-        const scopeFloorIso = scopeCutoffMs !== undefined
-            ? new Date(scopeCutoffMs).toISOString()
-            : new Date(Date.now() - ALL_SCOPE_TRANSIENT_DAYS * 86400000).toISOString();
-        const lastSumTs = getLastSummarizedTimestamp(characterId);
-        // 若已有长期记忆入选，优先只取「上次长期总结之后」的新鲜事件，消除与 events 的重叠；
-        // 若当前没有任何长期记忆，则回退按范围起点读取短期时间线兜底。
-        const afterIso = (selected.length > 0 && lastSumTs && lastSumTs > scopeFloorIso)
-            ? lastSumTs
-            : scopeFloorIso;
-        const timeline = filterTimelineByAllowedSources(
-            loadNativeTimeline(characterId, { afterTimestamp: afterIso }),
-            config.shortTermAllowedSources,
-        );
-        const formatted = formatTimelineForSummarization(timeline.slice(-MAX_TRANSIENT_EVENTS), { timeAware: false });
-        if (formatted?.eventsText) transientText = formatted.eventsText.trim();
-    } catch {
-        // 即时片段只是加分项，读不到就跳过
+    if (selected.length === 0 && activeCoreSummaries.length === 0) {
+        try {
+            const config = loadMemoryConfig();
+            const scopeFloorIso = scopeCutoffMs !== undefined
+                ? new Date(scopeCutoffMs).toISOString()
+                : new Date(Date.now() - ALL_SCOPE_TRANSIENT_DAYS * 86400000).toISOString();
+            const lastSumTs = getLastSummarizedTimestamp(characterId);
+            const afterIso = (lastSumTs && lastSumTs > scopeFloorIso) ? lastSumTs : scopeFloorIso;
+            const timeline = filterTimelineByAllowedSources(
+                loadNativeTimeline(characterId, { afterTimestamp: afterIso }),
+                config.shortTermAllowedSources,
+            );
+            const formatted = formatTimelineForSummarization(timeline.slice(-MAX_TRANSIENT_EVENTS), { timeAware: false });
+            if (formatted?.eventsText) transientText = formatted.eventsText.trim();
+        } catch {
+            // 读不到就跳过
+        }
     }
 
     if (selected.length === 0 && activeCoreSummaries.length === 0 && !transientText) {
@@ -299,7 +305,7 @@ export async function runCoreMemoryReflection(
     const trimmed = trimEventLines(eventLines, MAX_EVENT_CHARS);
     const eventsText = trimmed.lines.length > 0
         ? `${trimmed.lines.join("\n")}${trimmed.truncated ? "\n（更早的记忆已省略）" : ""}`
-        : "（暂无长期记忆）";
+        : (transientText || "（暂无长期记忆）");
 
     const earliest = selected[0]?.day ?? startDayKey ?? "";
     const latest = selected[selected.length - 1]?.day
