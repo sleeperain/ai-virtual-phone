@@ -27,10 +27,13 @@ export type ThinkingTendency = {
     reflection: number;
     /** 情绪锐度 1-10：情绪是直给放大，还是压下去变钝 */
     acuity: number;
-    /** 一句话总括 */
-    summary: string;
-    /** 反思时的具体行为规则（多行纯文本） */
-    expression: string;
+    /**
+     * 旧版字段（已废弃，不参与注入也不再生成）：
+     * 任何文字描述都会被模型当成素材搬进反思正文，所以现在只保留三个分数。
+     * 留着这两个可选字段只是为了让早期构建过的数据还能正常读出来。
+     */
+    summary?: string;
+    expression?: string;
     createdAt: string;
     updatedAt: string;
     /** ai=构建产生；user=用户手改过 */
@@ -61,16 +64,15 @@ function clampScore(raw: unknown): number {
 function normalizeTendency(raw: unknown, characterId: string): ThinkingTendency | null {
     if (!raw || typeof raw !== "object") return null;
     const item = raw as Partial<ThinkingTendency>;
-    const expression = typeof item.expression === "string" ? item.expression.trim() : "";
-    if (!expression) return null;
+    // 只认分数：旧数据里可能带 summary/expression，读出来也直接丢掉
+    const hasScores = typeof item.brooding === "number" || typeof item.reflection === "number";
+    if (!hasScores) return null;
     const now = new Date().toISOString();
     return {
         characterId,
         brooding: clampScore(item.brooding),
         reflection: clampScore(item.reflection),
         acuity: clampScore(item.acuity),
-        summary: typeof item.summary === "string" ? item.summary.trim().slice(0, 120) : "",
-        expression,
         createdAt: typeof item.createdAt === "string" ? item.createdAt : now,
         updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : now,
         source: item.source === "user" ? "user" : "ai",
@@ -178,28 +180,21 @@ export const DEFAULT_THINKING_TENDENCY_PROMPT = `你是一位擅长把人物性�
 3. 情绪锐度（acuity）：情绪体验的强烈度与直接程度，以及是否愿意在内心承认它。
    1 = 情绪很淡、钝化、或者长期压着不面对；10 = 情绪一来就很重很直接，心里一清二楚。
 
-【四个维度的分数要互相独立】
-不要因为沉思高就顺手把反思也写低，两者可以同时高（想得多且想得通）、同时低（懒得想）、一高一低。
+【三个维度的分数要互相独立】
+不要因为沉思高就顺手把反思写低，两者可以同时高（想得多且想得通）、同时低（懒得想）、一高一低。
 
-【再写 4 至 6 条"反思时的具体表现"】
-必须写成能被照做的行为规则，全部是第三人称描述这个角色，例如：
-- 被指出问题时先本能辩解两句，隔一阵才在心里承认一部分。
-- 情绪上来时不会说"我难过"，而是转成挑刺或干脆不说话。
-- 回想事情时先抓对方的语气和表情，再倒推发生了什么。
-- 反思的落点总是"下次我该怎么做"，很少停在"我当时什么感觉"。
-禁止写成性格标签（"傲娇""理性""敏感"这类词一律不要单独出现），也不要复述设定原话。
-不要写成"他很重视感情"这种无法执行的话——要写成具体到某个情境下会怎么想、怎么做。
+【只打分，不要写任何解释】
+不要写形容词、例句、行为描述或总结句。这些文字之后会被塞进反思提示词，
+模型会把它当成素材照抄进反思正文，反而干扰它自己写。这里只要三个数字。
 
 【输出格式】
 只输出一个 JSON 对象，不要任何解释、不要 Markdown 代码块围栏：
-{"brooding":7,"reflection":4,"acuity":8,"summary":"一句话概括这个角色反思时的样子，30字以内","expression":"- 第一条\\n- 第二条\\n- 第三条\\n- 第四条"}`;
+{"brooding":7,"reflection":4,"acuity":8}`;
 
 function parseTendencyJson(raw: string): {
     brooding: number;
     reflection: number;
     acuity: number;
-    summary: string;
-    expression: string;
 } | null {
     let text = raw.trim();
     text = text.replace(/^```[a-zA-Z]*\s*\n?/, "").replace(/\n?```\s*$/, "").trim();
@@ -214,22 +209,12 @@ function parseTendencyJson(raw: string): {
     }
     if (!parsed || typeof parsed !== "object") return null;
     const obj = parsed as Record<string, unknown>;
-    const expressionRaw = typeof obj.expression === "string"
-        ? obj.expression
-        : (typeof obj.rules === "string" ? obj.rules : "");
-    const expression = expressionRaw
-        .replace(/\\n/g, "\n")
-        .split("\n")
-        .map(line => line.trim())
-        .filter(Boolean)
-        .join("\n");
-    if (!expression) return null;
+    if (obj.brooding === undefined && obj.reflection === undefined) return null;
+    // 模型偶尔还是会多给 summary/expression，一律丢弃：那层文字不要了
     return {
         brooding: clampScore(obj.brooding),
         reflection: clampScore(obj.reflection),
         acuity: clampScore(obj.acuity),
-        summary: typeof obj.summary === "string" ? obj.summary.trim().slice(0, 120) : "",
-        expression,
     };
 }
 
@@ -281,8 +266,6 @@ export async function buildThinkingTendency(
         brooding: parsed.brooding,
         reflection: parsed.reflection,
         acuity: parsed.acuity,
-        summary: parsed.summary,
-        expression: parsed.expression,
         createdAt: now,
         updatedAt: now,
         source: "ai",
@@ -294,14 +277,13 @@ export async function buildThinkingTendency(
     return { success: true, tendency, apiSource: api.source, model: api.apiConfig.defaultModel };
 }
 
-/** 拼成注入反思提示词的文本。 */
+/**
+ * 拼成注入反思提示词的文本。
+ * 刻意只有三个数字：任何形容词、示例或概述都会被模型当成素材搬进反思正文，
+ * 所以这里一个多余的字都不给。
+ */
 export function formatTendencyForPrompt(tendency: ThinkingTendency): string {
-    const lines = [
-        `沉思倾向 ${tendency.brooding}/10 · 反思倾向 ${tendency.reflection}/10 · 情绪锐度 ${tendency.acuity}/10`,
-    ];
-    if (tendency.summary) lines.push(`倾向概述：${tendency.summary}`);
-    if (tendency.expression) lines.push(`反思时的具体表现：\n${tendency.expression}`);
-    return lines.join("\n");
+    return `${tendency.brooding}/${tendency.reflection}/${tendency.acuity}`;
 }
 
 /**
@@ -310,10 +292,11 @@ export function formatTendencyForPrompt(tendency: ThinkingTendency): string {
  * 这样即使提示词被改过也不会丢掉特质。
  */
 export function applyTendencyToPrompt(prompt: string, tendency: ThinkingTendency | null): string {
-    const body = tendency ? formatTendencyForPrompt(tendency) : "（尚未构建，按角色设定本身的性格来）";
+    if (!tendency) return prompt;
+    const body = formatTendencyForPrompt(tendency);
     if (/\{\{tendency\}\}/i.test(prompt)) {
         return prompt.replace(/\{\{tendency\}\}/gi, body);
     }
-    if (!tendency) return prompt;
-    return `【你一贯的思考倾向（只影响你怎么想、怎么措辞，不要把这些描述念出来）】\n${body}\n\n${prompt}`;
+    // 自定义模板里没有占位符时仅前置这三个数字，不带任何说明文字
+    return `${body}\n\n${prompt}`;
 }

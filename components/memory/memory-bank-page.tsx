@@ -425,8 +425,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         brooding: number;
         reflection: number;
         acuity: number;
-        summary: string;
-        expression: string;
     } | null>(null);
 
     // 「放入事件盒」模块：事件盒选项区最多显示三行，超出上下滑动。
@@ -1061,26 +1059,17 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             brooding: tendency?.brooding ?? 5,
             reflection: tendency?.reflection ?? 5,
             acuity: tendency?.acuity ?? 5,
-            summary: tendency?.summary ?? "",
-            expression: tendency?.expression ?? "",
         });
     };
 
     const handleSaveTendencyEdit = () => {
         if (!selectedCharId || !tendencyEdit) return;
-        const expression = tendencyEdit.expression.trim();
-        if (!expression) {
-            showNotice("请填写反思时的具体表现");
-            return;
-        }
         const now = new Date().toISOString();
         const saved = saveThinkingTendency({
             characterId: selectedCharId,
             brooding: tendencyEdit.brooding,
             reflection: tendencyEdit.reflection,
             acuity: tendencyEdit.acuity,
-            summary: tendencyEdit.summary.trim(),
-            expression,
             createdAt: tendency?.createdAt ?? now,
             updatedAt: now,
             source: "user",
@@ -3347,18 +3336,8 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                 </div>
                                             ))}
                                         </div>
-                                        {tendencyResult.summary ? (
-                                            <p className="ts-12" style={{ margin: "10px 4px 0" }}>{tendencyResult.summary}</p>
-                                        ) : null}
-                                        {tendencyResult.expression ? (
-                                            <div className="g-card" style={{ padding: 12, marginTop: 8 }}>
-                                                <div className="ts-12 leading-[1.75]" style={{ whiteSpace: "pre-wrap" }}>
-                                                    {tendencyResult.expression}
-                                                </div>
-                                            </div>
-                                        ) : null}
                                         <p className="ts-11 text-secondary" style={{ margin: "8px 4px 0" }}>
-                                            已保存。数值与表现都可以点「思考倾向」条目手动修改；反思时会自动参考这份倾向。
+                                            已保存。只有这三个数会进反思提示词，用来校准语气轻重，不写进正文；点「思考倾向」条目可随时调整。
                                         </p>
                                         <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
                                             <button
@@ -3396,7 +3375,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                         <button
                                             className="modal-header-btn modal-header-btn-action"
                                             onClick={handleSaveTendencyEdit}
-                                            disabled={!tendencyEdit.expression.trim()}
                                         >
                                             <Check size={18} />
                                         </button>
@@ -3426,30 +3404,12 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                 <span className="ts-11 text-secondary">{item.desc}</span>
                                             </div>
                                         ))}
-                                        <div className="mem-edit-field-row">
-                                            <label className="mem-edit-field-label">一句话概述</label>
-                                            <input
-                                                type="text"
-                                                className="ui-input ts-12"
-                                                placeholder="例如：嘴上不认，心里反复回放同一句话"
-                                                value={tendencyEdit.summary}
-                                                onChange={e => setTendencyEdit(prev => prev ? { ...prev, summary: e.target.value } : prev)}
-                                            />
-                                        </div>
-                                        <div className="mem-edit-field-row">
-                                            <label className="mem-edit-field-label">反思时的具体表现</label>
-                                            <textarea
-                                                className="ui-textarea ts-12"
-                                                style={{ minHeight: 130, lineHeight: 1.7 }}
-                                                placeholder={"每条一行，写成能照做的行为规则，例如：\n- 被指出问题时先辩解两句，隔一阵才在心里承认一部分\n- 情绪上来时不说难受，而是转成挑刺或沉默"}
-                                                value={tendencyEdit.expression}
-                                                onChange={e => setTendencyEdit(prev => prev ? { ...prev, expression: e.target.value } : prev)}
-                                            />
-                                        </div>
+                                        <p className="ts-11 text-secondary" style={{ margin: "2px 4px 0" }}>
+                                            这里只有刻度，不写文字描述——描述会被模型当成素材搬进反思正文里。
+                                        </p>
                                         <button
                                             className="ui-btn ui-btn-primary mem-edit-save-btn"
                                             onClick={handleSaveTendencyEdit}
-                                            disabled={!tendencyEdit.expression.trim()}
                                         >
                                             保存思考倾向
                                         </button>
