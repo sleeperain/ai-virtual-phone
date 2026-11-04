@@ -381,7 +381,8 @@ export function ApiSettings() {
                 // tokens on hidden reasoning first, so a tiny cap leaves the visible
                 // content empty and the test falsely fails (finishReason=length).
                 // 4096 covers heavy thinkers; a "你好" reply still stops well before it.
-                { temperature: 0.2, max_tokens: 4096 },
+                // 注意：不要硬编码传 temperature: 0.2，否则会覆盖用户在生成参数里设的 temperature（如 Kimi K2.5 强制要求 temperature=1）
+                { max_tokens: 4096 },
             );
             if (result.error || !result.content) {
                 throw new Error(result.error || "模型返回了空内容");

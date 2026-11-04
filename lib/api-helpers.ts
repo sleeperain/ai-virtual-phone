@@ -114,11 +114,16 @@ export function buildSimpleLLMRequest(
     if (!baseUrl || !config.apiKey) return null;
 
     const headers = buildRequestHeaders(config, baseUrl);
-    // 后台小调用（摘要、反省等）：调用方显式指定 > API 配置里的生成参数 > 旧默认值
-    const temperature = options?.temperature ?? config.generationParameters?.temperature ?? 0.7;
+    // 后台小调用（测试连接、摘要、反省等）：优先尊重 API 配置里的生成参数（以及是否启用了 temperature 发送）
+    // 像 Kimi K2.5 等模型强制要求 temperature=1，若用户在 API 配置里设了 1 或关掉了 temperature 发送，不能被后台调用硬编码的 0.2/0.7 覆盖报错
+    const apiParams = config.generationParameters;
+    const tempEnabled = !apiParams?.enabled || apiParams.enabled.includes("temperature");
+    const temperature = tempEnabled
+        ? (apiParams?.temperature ?? options?.temperature ?? 0.7)
+        : undefined;
     const max_tokens = options?.max_tokens
-        ?? (config.generationParameters?.max_tokens && config.generationParameters.max_tokens > 0
-            ? config.generationParameters.max_tokens
+        ?? (apiParams?.max_tokens && apiParams.max_tokens > 0
+            ? apiParams.max_tokens
             : undefined);
 
     if (isNativeAnthropicApi(config)) {
@@ -134,7 +139,7 @@ export function buildSimpleLLMRequest(
                 model: config.defaultModel,
                 messages: anthropicMessages,
                 ...(systemMsg ? { system: systemMsg.content } : {}),
-                temperature,
+                ...(temperature !== undefined ? { temperature } : {}),
                 // Anthropic requires max_tokens. Keep this helper aligned with
                 // the main chat engine instead of silently capping output low.
                 max_tokens: max_tokens ?? SIMPLE_ANTHROPIC_AUTO_MAX_TOKENS,
@@ -158,7 +163,7 @@ export function buildSimpleLLMRequest(
             body: JSON.stringify({
                 contents: parts,
                 generationConfig: {
-                    temperature,
+                    ...(temperature !== undefined ? { temperature } : {}),
                     ...(max_tokens ? { maxOutputTokens: max_tokens } : {}),
                 },
             }),
@@ -172,7 +177,7 @@ export function buildSimpleLLMRequest(
         body: JSON.stringify({
             model: config.defaultModel,
             messages,
-            temperature,
+            ...(temperature !== undefined ? { temperature } : {}),
             ...(max_tokens ? { max_tokens } : {}),
             ...(stream ? { stream: true } : {}),
         }),
