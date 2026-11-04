@@ -23,6 +23,7 @@ import {
   timeToMinutes,
 } from "./calendar-utils";
 import { holidaysForDate } from "./calendar-holidays";
+import { sanitizeScheduleIconKey } from "./calendar-icons";
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 
 const STORAGE_KEY = "ai_phone_calendar_plans_v1";
@@ -315,7 +316,9 @@ export function upsertCalendarScheduleItem(
     endTime: item.endTime,
     location: item.location.trim(),
     title: item.title.trim(),
+    // 选了 SVG 图标就不再留 emoji，两者取一个展示
     emoji: sanitizeScheduleEmoji(item.emoji),
+    ...(sanitizeScheduleIconKey(item.iconKey) ? { iconKey: sanitizeScheduleIconKey(item.iconKey) } : {}),
     colorKey: item.colorKey || pickScheduleColorKey(item.startTime),
     source: item.source,
     createdAt: item.createdAt ?? now,
@@ -390,6 +393,11 @@ function saveRoutineStore(store: PersistedRoutineStore): void {
   kvSet(ROUTINE_STORAGE_KEY, JSON.stringify(store));
 }
 
+/** 备注统一成一行（存的时候留全文，取出来顺手压成一行给界面/提示词用） */
+function routineNote(value: unknown): string {
+  return typeof value === "string" ? value.replace(/\r/g, "").trim().slice(0, 500) : "";
+}
+
 export function sortRoutineItems(items: CalendarRoutineItem[]): CalendarRoutineItem[] {
   const dayOrder: Record<CalendarRoutineDayType, number> = { workday: 0, holiday: 1 };
   return [...items].sort((a, b) => {
@@ -418,6 +426,7 @@ export function loadCharacterRoutinePlan(ownerId: string): CalendarCharacterRout
         .filter(item => (item.dayType === "workday" || item.dayType === "holiday") && isCalendarTimeRangeAllowed(item.startTime, item.endTime))
         .map(item => ({
           ...item,
+          note: routineNote(item.note),
           colorKey: item.colorKey || pickScheduleColorKey(item.startTime),
         })),
     ),
@@ -437,6 +446,7 @@ export function replaceCharacterRoutineItems(ownerId: string, items: CalendarRou
         .filter(item => (item.dayType === "workday" || item.dayType === "holiday") && isCalendarTimeRangeAllowed(item.startTime, item.endTime))
         .map(item => ({
           ...item,
+          note: routineNote(item.note),
           colorKey: item.colorKey || pickScheduleColorKey(item.startTime),
         })),
     ),
@@ -460,7 +470,7 @@ export function upsertCharacterRoutineItem(
     endTime: item.endTime,
     location: item.location.trim(),
     title: item.title.trim(),
-    emoji: sanitizeScheduleEmoji(item.emoji),
+    note: routineNote(item.note),
     colorKey: item.colorKey || pickScheduleColorKey(item.startTime),
     source: item.source,
     createdAt: item.createdAt ?? now,
@@ -497,7 +507,7 @@ export function normalizeGeneratedRoutineItems(
     endTime: string;
     location: string;
     title: string;
-    emoji?: string;
+    note?: string;
     colorKey?: CalendarColorKey;
   }>,
 ): CalendarRoutineItem[] {
@@ -511,7 +521,7 @@ export function normalizeGeneratedRoutineItems(
         endTime: normalizeTime(item.endTime) || item.endTime,
         location: item.location.trim(),
         title: item.title.trim(),
-        emoji: sanitizeScheduleEmoji(item.emoji),
+        note: routineNote(item.note),
         colorKey: isCalendarColorKey(item.colorKey) ? item.colorKey : pickScheduleColorKey(item.startTime),
         source: "generated" as const,
         createdAt: now,
@@ -552,24 +562,34 @@ export function resolveRoutineDayType(dateOrIso: Date | string, config = loadCal
   return "workday";
 }
 
-export function formatCharacterRoutineForPrompt(ownerId: string): string {
+/** 一条生活节律的提示词写法：时间、地点、事项，有备注就带上备注 */
+export function formatRoutineItemForPrompt(item: CalendarRoutineItem): string {
+  const note = routineNote(item.note).replace(/\n+/g, " / ");
+  return `${item.startTime}-${item.endTime} @${item.location || "未定"} ${item.title}${note ? `｜备注：${note}` : ""}`;
+}
+
+/**
+ * 生活节律提示词：只注入「今天这一种」——
+ * 今天是工作日就只给工作日作息，今天是节假日（周末或已启用的法定节假日）就只给节假日作息，
+ * 免得模型把两套作息混着用。要给特定日期就算传那一天。
+ */
+export function formatCharacterRoutineForPrompt(
+  ownerId: string,
+  dateOrIso: Date | string = new Date(),
+): string {
+  const iso = typeof dateOrIso === "string" ? dateOrIso : formatIsoDate(dateOrIso);
+  const dayType = resolveRoutineDayType(iso);
+  const label = dayType === "holiday" ? "节假日" : "工作日";
   const plan = loadCharacterRoutinePlan(ownerId);
+  const items = plan.items.filter(item => item.dayType === dayType);
+  const headline = `今天是 ${iso} ${getWeekdayLabel(iso)}，属于${label}（${label}作息适用）；发生日程安排冲突时以日程安排为准。`;
   if (plan.items.length === 0) {
-    return "暂无固定生活节律安排。";
+    return `${headline}\n${label}：暂无固定生活节律安排。`;
   }
-  const workdays = plan.items.filter(item => item.dayType === "workday");
-  const holidays = plan.items.filter(item => item.dayType === "holiday");
-  const formatLine = (label: string, list: CalendarRoutineItem[]) => {
-    if (list.length === 0) return `${label}：暂无明确作息`;
-    const summary = list
-      .map(item => `${item.startTime}-${item.endTime} @${item.location || "未定"} ${item.title}`)
-      .join("；");
-    return `${label}：${summary}`;
-  };
-  return [
-    formatLine("工作日", workdays),
-    formatLine("节假日（含周末及法定节假日）", holidays),
-  ].join("\n");
+  if (items.length === 0) {
+    return `${headline}\n${label}：暂无明确作息`;
+  }
+  return [headline, `${label}作息：`, ...items.map(item => `- ${formatRoutineItemForPrompt(item)}`)].join("\n");
 }
 
 export function validateRoutineDraft(item: {
@@ -623,7 +643,7 @@ export function getCurrentCalendarScheduleForPrompt(
     if (activeRoutineItems.length > 0) {
       const label = dayType === "holiday" ? "节假日作息" : "工作日作息";
       return activeRoutineItems
-        .map(item => `${formatCalendarScheduleItemForPrompt(item)}（${label}）`)
+        .map(item => `${formatRoutineItemForPrompt(item)}（${label}）`)
         .join("；");
     }
   }
@@ -676,7 +696,7 @@ export function buildCalendarScheduleMarker(
       "执行优先级规则：备忘录优先、日程安排（特殊事件）第二、生活节律（常规作息）最后；当日程安排与生活节律在同一时间段发生冲突时，优先执行日程安排。",
       `${ownerLabel}本周日程安排（特殊事件，优先于生活节律）：`,
       formatCalendarScheduleForPrompt(ownerType, ownerId, weekStart),
-      `${ownerLabel}生活节律（常规作息，无特殊日程冲突时按此执行）：`,
+      `${ownerLabel}生活节律（常规作息，只列出今天适用的那一类；无特殊日程冲突时按此执行）：`,
       formatCharacterRoutineForPrompt(ownerId),
     ].join("\n");
   }

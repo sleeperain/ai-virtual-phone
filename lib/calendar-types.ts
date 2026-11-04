@@ -18,8 +18,10 @@ export type CalendarScheduleItem = {
   endTime: string;    // HH:MM
   location: string;
   title: string;
-  /** 事项 emoji 图标（可选，一个 emoji） */
+  /** 旧版 emoji 图标：只用来显示历史数据，新选的图标走 iconKey */
   emoji?: string;
+  /** 内置线条 SVG 图标的键名（lib/calendar-icons.ts） */
+  iconKey?: string;
   colorKey: CalendarColorKey;
   source: "manual" | "generated";
   createdAt: string;
@@ -45,6 +47,9 @@ export type CalendarRoutineItem = {
   endTime: string;    // HH:MM
   location: string;
   title: string;
+  /** 备注：比事项更细的活动描写（作息不再配图标，改成写一句话说明） */
+  note: string;
+  /** 历史数据里可能还留着 emoji，不再展示也不再写入 */
   emoji?: string;
   colorKey: CalendarColorKey;
   source: "manual" | "generated";

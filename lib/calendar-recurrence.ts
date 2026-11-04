@@ -17,6 +17,7 @@ import {
     pickScheduleColorKey,
     sanitizeScheduleEmoji,
 } from "./calendar-utils";
+import { sanitizeScheduleIconKey } from "./calendar-icons";
 import {
     loadCalendarExtras,
     normalizeCalendarTodos,
@@ -172,12 +173,15 @@ type ItemFields = {
     location: string;
     title: string;
     emoji: string;
+    /** 内置线条 SVG 图标键名；和 emoji 二选一 */
+    iconKey?: string;
     colorKey?: CalendarColorKey;
 };
 
 type DetailsDraft = { note: string; allDay: boolean; todos: CalendarTodo[] };
 
 function buildItem(id: string, date: string, fields: ItemFields, now: string): CalendarScheduleItem {
+    const iconKey = sanitizeScheduleIconKey(fields.iconKey);
     return {
         id,
         date,
@@ -187,6 +191,7 @@ function buildItem(id: string, date: string, fields: ItemFields, now: string): C
         location: oneLine(fields.location, "", 300),
         title: oneLine(fields.title, "未命名事项", 300),
         emoji: sanitizeScheduleEmoji(fields.emoji),
+        ...(iconKey ? { iconKey } : {}),
         colorKey: fields.colorKey || pickScheduleColorKey(fields.startTime),
         source: "manual",
         createdAt: now,
@@ -356,6 +361,7 @@ export function updateEntireSeries(input: {
                     createdAt: before[index]?.createdAt || todo.createdAt || now,
                 })),
             };
+            const nextIconKey = sanitizeScheduleIconKey(fields.iconKey);
             return [{
                 ...item,
                 startTime: fields.startTime,
@@ -363,6 +369,7 @@ export function updateEntireSeries(input: {
                 title,
                 location: oneLine(fields.location, "", 300),
                 emoji: sanitizeScheduleEmoji(fields.emoji),
+                ...(nextIconKey ? { iconKey: nextIconKey } : { iconKey: undefined }),
                 colorKey: fields.colorKey || pickScheduleColorKey(fields.startTime),
                 updatedAt: now,
             }];

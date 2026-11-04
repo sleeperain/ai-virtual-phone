@@ -1039,6 +1039,50 @@
   background: var(--c-calendar-sel-bg);
 }
 
+/* ── 图标选择：内置线条 SVG（取代原来那排 emoji 预设） ── */
+.calendar-icon-row {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 8px 6px;
+}
+
+.calendar-icon-preset {
+  width: 100%;
+  aspect-ratio: 1;
+  border: none;
+  border-radius: 10px;
+  background: var(--c-calendar-surface);
+  color: var(--c-calendar-ink);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.calendar-icon-preset:hover {
+  background: var(--c-calendar-surface-2);
+}
+
+.calendar-icon-preset[data-active="true"] {
+  background: var(--c-calendar-sel-bg);
+  color: var(--c-calendar-sel-fg);
+}
+
+/* 时间轴事件块：图标跟标题同一行 */
+.calendar-tl-event-icon {
+  display: inline-block;
+  vertical-align: -2px;
+  margin-right: 3px;
+}
+
+/* 生活节律的备注行：比时间行更淡 */
+.calendar-tl-event-note {
+  color: var(--c-calendar-faint);
+}
+
 /* ── 颜色选择 ── */
 .calendar-color-picker {
   display: grid;

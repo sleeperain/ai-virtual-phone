@@ -338,8 +338,9 @@ function buildRoutineTriggerInstruction(ownerName: string): string {
   return [
     `请为${ownerName}生成「工作日」与「节假日」的日常作息时间表（生活节律 / 常规事件）。`,
     "请结合角色的人设、职业、性格与生活习惯，规划一天中各个时间段的典型日常活动（如起床、通勤/工作/学习、用餐、休闲娱乐、运动、休息就寝等）。",
-    "每行一条，严格按以下 6 段格式输出：类型|开始时间|结束时间|地点|emoji|事项",
-    "其中「类型」只能填「工作日」或「节假日」；开始时间与结束时间为 HH:MM（24小时制，结束时间需晚于开始时间，跨夜请拆分为 23:59 前后）；emoji 填一个最贴合该事项的表情符号。",
+    "每行一条，严格按以下 6 段格式输出：类型|开始时间|结束时间|地点|事项|备注",
+    "其中「类型」只能填「工作日」或「节假日」；开始时间与结束时间为 HH:MM（24小时制，结束时间需晚于开始时间，跨夜请拆分为 23:59 前后）。",
+    "「备注」写更细节的活动：这个时段具体在做什么、和谁、什么状态（例如“闹钟响三遍才爬起来，抓着面包出门”“边吃饭边刷手机看剧”）；没有细节可写时填「无」。",
     "工作日和节假日各安排 5~10 条，覆盖全天主要时间节律，不要输出解释文字。",
   ].join("\n");
 }
@@ -356,7 +357,7 @@ function parseRoutineLines(rawText: string): CalendarRoutineItem[] {
     endTime: string;
     location: string;
     title: string;
-    emoji?: string;
+    note: string;
   }> = [];
 
   for (const rawLine of lines) {
@@ -382,20 +383,11 @@ function parseRoutineLines(rawText: string): CalendarRoutineItem[] {
     if (!startTime || !endTime || !isCalendarTimeRangeAllowed(startTime, endTime)) continue;
 
     const location = parts[3] === "无" ? "" : parts[3];
-    let emoji = "";
-    let title: string;
-    if (parts.length >= 6) {
-      const candidate = sanitizeScheduleEmoji(parts[4]);
-      if (candidate && Array.from(parts[4]).length <= 3) {
-        emoji = candidate;
-        title = parts.slice(5).join("|");
-      } else {
-        title = parts.slice(4).join("|");
-      }
-    } else {
-      title = parts[4];
-    }
+    const title = parts[4];
     if (!title.trim()) continue;
+    // 第 6 段是备注（可以很长）；没有或写「无」就不留
+    const rawNote = parts.slice(5).join("|").trim();
+    const note = rawNote === "无" || rawNote === "-" ? "" : rawNote;
 
     parsed.push({
       dayType,
@@ -403,7 +395,7 @@ function parseRoutineLines(rawText: string): CalendarRoutineItem[] {
       endTime,
       location,
       title,
-      emoji,
+      note,
     });
   }
 

@@ -389,7 +389,8 @@ export function PhoneCalendarApp({
       endTime: base.endTime,
       location: base.location,
       title: base.title,
-      emoji: base.emoji,
+      emoji: "",
+      note: "",
     });
   };
 
@@ -403,7 +404,8 @@ export function PhoneCalendarApp({
       endTime: item.endTime,
       location: item.location,
       title: item.title,
-      emoji: item.emoji || "",
+      emoji: "",
+      note: item.note || "",
       colorKey: item.colorKey,
     });
   };
@@ -424,6 +426,7 @@ export function PhoneCalendarApp({
       location: item.location,
       title: item.title,
       emoji: item.emoji || "",
+      iconKey: item.iconKey,
       colorKey: item.colorKey,
       allDay: details?.allDay === true,
       note: details?.note || "",
@@ -494,7 +497,7 @@ export function PhoneCalendarApp({
           endTime: editingItem.endTime,
           location: editingItem.location,
           title: editingItem.title,
-          emoji: sanitizeScheduleEmoji(editingItem.emoji),
+          note: editingItem.note || "",
           source: "manual",
           colorKey: editingItem.colorKey ?? pickScheduleColorKey(editingItem.startTime),
         });
@@ -529,6 +532,7 @@ export function PhoneCalendarApp({
     location: draft.location,
     title: draft.title,
     emoji: sanitizeScheduleEmoji(draft.emoji),
+    iconKey: draft.iconKey,
     colorKey: draft.colorKey,
   });
 
@@ -625,6 +629,7 @@ export function PhoneCalendarApp({
         location: editingItem.location,
         title: editingItem.title,
         emoji: sanitizeScheduleEmoji(editingItem.emoji),
+        iconKey: editingItem.iconKey,
         source: "manual",
         colorKey: editingItem.colorKey ?? pickScheduleColorKey(editingItem.startTime),
       });

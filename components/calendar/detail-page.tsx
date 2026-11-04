@@ -6,6 +6,7 @@ import type { CalendarRoutineDayType, CalendarRoutineItem, CalendarScheduleItem 
 import type { MenstrualDayState } from "@/lib/menstrual-storage";
 import { formatIsoDate, parseIsoDate, timeToMinutes } from "@/lib/calendar-utils";
 import { getLunarInfoByIso } from "@/lib/lunar";
+import { ScheduleIcon } from "./schedule-icons";
 
 const WEEKDAY_CN = ["日", "一", "二", "三", "四", "五", "六"];
 const WEEK_LABEL = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
@@ -461,7 +462,12 @@ export function CalendarDetailPage({
                         onClick={() => onEditItem(pos.item)}
                         aria-label={`${pos.item.startTime} ${pos.item.title}`}
                       >
-                        <b>{pos.item.emoji ? `${pos.item.emoji} ` : ""}{pos.item.title}</b>
+                        <b>
+                          {pos.item.iconKey
+                            ? <ScheduleIcon name={pos.item.iconKey} size={11} className="calendar-tl-event-icon" />
+                            : pos.item.emoji ? `${pos.item.emoji} ` : ""}
+                          {pos.item.title}
+                        </b>
                         <span>
                           {pos.item.startTime}–{pos.item.endTime}
                           {pos.item.location ? ` · ${pos.item.location}` : ""}
@@ -619,12 +625,13 @@ export function CalendarRoutinePage({
                         onClick={() => onEditRoutineItem(pos.item)}
                         aria-label={`${col.title} ${pos.item.startTime} ${pos.item.title}`}
                       >
-                        <b>{pos.item.emoji ? `${pos.item.emoji} ` : ""}{pos.item.title}</b>
+                        <b>{pos.item.title}</b>
                         <span>
                           {pos.item.startTime}–{pos.item.endTime}
                           {pos.item.location ? ` · ${pos.item.location}` : ""}
                           {pos.item.source === "generated" ? " · AI" : ""}
                         </span>
+                        {pos.item.note ? <span className="calendar-tl-event-note">{pos.item.note}</span> : null}
                       </button>
                     ))}
                   </div>

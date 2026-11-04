@@ -20,6 +20,7 @@ import {
 } from "./calendar-extras";
 import { addDaysIso, createRecurringSeries, recurrenceDates, recurrenceRuleLabel, updateEntireSeries } from "./calendar-recurrence";
 import { resolveCalendarId } from "./calendar-ids";
+import { sanitizeScheduleIconKey } from "./calendar-icons";
 
 const USER = { ownerType: "user", ownerId: "self" } as const;
 const COLOR_KEYS: CalendarColorKey[] = ["blue", "green", "amber", "rose", "violet", "teal", "slate", "lilac"];
@@ -192,12 +193,15 @@ function createEvent(args: Args): string {
         throw new Error("所选日期范围内没有符合重复规则的日期");
     }
     const details = { note: fullText(args.note, ""), allDay, todos: actionTodos(args.todos, false) };
+    const iconKey = sanitizeScheduleIconKey(args.iconKey);
     const fields = {
         startTime,
         endTime,
         location: oneLine(args.location, "", 300),
         title,
-        emoji: oneLine(args.emoji, "", 20),
+        // 用了 SVG 图标就不再塞 emoji，两者只留一个
+        emoji: iconKey ? "" : oneLine(args.emoji, "", 20),
+        ...(iconKey ? { iconKey } : {}),
         colorKey: actionColor(args.colorKey, pickScheduleColorKey(startTime)),
     };
 
@@ -229,6 +233,7 @@ function createEvent(args: Args): string {
         location: fields.location,
         title,
         emoji: sanitizeScheduleEmoji(fields.emoji),
+        ...(iconKey ? { iconKey } : {}),
         colorKey: fields.colorKey,
         source: "manual",
         createdAt: now,
@@ -259,6 +264,7 @@ function updateEvent(args: Args): string {
         const endTime = patch.endTime !== undefined ? requireActionTime(patch.endTime, "结束时间") : record.item.endTime;
         const title = patch.title !== undefined ? oneLine(patch.title, "", 300) : record.item.title;
         if (!title) throw new Error("日程标题不能为空");
+        const patchedIconKey = patch.iconKey !== undefined ? sanitizeScheduleIconKey(patch.iconKey) : record.item.iconKey;
         const result = updateEntireSeries({
             seriesId: details.seriesId,
             currentItemId: eventId,
@@ -267,7 +273,8 @@ function updateEvent(args: Args): string {
                 endTime,
                 title,
                 location: patch.location !== undefined ? oneLine(patch.location, "", 300) : record.item.location,
-                emoji: patch.emoji !== undefined ? oneLine(patch.emoji, "", 20) : (record.item.emoji ?? ""),
+                emoji: patchedIconKey ? "" : (patch.emoji !== undefined ? oneLine(patch.emoji, "", 20) : (record.item.emoji ?? "")),
+                iconKey: patchedIconKey,
                 colorKey: patch.colorKey !== undefined
                     ? actionColor(patch.colorKey, record.item.colorKey || pickScheduleColorKey(startTime))
                     : (record.item.colorKey || pickScheduleColorKey(startTime)),
@@ -291,6 +298,7 @@ function updateEvent(args: Args): string {
     const title = patch.title !== undefined ? oneLine(patch.title, "", 300) : record.item.title;
     if (!title) throw new Error("日程标题不能为空");
     const now = new Date().toISOString();
+    const nextIconKey = patch.iconKey !== undefined ? sanitizeScheduleIconKey(patch.iconKey) : record.item.iconKey;
     const nextItem: CalendarScheduleItem = {
         ...record.item,
         date,
@@ -299,7 +307,8 @@ function updateEvent(args: Args): string {
         endTime,
         title,
         location: patch.location !== undefined ? oneLine(patch.location, "", 300) : record.item.location,
-        emoji: patch.emoji !== undefined ? sanitizeScheduleEmoji(oneLine(patch.emoji, "", 20)) : record.item.emoji,
+        emoji: nextIconKey ? "" : (patch.emoji !== undefined ? sanitizeScheduleEmoji(oneLine(patch.emoji, "", 20)) : record.item.emoji),
+        iconKey: nextIconKey || undefined,
         colorKey: patch.colorKey !== undefined
             ? actionColor(patch.colorKey, record.item.colorKey || pickScheduleColorKey(startTime))
             : (record.item.colorKey || pickScheduleColorKey(startTime)),

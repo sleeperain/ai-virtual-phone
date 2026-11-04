@@ -5,7 +5,9 @@ import { Input } from "../ui/form";
 import type { CalendarColorKey, CalendarRoutineDayType } from "@/lib/calendar-types";
 import type { CalendarRecurrenceFrequency, CalendarTodo } from "@/lib/calendar-extras";
 import { CALENDAR_COLOR_KEYS } from "@/lib/calendar-utils";
+import { CALENDAR_ICON_KEYS, CALENDAR_ICON_LABELS } from "@/lib/calendar-icons";
 import { addDaysIso } from "@/lib/calendar-recurrence";
+import { ScheduleIcon } from "./schedule-icons";
 
 export type CalendarRepeatFrequency = "none" | CalendarRecurrenceFrequency;
 export type CalendarRoutineTargetType = CalendarRoutineDayType | "both";
@@ -23,7 +25,10 @@ export type CalendarEventDraft = {
   endTime: string;
   location: string;
   title: string;
+  /** 旧版 emoji 图标（历史数据），新选的图标走 iconKey */
   emoji: string;
+  /** 内置线条 SVG 图标键名 */
+  iconKey?: string;
   colorKey?: CalendarColorKey;
   /** 全天：不占具体时段。起止时间仍然保留着（排序、提醒都要用），只是不展示 */
   allDay?: boolean;
@@ -67,12 +72,6 @@ function dayOfMonth(iso: string): string {
   const date = new Date(`${iso}T00:00:00`);
   return String(Number.isNaN(date.getTime()) ? 1 : date.getDate());
 }
-
-const EMOJI_PRESETS = [
-  "📌", "💼", "📚", "💻", "🏃", "🏋️", "🍽️", "☕", "🎬",
-  "🎮", "🎵", "🛒", "🛍️", "✈️", "🏥", "📞", "💤", "❤️",
-  "🎂", "🎨", "🧹", "🐾",
-];
 
 const COLOR_LABELS: Record<CalendarColorKey, string> = {
   blue: "蓝",
@@ -355,6 +354,19 @@ export function CalendarEventEditModal({
             />
           </div>
 
+          {draft.isRoutine ? (
+            <div className="flex flex-col gap-1">
+              <label className="menu-desc ml-1">备注（可选）</label>
+              <textarea
+                className="ui-textarea"
+                rows={4}
+                value={draft.note || ""}
+                onChange={e => onChange({ ...draft, note: e.target.value })}
+                placeholder="写更细节的活动：这个时段具体在做什么、和谁、什么状态。例如：闹钟响三遍才爬起来，抓着面包出门"
+              />
+            </div>
+          ) : null}
+
           {withUserExtras ? (
             <>
               <div className="calendar-plugin-field">
@@ -489,34 +501,51 @@ export function CalendarEventEditModal({
             </>
           ) : null}
 
-          <div className="flex flex-col gap-1">
-            <label className="menu-desc ml-1">图标（点选，再点一次取消）</label>
-            <div className="calendar-emoji-row">
-              {draft.emoji && !EMOJI_PRESETS.includes(draft.emoji) ? (
-                <button
-                  type="button"
-                  className="calendar-emoji-preset"
-                  data-active="true"
-                  onClick={() => onChange({ ...draft, emoji: "" })}
-                  aria-label={`取消 ${draft.emoji}`}
-                >
-                  {draft.emoji}
-                </button>
-              ) : null}
-              {EMOJI_PRESETS.map(emoji => (
-                <button
-                  key={emoji}
-                  type="button"
-                  className="calendar-emoji-preset"
-                  data-active={draft.emoji === emoji ? "true" : undefined}
-                  onClick={() => onChange({ ...draft, emoji: draft.emoji === emoji ? "" : emoji })}
-                  aria-label={`使用 ${emoji}`}
-                >
-                  {emoji}
-                </button>
-              ))}
+          {/* 生活节律不配图标（用备注写细节）；日程这里换成一套线条 SVG */}
+          {draft.isRoutine ? null : (
+            <div className="flex flex-col gap-1">
+              <label className="menu-desc ml-1">图标（点选，再点一次取消）</label>
+              <div className="calendar-icon-row">
+                {draft.emoji && !draft.iconKey ? (
+                  <button
+                    type="button"
+                    className="calendar-icon-preset calendar-icon-preset-legacy"
+                    data-active="true"
+                    onClick={() => onChange({ ...draft, emoji: "" })}
+                    aria-label={`取消旧图标 ${draft.emoji}`}
+                    title="旧版 emoji 图标，点一下取消"
+                  >
+                    {draft.emoji}
+                  </button>
+                ) : null}
+                {draft.iconKey ? (
+                  <button
+                    type="button"
+                    className="calendar-icon-preset"
+                    data-active="true"
+                    onClick={() => onChange({ ...draft, iconKey: undefined })}
+                    aria-label="取消图标"
+                    title="取消图标"
+                  >
+                    <ScheduleIcon name={draft.iconKey} size={18} />
+                  </button>
+                ) : null}
+                {CALENDAR_ICON_KEYS.map(key => (
+                  <button
+                    key={key}
+                    type="button"
+                    className="calendar-icon-preset"
+                    data-active={draft.iconKey === key ? "true" : undefined}
+                    onClick={() => onChange({ ...draft, iconKey: draft.iconKey === key ? undefined : key, emoji: "" })}
+                    aria-label={`图标：${CALENDAR_ICON_LABELS[key]}`}
+                    title={CALENDAR_ICON_LABELS[key]}
+                  >
+                    <ScheduleIcon name={key} size={18} />
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           <div className="flex flex-col gap-1">
             <label className="menu-desc ml-1">颜色</label>
