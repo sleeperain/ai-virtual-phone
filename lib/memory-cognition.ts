@@ -1,0 +1,319 @@
+// lib/memory-cognition.ts
+// 角色「思考倾向」的存储、构建与注入。
+//
+// 设计取舍：
+// - 不用人格分型（荣格八维 / MBTI）当骨架：分型只给标签，模型拿到标签只会演刻板印象；
+// - 用「反刍倾向」这类可评估的维度 + 一段行为规则：分数管强度，规则管形状，两者缺一不可；
+// - 只服务反思链路，不外溢到聊天人设——反思是内向独白，把它塞进日常对话会让角色整体变闷；
+// - 与事件盒、反思提示词一样，只按 characterId 读写，绝不跨角色混合。
+
+import type { Character } from "./character-types";
+import { loadCharacters } from "./character-storage";
+import { kvGet, kvSet, registerDynamicPrefix } from "./kv-db";
+import { simpleLLMCall } from "./api-helpers";
+import { loadApiConfigs, loadBindingConfig, resolveBinding, resolveUserIdentity } from "./settings-storage";
+
+export const COGNITION_KV_PREFIX = "ai_phone_memory_cognition_";
+registerDynamicPrefix(COGNITION_KV_PREFIX);
+
+/** 思考倾向构建用的 API 来源，顺序与角色反思一致：角色自己的脑子优先。 */
+export type CognitionApiSource = "character" | "auxiliary" | "global";
+
+export type ThinkingTendency = {
+    characterId: string;
+    /** 沉思倾向 1-10：被触到情绪后越想越窄的程度 */
+    brooding: number;
+    /** 反思倾向 1-10：能不能把纠结转成理解 */
+    reflection: number;
+    /** 情绪锐度 1-10：情绪是直给放大，还是压下去变钝 */
+    acuity: number;
+    /** 一句话总括 */
+    summary: string;
+    /** 反思时的具体行为规则（多行纯文本） */
+    expression: string;
+    createdAt: string;
+    updatedAt: string;
+    /** ai=构建产生；user=用户手改过 */
+    source: "ai" | "user";
+    model?: string;
+    /** 生成时角色设定的快照，人设改过就提示可重建 */
+    personaSnapshot?: string;
+};
+
+export type ThinkingTendencyResult = {
+    success: boolean;
+    error?: string;
+    tendency?: ThinkingTendency;
+    apiSource?: CognitionApiSource;
+    model?: string;
+};
+
+function cognitionKey(characterId: string): string {
+    return `${COGNITION_KV_PREFIX}${characterId}`;
+}
+
+function clampScore(raw: unknown): number {
+    const n = typeof raw === "number" ? raw : Number(raw);
+    if (!Number.isFinite(n)) return 5;
+    return Math.max(1, Math.min(10, Math.round(n)));
+}
+
+function normalizeTendency(raw: unknown, characterId: string): ThinkingTendency | null {
+    if (!raw || typeof raw !== "object") return null;
+    const item = raw as Partial<ThinkingTendency>;
+    const expression = typeof item.expression === "string" ? item.expression.trim() : "";
+    if (!expression) return null;
+    const now = new Date().toISOString();
+    return {
+        characterId,
+        brooding: clampScore(item.brooding),
+        reflection: clampScore(item.reflection),
+        acuity: clampScore(item.acuity),
+        summary: typeof item.summary === "string" ? item.summary.trim().slice(0, 120) : "",
+        expression,
+        createdAt: typeof item.createdAt === "string" ? item.createdAt : now,
+        updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : now,
+        source: item.source === "user" ? "user" : "ai",
+        model: typeof item.model === "string" ? item.model : undefined,
+        personaSnapshot: typeof item.personaSnapshot === "string" ? item.personaSnapshot : undefined,
+    };
+}
+
+export function loadThinkingTendency(characterId: string): ThinkingTendency | null {
+    if (!characterId) return null;
+    try {
+        const raw = kvGet(cognitionKey(characterId));
+        if (!raw) return null;
+        return normalizeTendency(JSON.parse(raw), characterId);
+    } catch {
+        return null;
+    }
+}
+
+export function saveThinkingTendency(tendency: ThinkingTendency): ThinkingTendency {
+    const next = { ...tendency, updatedAt: new Date().toISOString() };
+    try {
+        kvSet(cognitionKey(tendency.characterId), JSON.stringify(next));
+    } catch {
+        // 存储写失败时保持内存态可用，不阻断流程
+    }
+    return next;
+}
+
+export function clearThinkingTendency(characterId: string): void {
+    try {
+        kvSet(cognitionKey(characterId), "");
+    } catch {
+        // ignore
+    }
+}
+
+/**
+ * 解析构建用的 API：角色聊天槽位优先，其次记忆总结辅助 API，最后全局默认。
+ * 与角色反思共用同一顺序——思考倾向要的是「这个角色自己的脑子」。
+ */
+export function resolveCharacterApiConfig(characterId: string): {
+    apiConfig: ReturnType<typeof loadApiConfigs>[number];
+    source: CognitionApiSource;
+} | null {
+    const bindingCfg = loadBindingConfig();
+    const apiConfigs = loadApiConfigs();
+
+    const charSlot = resolveBinding(bindingCfg, characterId, "chat");
+    const charApi = charSlot?.apiConfigId
+        ? apiConfigs.find(c => c.id === charSlot.apiConfigId && Boolean(c.apiKey))
+        : undefined;
+    if (charApi) return { apiConfig: charApi, source: "character" };
+
+    const auxId = bindingCfg?.memorySummaryApiConfigId;
+    const auxApi = auxId
+        ? apiConfigs.find(c => c.id === auxId && Boolean(c.apiKey))
+        : undefined;
+    if (auxApi) return { apiConfig: auxApi, source: "auxiliary" };
+
+    const globalId = bindingCfg?.globalDefaults?.apiConfigId;
+    const globalApi = globalId
+        ? apiConfigs.find(c => c.id === globalId && Boolean(c.apiKey))
+        : undefined;
+    if (globalApi) return { apiConfig: globalApi, source: "global" };
+
+    const anyApi = apiConfigs.find(c => Boolean(c.apiKey));
+    return anyApi ? { apiConfig: anyApi, source: "global" } : null;
+}
+
+/** 角色设定快照：人设、性格、标签原文，用来判断构建结果是否已过期。 */
+export function buildPersonaSnapshot(character: Character | undefined | null): string {
+    if (!character) return "";
+    const chunks: string[] = [];
+    const persona = character.persona?.trim();
+    const personality = character.personality?.trim();
+    const tags = Array.isArray(character.tags) ? character.tags.map(t => String(t).trim()).filter(Boolean) : [];
+    if (persona) chunks.push(persona);
+    if (personality) chunks.push(`性格：${personality}`);
+    if (tags.length > 0) chunks.push(`标签：${tags.join("、")}`);
+    return chunks.join("\n");
+}
+
+export function isTendencyStale(tendency: ThinkingTendency | null, character: Character | undefined | null): boolean {
+    if (!tendency) return false;
+    const now = buildPersonaSnapshot(character);
+    if (!tendency.personaSnapshot || !now) return false;
+    return tendency.personaSnapshot !== now;
+}
+
+/**
+ * 构建用的内置提示词：只读，不开放编辑（思考倾向是内部推导产物，不是创作素材）。
+ * 要求模型输出严格 JSON，分数与行为规则一次产出。
+ */
+export const DEFAULT_THINKING_TENDENCY_PROMPT = `你是一位擅长把人物性格转译成"思考习惯"的角色分析助手。请只根据下面的角色设定，推断「{{char}}」在私下独自回想事情时，会表现出怎样的思考倾向。
+
+【角色设定】
+{{persona}}
+
+【评估三个维度，各给 1-10 的整数分】
+1. 沉思倾向（brooding）：被某件事碰到情绪之后，是否容易反复回到同一个画面、越想越窄、越回想越确信自己的猜测。
+   1 = 情绪过去就翻篇，很少回头想；10 = 一件事能反复咀嚼很久，越想越难受也停不下来。
+2. 反思倾向（reflection）：能不能把纠结转成理解——重新解释对方动机、修正自己的判断、得出下次怎么办。
+   1 = 只在原地打转，从不改变看法；10 = 总能从纠结里提炼出新的理解与具体做法。
+3. 情绪锐度（acuity）：情绪体验的强烈度与直接程度，以及是否愿意在内心承认它。
+   1 = 情绪很淡、钝化、或者长期压着不面对；10 = 情绪一来就很重很直接，心里一清二楚。
+
+【四个维度的分数要互相独立】
+不要因为沉思高就顺手把反思也写低，两者可以同时高（想得多且想得通）、同时低（懒得想）、一高一低。
+
+【再写 4 至 6 条"反思时的具体表现"】
+必须写成能被照做的行为规则，全部是第三人称描述这个角色，例如：
+- 被指出问题时先本能辩解两句，隔一阵才在心里承认一部分。
+- 情绪上来时不会说"我难过"，而是转成挑刺或干脆不说话。
+- 回想事情时先抓对方的语气和表情，再倒推发生了什么。
+- 反思的落点总是"下次我该怎么做"，很少停在"我当时什么感觉"。
+禁止写成性格标签（"傲娇""理性""敏感"这类词一律不要单独出现），也不要复述设定原话。
+不要写成"他很重视感情"这种无法执行的话——要写成具体到某个情境下会怎么想、怎么做。
+
+【输出格式】
+只输出一个 JSON 对象，不要任何解释、不要 Markdown 代码块围栏：
+{"brooding":7,"reflection":4,"acuity":8,"summary":"一句话概括这个角色反思时的样子，30字以内","expression":"- 第一条\\n- 第二条\\n- 第三条\\n- 第四条"}`;
+
+function parseTendencyJson(raw: string): {
+    brooding: number;
+    reflection: number;
+    acuity: number;
+    summary: string;
+    expression: string;
+} | null {
+    let text = raw.trim();
+    text = text.replace(/^```[a-zA-Z]*\s*\n?/, "").replace(/\n?```\s*$/, "").trim();
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    if (start < 0 || end <= start) return null;
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(text.slice(start, end + 1));
+    } catch {
+        return null;
+    }
+    if (!parsed || typeof parsed !== "object") return null;
+    const obj = parsed as Record<string, unknown>;
+    const expressionRaw = typeof obj.expression === "string"
+        ? obj.expression
+        : (typeof obj.rules === "string" ? obj.rules : "");
+    const expression = expressionRaw
+        .replace(/\\n/g, "\n")
+        .split("\n")
+        .map(line => line.trim())
+        .filter(Boolean)
+        .join("\n");
+    if (!expression) return null;
+    return {
+        brooding: clampScore(obj.brooding),
+        reflection: clampScore(obj.reflection),
+        acuity: clampScore(obj.acuity),
+        summary: typeof obj.summary === "string" ? obj.summary.trim().slice(0, 120) : "",
+        expression,
+    };
+}
+
+/**
+ * 构建（或重建）角色思考倾向：读角色设定 → 调角色自己的 API → 解析 JSON → 落盘。
+ * 解析失败直接返回失败并保留旧数据，不在半成品上覆盖。
+ */
+export async function buildThinkingTendency(
+    characterId: string,
+    characterName?: string,
+): Promise<ThinkingTendencyResult> {
+    const character = loadCharacters().find(c => c.id === characterId);
+    const resolvedName = character?.name?.trim() || characterName?.trim() || "";
+    if (!character) {
+        return { success: false, error: "未找到该角色" };
+    }
+
+    const api = resolveCharacterApiConfig(characterId);
+    if (!api) {
+        return { success: false, error: "未找到可用的 API：请先在「绑定配置」里给这个角色绑定 API，或到「设置 → API 设置」添加一个" };
+    }
+
+    const userName = resolveUserIdentity(characterId)?.name?.trim() || "用户";
+    const personaSnapshot = buildPersonaSnapshot(character);
+    const personaText = `${personaSnapshot}\n\n你的名字是「${resolvedName || "这个角色"}」，你在和「${userName}」相处。`;
+
+    const prompt = DEFAULT_THINKING_TENDENCY_PROMPT
+        .replace(/\{\{char\}\}/gi, resolvedName || "这个角色")
+        .replace(/\{\{persona\}\}/gi, personaText);
+
+    const result = await simpleLLMCall(
+        api.apiConfig,
+        [{ role: "user", content: prompt }],
+        { temperature: 0.4, label: `思考倾向构建·${resolvedName || characterId}` },
+    );
+
+    if (!result.content) {
+        return { success: false, error: result.error || "构建失败：模型没有返回内容", apiSource: api.source };
+    }
+
+    const parsed = parseTendencyJson(result.content);
+    if (!parsed) {
+        return { success: false, error: "构建结果格式无法解析，已保留原有数据，请重试一次", apiSource: api.source };
+    }
+
+    const now = new Date().toISOString();
+    const tendency: ThinkingTendency = {
+        characterId,
+        brooding: parsed.brooding,
+        reflection: parsed.reflection,
+        acuity: parsed.acuity,
+        summary: parsed.summary,
+        expression: parsed.expression,
+        createdAt: now,
+        updatedAt: now,
+        source: "ai",
+        model: api.apiConfig.defaultModel,
+        personaSnapshot,
+    };
+    saveThinkingTendency(tendency);
+
+    return { success: true, tendency, apiSource: api.source, model: api.apiConfig.defaultModel };
+}
+
+/** 拼成注入反思提示词的文本。 */
+export function formatTendencyForPrompt(tendency: ThinkingTendency): string {
+    const lines = [
+        `沉思倾向 ${tendency.brooding}/10 · 反思倾向 ${tendency.reflection}/10 · 情绪锐度 ${tendency.acuity}/10`,
+    ];
+    if (tendency.summary) lines.push(`倾向概述：${tendency.summary}`);
+    if (tendency.expression) lines.push(`反思时的具体表现：\n${tendency.expression}`);
+    return lines.join("\n");
+}
+
+/**
+ * 把思考倾向注入反思提示词：
+ * 模板里有 {{tendency}} 就原地替换；用户自定义模板没这个占位符时整段前置，
+ * 这样即使提示词被改过也不会丢掉特质。
+ */
+export function applyTendencyToPrompt(prompt: string, tendency: ThinkingTendency | null): string {
+    const body = tendency ? formatTendencyForPrompt(tendency) : "（尚未构建，按角色设定本身的性格来）";
+    if (/\{\{tendency\}\}/i.test(prompt)) {
+        return prompt.replace(/\{\{tendency\}\}/gi, body);
+    }
+    if (!tendency) return prompt;
+    return `【你一贯的思考倾向（只影响你怎么想、怎么措辞，不要把这些描述念出来）】\n${body}\n\n${prompt}`;
+}

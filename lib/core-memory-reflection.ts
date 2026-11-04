@@ -16,12 +16,13 @@ import type { MemoryEntry } from "./memory-types";
 import { loadMemoryConfig, loadMemoryEntriesByType, saveMemoryEntry } from "./memory-storage";
 import { loadCharacters } from "./character-storage";
 import type { Character } from "./character-types";
+import { resolveUserIdentity } from "./settings-storage";
 import {
-    loadBindingConfig,
-    loadApiConfigs,
-    resolveBinding,
-    resolveUserIdentity,
-} from "./settings-storage";
+    applyTendencyToPrompt,
+    loadThinkingTendency,
+    resolveCharacterApiConfig,
+    type CognitionApiSource,
+} from "./memory-cognition";
 import {
     loadNativeTimeline,
     formatTimelineForSummarization,
@@ -45,7 +46,8 @@ const MAX_TRANSIENT_EVENTS = 40;
 /** 即时事件的回看上限（scope=all 时也只回看一年）。 */
 const ALL_SCOPE_TRANSIENT_DAYS = 365;
 
-export type CoreReflectionApiSource = "character" | "auxiliary" | "global";
+/** 与思考倾向构建共用同一套 API 解析顺序，避免两处各写一份。 */
+export type CoreReflectionApiSource = CognitionApiSource;
 
 export type CoreReflectionResult = {
     success: boolean;
@@ -61,6 +63,9 @@ export const DEFAULT_REFLECTION_PROMPT = `你此刻不再是助手，而是「{{
 
 【你是谁】
 {{persona}}
+
+【你一贯的思考倾向（只影响你怎么想、怎么措辞，不要把这些描述念出来）】
+{{tendency}}
 
 【时间跨度】
 {{earliest}} 至 {{latest}}
@@ -124,37 +129,11 @@ export function isReflectionMemoryEntry(entry: MemoryEntry): boolean {
 }
 
 /**
- * 解析反思用的 API：角色聊天槽位优先，其次记忆总结辅助 API，最后全局默认。
- * 这与 resolveSummarizationApiConfig 的顺序相反——反思要的是「这个角色自己的脑子」。
+ * 反思用的 API = resolveCharacterApiConfig（角色聊天槽位优先，其次记忆总结辅助 API，最后全局默认）。
+ * 顺序与 resolveSummarizationApiConfig 相反——反思要的是「这个角色自己的脑子」。
+ * 与思考倾向构建共用同一份实现，改顺序只改 memory-cognition.ts 一处。
  */
-function resolveReflectionApiConfig(characterId: string): {
-    apiConfig: ReturnType<typeof loadApiConfigs>[number];
-    source: CoreReflectionApiSource;
-} | null {
-    const bindingCfg = loadBindingConfig();
-    const apiConfigs = loadApiConfigs();
-
-    const charSlot = resolveBinding(bindingCfg, characterId, "chat");
-    const charApi = charSlot?.apiConfigId
-        ? apiConfigs.find(c => c.id === charSlot.apiConfigId && Boolean(c.apiKey))
-        : undefined;
-    if (charApi) return { apiConfig: charApi, source: "character" };
-
-    const auxId = bindingCfg?.memorySummaryApiConfigId;
-    const auxApi = auxId
-        ? apiConfigs.find(c => c.id === auxId && Boolean(c.apiKey))
-        : undefined;
-    if (auxApi) return { apiConfig: auxApi, source: "auxiliary" };
-
-    const globalId = bindingCfg?.globalDefaults?.apiConfigId;
-    const globalApi = globalId
-        ? apiConfigs.find(c => c.id === globalId && Boolean(c.apiKey))
-        : undefined;
-    if (globalApi) return { apiConfig: globalApi, source: "global" };
-
-    const anyApi = apiConfigs.find(c => Boolean(c.apiKey));
-    return anyApi ? { apiConfig: anyApi, source: "global" } : null;
-}
+const resolveReflectionApiConfig = resolveCharacterApiConfig;
 
 /**
  * 角色设定的完整文本：人设、性格、标签原样拼进去，**不做任何长度截断**。
@@ -288,15 +267,20 @@ export async function runCoreMemoryReflection(
 
     // 用用户在「记忆库 → 设置 → 角色反思提示词」里保存的模板；没配过就回退内置默认
     const reflectionTemplate = (loadMemoryConfig().reflectionPrompt ?? "").trim() || DEFAULT_REFLECTION_PROMPT;
-    const prompt = reflectionTemplate
-        .replace(/\{\{char\}\}/gi, resolvedName || "这个角色")
-        .replace(/\{\{user\}\}/gi, userName)
-        .replace(/\{\{persona\}\}/gi, personaText)
-        .replace(/\{\{earliest\}\}/gi, earliest || "未知")
-        .replace(/\{\{latest\}\}/gi, latest || "未知")
-        .replace(/\{\{events\}\}/gi, eventsText)
-        .replace(/\{\{transient\}\}/gi, transientText || "（无）")
-        .replace(/\{\{previous\}\}/gi, previousText || "（这是第一次反刍，没有留下过想法）");
+    // 思考倾向只影响「怎么想」，不影响反思素材；没构建过时按角色设定本身的性格来
+    const tendency = loadThinkingTendency(characterId);
+    const prompt = applyTendencyToPrompt(
+        reflectionTemplate
+            .replace(/\{\{char\}\}/gi, resolvedName || "这个角色")
+            .replace(/\{\{user\}\}/gi, userName)
+            .replace(/\{\{persona\}\}/gi, personaText)
+            .replace(/\{\{earliest\}\}/gi, earliest || "未知")
+            .replace(/\{\{latest\}\}/gi, latest || "未知")
+            .replace(/\{\{events\}\}/gi, eventsText)
+            .replace(/\{\{transient\}\}/gi, transientText || "（无）")
+            .replace(/\{\{previous\}\}/gi, previousText || "（这是第一次反刍，没有留下过想法）"),
+        tendency,
+    );
 
     let result = await simpleLLMCall(
         api.apiConfig,

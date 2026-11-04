@@ -84,6 +84,13 @@ import {
     type MemoryEventBox,
     type SmartBoxSuggestion,
 } from "@/lib/memory-event-boxes";
+import {
+    buildThinkingTendency,
+    isTendencyStale,
+    loadThinkingTendency,
+    saveThinkingTendency,
+    type ThinkingTendency,
+} from "@/lib/memory-cognition";
 
 type MemoryView = "list" | "detail" | "settings";
 type MemoryTab = "short" | "shared" | "long" | "boxes" | "core";
@@ -409,6 +416,19 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const [smartSelected, setSmartSelected] = useState<Record<string, boolean>>({});
     const [smartBusy, setSmartBusy] = useState(false);
 
+    // ── 记忆认知：思考倾向 ──
+    const [tendency, setTendency] = useState<ThinkingTendency | null>(null);
+    const [buildingTendency, setBuildingTendency] = useState(false);
+    /** 构建完成后弹出的数值评估（只读展示，改值走「思考倾向」条目的编辑弹窗） */
+    const [tendencyResult, setTendencyResult] = useState<ThinkingTendency | null>(null);
+    const [tendencyEdit, setTendencyEdit] = useState<{
+        brooding: number;
+        reflection: number;
+        acuity: number;
+        summary: string;
+        expression: string;
+    } | null>(null);
+
     // 「放入事件盒」模块：事件盒选项区最多显示三行，超出上下滑动。
     // 行高由 chip 实测得出（不同主题/字号下不写死），量不到就整段展开不滚。
     const boxChipScrollRef = useRef<HTMLDivElement | null>(null);
@@ -532,6 +552,13 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             setEditingReflectionPrompt(null);
         }
     }, [view]);
+
+    // 切角色（或重新进入设置页）时，读取该角色已构建的思考倾向
+    useEffect(() => {
+        setTendency(selectedCharId ? loadThinkingTendency(selectedCharId) : null);
+        setTendencyResult(null);
+        setTendencyEdit(null);
+    }, [selectedCharId, view]);
 
     // 量出「放入事件盒」里单个 chip 的高度，把列表滚动区的最大高度压到三行以内
     useEffect(() => {
@@ -1006,6 +1033,64 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         } finally {
             setReflectingCore(false);
         }
+    };
+
+    // ── 记忆认知：思考倾向的构建与手改 ──
+    const handleBuildTendency = async () => {
+        if (!selectedCharId || buildingTendency) return;
+        setBuildingTendency(true);
+        try {
+            const result = await buildThinkingTendency(selectedCharId, selectedChar?.name ?? "");
+            if (result.success && result.tendency) {
+                setTendency(result.tendency);
+                setTendencyResult(result.tendency);
+                showNotice("思考倾向已构建");
+            } else {
+                showNotice(result.error || "思考倾向构建失败");
+            }
+        } catch (err) {
+            console.error("[MemoryBank] Tendency build failed:", err);
+            showNotice("思考倾向构建失败: " + String(err));
+        } finally {
+            setBuildingTendency(false);
+        }
+    };
+
+    const openTendencyEditor = () => {
+        setTendencyEdit({
+            brooding: tendency?.brooding ?? 5,
+            reflection: tendency?.reflection ?? 5,
+            acuity: tendency?.acuity ?? 5,
+            summary: tendency?.summary ?? "",
+            expression: tendency?.expression ?? "",
+        });
+    };
+
+    const handleSaveTendencyEdit = () => {
+        if (!selectedCharId || !tendencyEdit) return;
+        const expression = tendencyEdit.expression.trim();
+        if (!expression) {
+            showNotice("请填写反思时的具体表现");
+            return;
+        }
+        const now = new Date().toISOString();
+        const saved = saveThinkingTendency({
+            characterId: selectedCharId,
+            brooding: tendencyEdit.brooding,
+            reflection: tendencyEdit.reflection,
+            acuity: tendencyEdit.acuity,
+            summary: tendencyEdit.summary.trim(),
+            expression,
+            createdAt: tendency?.createdAt ?? now,
+            updatedAt: now,
+            source: "user",
+            model: tendency?.model,
+            // 保留原快照：手改不该被当成「人设已更新」
+            personaSnapshot: tendency?.personaSnapshot,
+        });
+        setTendency(saved);
+        setTendencyEdit(null);
+        showNotice("思考倾向已保存");
     };
 
     const saveBudget = (key: MemoryBudgetKey, value: number) => {
@@ -3159,24 +3244,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                 </div>
                             </div>
                             <div className="menu-item">
-                                <MemorySettingsIcon icon={Heart} color={BINDING_ACCENTS.voice} />
-                                <div className="menu-label-group">
-                                    <span className="menu-label">核心记忆角色反思</span>
-                                    <span className="menu-desc">让 TA 用自己的视角回看近期事件</span>
-                                </div>
-                                <div className="menu-right">
-                                    <button
-                                        className="ui-btn ui-btn-outline py-1 px-3 ts-12"
-                                        onClick={() => setReflectionScopeOpen(true)}
-                                        disabled={reflectingCore || rebuildingCore}
-                                        title="完整读取角色设定，以角色第一人称反思近期事件，生成一条角色视角的核心记忆"
-                                    >
-                                        <Heart size={12} className="mr-1" />
-                                        {reflectingCore ? "处理中..." : "反思"}
-                                    </button>
-                                </div>
-                            </div>
-                            <div className="menu-item">
                                 <MemorySettingsIcon icon={Sparkles} color={BINDING_ACCENTS.preset} />
                                 <div className="menu-label-group">
                                     <span className="menu-label">一键清洗旧记忆</span>
@@ -3194,6 +3261,202 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                 </div>
                             </div>
                         </div>
+
+                        {/* 记忆认知：思考倾向 + 近期事件反思 */}
+                        <p className="menu-group-desc mx-2">记忆认知</p>
+                        <div className="menu-group">
+                            <div className="menu-item">
+                                <MemorySettingsIcon icon={Brain} color={BINDING_ACCENTS.memory} />
+                                <button
+                                    type="button"
+                                    className="menu-label-group"
+                                    style={{
+                                        background: "none",
+                                        border: "none",
+                                        padding: 0,
+                                        textAlign: "left",
+                                        font: "inherit",
+                                        color: "inherit",
+                                        flex: 1,
+                                        minWidth: 0,
+                                        cursor: "pointer",
+                                    }}
+                                    onClick={openTendencyEditor}
+                                    title="查看并手动调整思考倾向的数值与表现"
+                                >
+                                    <span className="menu-label">思考倾向</span>
+                                    <span className="menu-desc">
+                                        {tendency
+                                            ? `沉思 ${tendency.brooding} · 反思 ${tendency.reflection} · 情绪 ${tendency.acuity}，点击可编辑`
+                                            : "尚未构建，点右侧「构建」按角色设定推导"}
+                                        {isTendencyStale(tendency, selectedChar) ? "（角色设定已改动，建议重建）" : ""}
+                                    </span>
+                                </button>
+                                <div className="menu-right">
+                                    <button
+                                        className="ui-btn ui-btn-outline py-1 px-3 ts-12"
+                                        onClick={() => void handleBuildTendency()}
+                                        disabled={buildingTendency || reflectingCore}
+                                        title="按角色设定推导反思时的思考习惯，产出三个评估数值与行为规则"
+                                    >
+                                        <Sparkles size={12} className="mr-1" />
+                                        {buildingTendency ? "处理中..." : "构建"}
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="menu-item">
+                                <MemorySettingsIcon icon={Heart} color={BINDING_ACCENTS.voice} />
+                                <div className="menu-label-group">
+                                    <span className="menu-label">近期事件反思</span>
+                                    <span className="menu-desc">让 TA 用自己的视角回看近期事件</span>
+                                </div>
+                                <div className="menu-right">
+                                    <button
+                                        className="ui-btn ui-btn-outline py-1 px-3 ts-12"
+                                        onClick={() => setReflectionScopeOpen(true)}
+                                        disabled={reflectingCore || rebuildingCore}
+                                        title="完整读取角色设定，以角色第一人称反思近期事件，生成一条角色视角的核心记忆"
+                                    >
+                                        <Heart size={12} className="mr-1" />
+                                        {reflectingCore ? "处理中..." : "反思"}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* 思考倾向：构建完成后的数值评估 */}
+                        {tendencyResult ? (
+                            <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={() => setTendencyResult(null)}>
+                                <div className="modal-sheet" data-ui="modal-sheet" onClick={event => event.stopPropagation()}>
+                                    <div className="modal-header" data-ui="modal-header">
+                                        <button className="modal-header-btn modal-header-btn-muted" onClick={() => setTendencyResult(null)}><X size={18} /></button>
+                                        <h3 className="modal-title">思考倾向评估</h3>
+                                        <span style={{ width: 44 }} />
+                                    </div>
+                                    <div className="modal-body modal-body-tight" data-ui="modal-body">
+                                        <div className="g-card" style={{ padding: 12, gap: 8 }}>
+                                            {([
+                                                { label: "沉思倾向", value: tendencyResult.brooding, desc: "越高越容易在情绪里越想越窄" },
+                                                { label: "反思倾向", value: tendencyResult.reflection, desc: "越高越能把纠结转成理解" },
+                                                { label: "情绪锐度", value: tendencyResult.acuity, desc: "越高情绪越直接、越强烈" },
+                                            ] as const).map(item => (
+                                                <div key={item.label} className="flex items-center justify-between ts-12" style={{ gap: 10 }}>
+                                                    <span>{item.label}</span>
+                                                    <span className="text-secondary ts-11" style={{ marginLeft: "auto" }}>{item.desc}</span>
+                                                    <strong>{item.value}/10</strong>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        {tendencyResult.summary ? (
+                                            <p className="ts-12" style={{ margin: "10px 4px 0" }}>{tendencyResult.summary}</p>
+                                        ) : null}
+                                        {tendencyResult.expression ? (
+                                            <div className="g-card" style={{ padding: 12, marginTop: 8 }}>
+                                                <div className="ts-12 leading-[1.75]" style={{ whiteSpace: "pre-wrap" }}>
+                                                    {tendencyResult.expression}
+                                                </div>
+                                            </div>
+                                        ) : null}
+                                        <p className="ts-11 text-secondary" style={{ margin: "8px 4px 0" }}>
+                                            已保存。数值与表现都可以点「思考倾向」条目手动修改；反思时会自动参考这份倾向。
+                                        </p>
+                                        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                                            <button
+                                                className="ui-btn ui-btn-outline mem-edit-save-btn"
+                                                style={{ flex: 1 }}
+                                                onClick={() => {
+                                                    setTendencyResult(null);
+                                                    openTendencyEditor();
+                                                }}
+                                            >
+                                                <Edit3 size={14} className="mr-1" /> 编辑
+                                            </button>
+                                            <button
+                                                className="ui-btn ui-btn-primary mem-edit-save-btn"
+                                                style={{ flex: 1 }}
+                                                onClick={() => setTendencyResult(null)}
+                                            >
+                                                关闭
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        ) : null}
+
+                        {/* 思考倾向：编辑弹窗 */}
+                        {tendencyEdit ? (
+                            <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={() => setTendencyEdit(null)}>
+                                <div className="modal-sheet mem-edit-sheet" data-ui="modal-sheet" onClick={event => event.stopPropagation()}>
+                                    <div className="modal-header" data-ui="modal-header">
+                                        <button className="modal-header-btn modal-header-btn-muted" onClick={() => setTendencyEdit(null)}>
+                                            <X size={18} />
+                                        </button>
+                                        <h3 className="modal-title">思考倾向</h3>
+                                        <button
+                                            className="modal-header-btn modal-header-btn-action"
+                                            onClick={handleSaveTendencyEdit}
+                                            disabled={!tendencyEdit.expression.trim()}
+                                        >
+                                            <Check size={18} />
+                                        </button>
+                                    </div>
+                                    <div className="modal-body mem-edit-body" data-ui="modal-body">
+                                        {([
+                                            { key: "brooding" as const, label: "沉思倾向", desc: "越高越容易在情绪里越想越窄" },
+                                            { key: "reflection" as const, label: "反思倾向", desc: "越高越能把纠结转成理解" },
+                                            { key: "acuity" as const, label: "情绪锐度", desc: "越高情绪越直接、越强烈" },
+                                        ]).map(item => (
+                                            <div className="mem-edit-field-row" key={item.key}>
+                                                <label className="mem-edit-field-label">
+                                                    {item.label}：{tendencyEdit[item.key]}/10
+                                                </label>
+                                                <input
+                                                    type="range"
+                                                    min={1}
+                                                    max={10}
+                                                    step={1}
+                                                    value={tendencyEdit[item.key]}
+                                                    onChange={e => {
+                                                        const value = Number(e.target.value);
+                                                        setTendencyEdit(prev => prev ? { ...prev, [item.key]: value } : prev);
+                                                    }}
+                                                    className="ui-slider"
+                                                />
+                                                <span className="ts-11 text-secondary">{item.desc}</span>
+                                            </div>
+                                        ))}
+                                        <div className="mem-edit-field-row">
+                                            <label className="mem-edit-field-label">一句话概述</label>
+                                            <input
+                                                type="text"
+                                                className="ui-input ts-12"
+                                                placeholder="例如：嘴上不认，心里反复回放同一句话"
+                                                value={tendencyEdit.summary}
+                                                onChange={e => setTendencyEdit(prev => prev ? { ...prev, summary: e.target.value } : prev)}
+                                            />
+                                        </div>
+                                        <div className="mem-edit-field-row">
+                                            <label className="mem-edit-field-label">反思时的具体表现</label>
+                                            <textarea
+                                                className="ui-textarea ts-12"
+                                                style={{ minHeight: 130, lineHeight: 1.7 }}
+                                                placeholder={"每条一行，写成能照做的行为规则，例如：\n- 被指出问题时先辩解两句，隔一阵才在心里承认一部分\n- 情绪上来时不说难受，而是转成挑刺或沉默"}
+                                                value={tendencyEdit.expression}
+                                                onChange={e => setTendencyEdit(prev => prev ? { ...prev, expression: e.target.value } : prev)}
+                                            />
+                                        </div>
+                                        <button
+                                            className="ui-btn ui-btn-primary mem-edit-save-btn"
+                                            onClick={handleSaveTendencyEdit}
+                                            disabled={!tendencyEdit.expression.trim()}
+                                        >
+                                            保存思考倾向
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        ) : null}
 
                         {summarizeRangeOpen ? (
                             <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={() => setSummarizeRangeOpen(false)}>
