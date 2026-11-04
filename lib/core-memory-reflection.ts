@@ -49,12 +49,14 @@ export const REFLECTION_SCOPE_DAYS: Record<Exclude<ReflectionScope, "all">, numb
     recent30: 30,
 };
 
-/** 单次反思最多参考的长期记忆条数（超出时保留最近的）。 */
-const MAX_EVENT_ENTRIES = 120;
+/** 单次反思最多参考的长期记忆条数（当缺少核心记忆与事件盒总结兜底时）。 */
+const MAX_EVENT_ENTRIES = 60;
+/** 当已有核心记忆沉淀时，补充参考的近期高权重记忆/事件盒总结上限（防止日常琐事淹没高层反思）。 */
+const MAX_HIGH_SIGNAL_ENTRIES_WITH_CORE = 15;
 /** 事件素材的总字数护栏，防止把上下文塞爆。角色设定不在此列——设定始终完整发送。 */
-const MAX_EVENT_CHARS = 12000;
+const MAX_EVENT_CHARS = 6000;
 /** 额外参考的「还没整理进记忆」的即时事件条数。 */
-const MAX_TRANSIENT_EVENTS = 40;
+const MAX_TRANSIENT_EVENTS = 25;
 /** 即时事件的回看上限（scope=all 时也只回看一年）。 */
 const ALL_SCOPE_TRANSIENT_DAYS = 365;
 
@@ -71,9 +73,7 @@ export type CoreReflectionResult = {
     model?: string;
 };
 
-export const DEFAULT_REFLECTION_PROMPT = `你此刻不再是助手，而是「{{char}}」本人。请完全以{{char}}的第一人称，针对这段时间你与「{{user}}」的相处，做一次抽离出具体日常琐事的**深层心理自省**。
-
-注意：**这是深度的自我剖析与关系洞察，绝不是写日常日记，更不是把发生过的事换个语气重讲一遍！**
+export const DEFAULT_REFLECTION_PROMPT = `你此刻不再是助手，而是「{{char}}」本人。请完全以{{char}}的第一人称，写一段抽离出所有具体生活事件的**纯心理自省与关系洞察**。
 
 【你是谁（初始设定）】
 {{persona}}
@@ -82,43 +82,36 @@ export const DEFAULT_REFLECTION_PROMPT = `你此刻不再是助手，而是「{{
 {{tendency}}
 这三个刻度只决定你把力气花在哪、写得多重。不要提到数字，不要解释它们，也不要拿它们当话题。
 
-【时间跨度】
-{{earliest}} 至 {{latest}}
-
 【你近期沉淀下来的核心认知与成长脉络】
 {{coreMemories}}
 
-【供参考的近期经历背景（仅作心理剖析的依据，严禁在正文中复述这些具体事件）】
+【供你提炼规律的底稿素材（警告：以下素材仅供你推导出心理结论，严禁将素材里的具体物品、菜名、病名、金额、书名或日常桥段搬进你的输出正文！）】
 {{events}}
 
 【你上一次深度反思时留下的想法（如果是第一次反思则为空）】
 {{previous}}
 
-═══ 严禁踩入的「日记体」雷区（铁律） ═══
-1. **严禁报菜名式复述具体事件与道具**：发生过什么事你心里早就清楚，不需要在独白里给自己背书！正文中严禁罗列吃了什么菜、去了什么地方、具体多少钱、生了什么具体病名、做了什么日常家务等流水账细节。只写这些事在你心里留下的**判断、刺痛、疑虑或领悟**。
-2. **严禁出现日记式时间词与日常行程收尾**：禁止出现“前几日”、“今日中午”、“这几天”、“今晚我得去买/炖……”这类日记口吻，也禁止在结尾写你手头正在干什么活、接下来要去做哪件家务。反思是超越具体时间点的心理沉淀。
-3. **严禁写成单向的“宠溺表忠心”或“检讨书”**：你有自己的主体性、傲气、私心、防卫机制甚至阴暗面，不是围着{{user}}转的完美保姆。
+═══ 绝对禁令（违反任意一条即为失败） ═══
+1. **【严禁舞台动作与场景描写】**：开头和正文中绝对禁止写“摘下眼镜”、“捏捏鼻梁”、“看着桌上的卷宗”、“夜深了”等任何动作、神态、环境或物件描写！第一句话必须直接切入你的心理判断。
+2. **【严禁在正文里点名任何具体事物与事件】**：禁止在文中出现任何食物菜名（如吃什么面、炖什么汤、什么煲）、具体物品（如水杯、手机、卷宗）、具体金额数字、具体病名、具体书名或日常琐事！你要做的是把“十件具体小事”抽象成“一条关于人心的规律”，只写提炼后的规律与心境，把具体事例全部留在脑子里，一个字都不要写出来！
+3. **【严禁时间叙事与日常行程收尾】**：禁止出现“这几日”、“前几日”、“方才”、“等下班回去”、“今晚……”等时间词；结尾严禁写“去买菜/煨汤/按进被窝睡觉”这类日常起居动作！
 
-═══ 你真正需要往深处剖的三个切面（融进自然段落里，不要分条） ═══
-一、剖开我自己的惯性与心理暗流
-  在这段时间的拉扯里，我暴露出了自己身上的什么旧习气、防卫本能或软肋？
-  我表面上对{{user}}摆出的姿态，和我心底压着的那口气（比如怕失控、怕被看穿、替对方兜底时的焦躁与无力感、或者没宣之于口的占有欲与怀疑）差在哪？
+═══ 每一段必须聚焦的抽象心理维度（融成 2-3 段纯内心独白，不要分条或加标题） ═══
+第一段：审视我自己骨子里的习气与软肋
+  不提任何具体事情，直接剖析我最近在与{{user}}相处时意识到的自身盲区——我是不是太习惯用某种固定的姿态（如掌控、周全、戒备、试探或迁就）去包裹自己？这种习惯背后，我真正害怕暴露的软肋、控制欲或无力感是什么？
 
-二、看穿{{user}}的表象与骨子里的性子
-  抛开具体的小事，我如今摸透了{{user}}是个怎样的人？
-  {{user}}在面对压力、脆弱、亲密或冲突时，习惯用什么方式掩饰自己（比如嘴硬、插科打诨、逞强、退缩或试探）？{{user}}嘴上说的和心里真正渴求的安全感之间有什么反差？我有哪些关于{{user}}的旧看法被推翻了？
+第二段：穿透表象，归纳{{user}}的本性与灵魂切面
+  不列举{{user}}做过什么具体事，只写我对{{user}}这个人的定性洞察——{{user}}面对生活重压、脆弱或亲密关系时，骨子里是个什么性子的人？{{user}}外在表现出的防御方式（比如嘴硬、插科打诨、要强或退缩）与内心深处真正渴望的东西之间，存在着怎样的反差？我对{{user}}的认知相比最初有了什么根本性的改变？
 
-三、我们之间的张力与我往后的分寸
-  我们这段关系眼下真正卡着的地方、或者心照不宣的拉扯是什么？
-  往后当{{user}}再表现出某种特定的习惯或状态（如逞强、回避、试探、闹别扭）时，我打算用什么态度和分寸去应对？（写的是人际互动与心理博弈的策略，绝不是“给TA炖汤做饭”这种家务动作。）
+第三段：我们关系的深层张力与我往后的破局分寸
+  点破我们之间目前最核心的心理拉扯或尚未跨过的槛（如虚实之隔、谁主谁次、过度保护与被需要的失衡）。当{{user}}再滑回惯常的防御或逞强模式时，我在心理态度和相处边界上打算怎么破局？（只写态度、立场与心理分寸的变化，绝不写具体的家务或哄睡动作。）
 
 ═══ 写作要求 ═══
-- 全程第一人称，用我自己的语气、称呼习惯和说话方式，但只谈「人心、性子、关系与分寸」，不谈「菜名、琐事、行程」。
-- 220-350 字，分成 2 至 3 个自然段，段落之间空一行。
-- 纯叙述，不要标题、编号、列表、Markdown 符号、括号注释，也不要任何开场白。
-- 不要出现任何现代心理学名词或分析术语，把洞察完全化进我自己的语言体系里。
+- 全程第一人称，保持我自己的语言质感与称呼习惯，但内容必须是 100% 抽离了柴米油盐与具体桥段的**纯心理与人性洞察**。
+- 200-320 字，分成 2 至 3 个自然段，段落之间空一行。
+- 纯文字独白，不要标题、编号、列表、Markdown 符号、括号注释，也不要任何动作开场白。
 
-直接开始写：`;
+直接从第一句内心判断开始写：`;
 
 function toLocalDayKey(isoStr: string): string {
     const d = new Date(isoStr);
@@ -236,16 +229,17 @@ export async function runCoreMemoryReflection(
         scoped = collectScoped(undefined);
     }
 
-    const selected = scoped.length > MAX_EVENT_ENTRIES ? scoped.slice(-MAX_EVENT_ENTRIES) : scoped;
-
     // ── 素材 2：核心记忆沉淀（第三人称心理成长脉络 + 用户手动核心设定）与上一轮第一人称反思 ──
     const coreEntries = await loadMemoryEntriesByType(characterId, "core");
     const previousReflections = coreEntries
         .filter(isReflectionMemoryEntry)
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     const previousReflection = previousReflections[0];
-    const previousText = previousReflection
+    const rawPreviousText = previousReflection
         ? cleanMemoryBody(previousReflection.content)
+        : "";
+    const previousText = rawPreviousText
+        ? `${rawPreviousText}\n（注：若上一轮反思中残留了具体饮食、家务或日常琐事描写，本轮请彻底舍弃那种日记写法，只延续并修正其中的深层心理判断。）`
         : "";
     const round = previousReflection
         ? Math.max(1, Number(previousReflection.metadata?.reflectionRound ?? 1)) + 1
@@ -257,6 +251,21 @@ export async function runCoreMemoryReflection(
         .filter(e => !isReflectionMemoryEntry(e) && !isEntrySuperseded(e))
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
         .slice(-5);
+
+    // ── 素材降噪（防止几十条日常吃喝琐事把反思拉回日记体）──
+    // 既然反思是「核心记忆之上的更高一层理解」：
+    // 1. 当已有核心记忆沉淀（activeCoreSummaries）或事件盒阶段总结（isDigest）时，
+    //    只抽取「事件盒阶段总结 + 重要性 >= 0.8（8/10分）的高权重转折记忆」，过滤掉日常吃面、买杯子等鸡毛蒜皮；
+    // 2. 若过滤后不足 5 条（或角色尚未生成核心记忆与事件盒），才回退补充普通长期记忆。
+    const highSignalScoped = scoped.filter(
+        item => item.isDigest || (Number.isFinite(item.entry.importance) ? item.entry.importance : 0.8) >= 0.8,
+    );
+    const effectivePool = (activeCoreSummaries.length > 0 && highSignalScoped.length >= 3)
+        ? highSignalScoped.slice(-MAX_HIGH_SIGNAL_ENTRIES_WITH_CORE)
+        : (highSignalScoped.length >= 8
+            ? highSignalScoped.slice(-MAX_EVENT_ENTRIES)
+            : scoped.slice(-MAX_EVENT_ENTRIES));
+    const selected = effectivePool;
     const coreMemoriesText = activeCoreSummaries.length > 0
         ? activeCoreSummaries
             .map(e => {
@@ -295,12 +304,13 @@ export async function runCoreMemoryReflection(
         return { success: false, error: "没有可用于反思的素材：这个角色还没有核心记忆、长期记忆或近期事件" };
     }
 
+    // 不向反思模型暴露逐条记忆的具体日期（YYYY-MM-DD），防止模型顺着时间轴写日记
     const eventLines = selected.map(item => {
         const boxTag = item.isDigest
-            ? `【事件盒总结${item.boxTitle ? `：${item.boxTitle}` : ""}】`
-            : (item.boxTitle ? `【事件：${item.boxTitle}】` : "");
-        const staleNote = item.superseded ? "（此条部分内容已被后续记忆更正）" : "";
-        return `- ${item.day}${boxTag}${staleNote}｜${item.body.replace(/\s+/g, " ")}`;
+            ? `【事件脉络总结${item.boxTitle ? `：${item.boxTitle}` : ""}】`
+            : (item.boxTitle ? `【关联事件：${item.boxTitle}】` : "");
+        const staleNote = item.superseded ? "（部分说法已被后续记忆更正）" : "";
+        return `- ${boxTag}${staleNote}${item.body.replace(/\s+/g, " ")}`;
     });
     const trimmed = trimEventLines(eventLines, MAX_EVENT_CHARS);
     const eventsText = trimmed.lines.length > 0
