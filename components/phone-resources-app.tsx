@@ -47,7 +47,11 @@ export function PhoneResourcesApp({ onClose, onNotice, initialPage }: { onClose:
             if (memoryView === "settings") {
                 setMemoryView(prevMemoryView);
             } else if (memoryView === "detail") {
+                // 退出详情页就丢掉选中的角色：否则回到列表后再点右上角设置，
+                // 设置页会继续绑在刚才那个角色上，显示成「那个角色的记忆设置」
                 setMemoryView("list");
+                setMemoryCharId("");
+                setMemoryCharName("");
             } else {
                 setCurrentPage("main");
                 setMemoryView("list");
@@ -86,7 +90,16 @@ export function PhoneResourcesApp({ onClose, onNotice, initialPage }: { onClose:
             className={currentPage === "memory" && memoryView === "detail" ? "mem-detail" : undefined}
             rightAction={showSettingsIcon ? (
                 <button
-                    onClick={() => { setPrevMemoryView(memoryView); setMemoryView("settings"); }}
+                    onClick={() => {
+                        // 从列表页进设置时不该带着上一次看过的角色，
+                        // 否则角色级操作（手动操作 / 记忆认知）会对一个没在看的角色生效
+                        if (memoryView === "list") {
+                            setMemoryCharId("");
+                            setMemoryCharName("");
+                        }
+                        setPrevMemoryView(memoryView);
+                        setMemoryView("settings");
+                    }}
                     className="page-back-btn"
                     type="button"
                     aria-label="更多"
