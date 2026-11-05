@@ -313,19 +313,26 @@ function ReadingAnnotationContent({
     bilingualEnabled,
     expanded,
     onToggle,
+    /** 正文容器类名。批注用 reading-annotation-text（跟随批注字体/字号设置），
+     *  段评传 reading-comment-content —— 段评弹窗有自己的排版，复用批注那个类会被
+     *  批注卡片样式接管，字体、字号、文字颜色一起变掉。 */
+    contentClassName = "reading-annotation-text",
+    translationClassName = "reading-annotation-translation",
 }: {
     text: string;
     bilingualEnabled: boolean;
     expanded: boolean;
     onToggle: () => void;
+    contentClassName?: string;
+    translationClassName?: string;
 }) {
     const bilingual = bilingualEnabled ? splitBilingualText(text) : null;
     if (!bilingual) {
-        return <div className="reading-annotation-text">{text}</div>;
+        return <div className={contentClassName}>{text}</div>;
     }
 
     return (
-        <div className="reading-annotation-text">
+        <div className={contentClassName}>
             <div>{bilingual.original}</div>
             <button
                 type="button"
@@ -341,7 +348,7 @@ function ReadingAnnotationContent({
             >
                 {expanded ? "收起中文" : "中文"}
             </button>
-            {expanded && <div className="reading-annotation-translation">{bilingual.translated}</div>}
+            {expanded && <div className={translationClassName}>{bilingual.translated}</div>}
         </div>
     );
 }
@@ -5217,14 +5224,14 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                                             <span className="reading-comment-name">{author.name}</span>
                                                             {renderCommentActions(comment, "段评")}
                                                         </div>
-                                                        <div className="reading-comment-content">
-                                                            <ReadingAnnotationContent
-                                                                text={comment.content}
-                                                                bilingualEnabled={bilingualTranslationEnabled}
-                                                                expanded={isAnnotationTranslationExpanded(comment.id)}
-                                                                onToggle={() => handleAnnotationTranslationToggle(comment.id)}
-                                                            />
-                                                        </div>
+                                                        <ReadingAnnotationContent
+                                                            text={comment.content}
+                                                            bilingualEnabled={bilingualTranslationEnabled}
+                                                            expanded={isAnnotationTranslationExpanded(comment.id)}
+                                                            onToggle={() => handleAnnotationTranslationToggle(comment.id)}
+                                                            contentClassName="reading-comment-content"
+                                                            translationClassName="reading-comment-translation"
+                                                        />
                                                         <div className="reading-comment-meta">
                                                             <span className="reading-comment-time">{formatCommentTimestamp(comment.createdAt)}</span>
                                                             <button
@@ -5266,14 +5273,14 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                                                                     </span>
                                                                                     {renderCommentActions(reply, "回复")}
                                                                                 </div>
-                                                                                <div className="reading-comment-content">
-                                                                                    <ReadingAnnotationContent
-                                                                                        text={reply.content}
-                                                                                        bilingualEnabled={bilingualTranslationEnabled}
-                                                                                        expanded={isAnnotationTranslationExpanded(reply.id)}
-                                                                                        onToggle={() => handleAnnotationTranslationToggle(reply.id)}
-                                                                                    />
-                                                                                </div>
+                                                                                <ReadingAnnotationContent
+                                                                                    text={reply.content}
+                                                                                    bilingualEnabled={bilingualTranslationEnabled}
+                                                                                    expanded={isAnnotationTranslationExpanded(reply.id)}
+                                                                                    onToggle={() => handleAnnotationTranslationToggle(reply.id)}
+                                                                                    contentClassName="reading-comment-content"
+                                                                                    translationClassName="reading-comment-translation"
+                                                                                />
                                                                                 <div className="reading-comment-meta">
                                                                                     <span className="reading-comment-time">{formatCommentTimestamp(reply.createdAt)}</span>
                                                                                     <button
