@@ -70,6 +70,9 @@ import {
   QA_MAX_OUTPUT_TOKENS_MAX,
 } from "@/lib/qa-prefs";
 import { resolveQaApiConfig } from "@/lib/qa-agent-engine";
+import { loadApiConfigs, loadBindingConfig, saveBindingConfig } from "@/lib/settings-storage";
+import { loadApiConfigFolders, loadApiConfigRootOrder } from "@/lib/api-config-folders";
+import { BindingSheetFolderOptions } from "@/components/settings/folder-picker-options";
 import {
   loadQaGithubConfig,
   saveQaGithubConfig,
@@ -806,6 +809,97 @@ function QaRepoSheet({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
   );
 }
 
+// ── 工坊 API 配置快速切换弹窗 ─────────────────────────
+
+function QaApiPickerDialog({
+  onClose,
+  onPicked,
+}: {
+  onClose: () => void;
+  onPicked: () => void;
+}) {
+  const [openFolderId, setOpenFolderId] = useState<string | null>(null);
+  const data = useMemo(() => {
+    const configs = loadApiConfigs();
+    const binding = loadBindingConfig();
+    const globalId = binding.globalDefaults.apiConfigId;
+    const globalApi = (globalId ? configs.find((c) => c.id === globalId) : undefined) ?? configs[0];
+    const inheritName = globalApi ? globalApi.name || globalApi.provider : undefined;
+    return {
+      items: configs.map((c) => ({
+        id: c.id,
+        name: `${c.name || c.provider}${c.defaultModel ? ` (${c.defaultModel})` : ""}`,
+        folderId: c.folderId,
+        pinned: c.pinned,
+      })),
+      folders: loadApiConfigFolders(),
+      rootOrder: loadApiConfigRootOrder(),
+      selected: binding.qaApiConfigId && configs.some((c) => c.id === binding.qaApiConfigId)
+        ? binding.qaApiConfigId
+        : undefined,
+      inheritLabel: inheritName ? `继承全局：${inheritName}` : "继承全局",
+    };
+  }, []);
+
+  const pick = (apiConfigId: string | undefined) => {
+    const binding = loadBindingConfig();
+    const next = { ...binding };
+    if (apiConfigId) {
+      next.qaApiConfigId = apiConfigId;
+    } else {
+      delete next.qaApiConfigId;
+    }
+    saveBindingConfig(next);
+    onPicked();
+    onClose();
+  };
+
+  return (
+    <div className="modal-overlay" data-ui="modal" onClick={onClose}>
+      <div
+        className="binding-picker-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="切换工坊 API 配置"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="binding-picker-header">
+          <button type="button" className="binding-picker-icon-btn" onClick={onClose} aria-label="关闭">
+            <X size={17} />
+          </button>
+          <h3 className="binding-picker-title">工坊 API 配置</h3>
+          <span className="binding-picker-header-spacer" />
+        </div>
+        <div className="binding-picker-body">
+          <div className="binding-sheet-list">
+            <BindingSheetFolderOptions
+              items={data.items}
+              folders={data.folders}
+              rootOrder={data.rootOrder}
+              openFolderId={openFolderId}
+              onOpenFolder={setOpenFolderId}
+              isSelected={(id) => data.selected === id}
+              onPick={pick}
+              unsetRow={
+                <button
+                  type="button"
+                  className="binding-sheet-option"
+                  data-selected={!data.selected}
+                  onClick={() => pick(undefined)}
+                >
+                  <span className="binding-sheet-check">{!data.selected && <Check size={15} />}</span>
+                  <span className="binding-sheet-option-text">{data.inheritLabel}</span>
+                </button>
+              }
+              emptyRow={<div className="binding-sheet-empty">暂无可选 API 配置，请先在「设置 → API 设置」创建。</div>}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── App 本体 ─────────────────────────────────────────
 
 export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
@@ -817,6 +911,7 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
   const [clearToolsOpen, setClearToolsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [apiLogOpen, setApiLogOpen] = useState(false);
+  const [apiPickerOpen, setApiPickerOpen] = useState(false);
   /** 会话重命名弹窗：抽屉菜单里点「重命名」打开 */
   const [renameTarget, setRenameTarget] = useState<{ id: string; title: string } | null>(null);
   const [renameTitle, setRenameTitle] = useState("");
@@ -1243,7 +1338,16 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
                 </div>
               )}
             </div>
-            {modelName && <span className="qa-model-pill">{modelName}</span>}
+            {modelName && (
+              <button
+                type="button"
+                className="qa-model-pill"
+                onClick={() => setApiPickerOpen(true)}
+                title="点击切换工坊 API 配置"
+              >
+                {modelName}
+              </button>
+            )}
 
             {repoWritable && (
               <button type="button" className="qa-mode-pill" onClick={toggleWriteMode}>
@@ -1525,6 +1629,13 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
 
       {repoSheetOpen && (
         <QaRepoSheet onClose={() => setRepoSheetOpen(false)} onSaved={refreshComposerMeta} />
+      )}
+
+      {apiPickerOpen && (
+        <QaApiPickerDialog
+          onClose={() => setApiPickerOpen(false)}
+          onPicked={refreshComposerMeta}
+        />
       )}
 
       {previewOpen && !previewItem && (

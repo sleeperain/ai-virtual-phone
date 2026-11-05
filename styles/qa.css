@@ -937,6 +937,7 @@
   text-overflow: ellipsis;
 }
 .qa-model-pill {
+  cursor: pointer;
   color: var(--qa-text-secondary);
   background: rgba(255, 255, 255, 0.5);
   border: 1px solid rgba(255, 255, 255, 0.6);
@@ -948,6 +949,13 @@
   white-space: nowrap;
   flex-shrink: 1;
   min-width: 0;
+  transition: filter 0.16s ease, transform 0.16s ease;
+}
+.qa-model-pill:hover {
+  filter: brightness(0.97);
+}
+.qa-model-pill:active {
+  transform: scale(0.96);
 }
 .qa-mode-pill {
   cursor: pointer;
