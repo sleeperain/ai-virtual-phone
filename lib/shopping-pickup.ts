@@ -395,6 +395,32 @@ export function buildPickupCard(order: ShoppingOrder): DeliveryCardPayload {
   };
 }
 
+/** 快递卡片底部的状态标识 */
+export type DeliveryCardStatus = {
+  label: string;
+  tone: "waiting" | "picked" | "signed";
+};
+
+/**
+ * 卡片右下角的状态随时间/签收动作变化：
+ * 到货未取 = 待取件，角色代取 = 代取成功，自己取 = 已签收。
+ * 卡片本身不存状态——它必须跟着订单走，否则签收之后卡片永远显示「待取件」。
+ */
+export function resolveDeliveryCardStatus(orderId: string, nowMs = Date.now()): DeliveryCardStatus | null {
+  const order = loadShoppingState().orders.find(item => item.id === orderId);
+  if (!order) return null;
+  const pickup = resolveOrderPickup(order, nowMs);
+  if (pickup.refunded) return { label: "已退货", tone: "signed" };
+  if (pickup.signed) {
+    return order.signedBy === "character"
+      ? { label: "代取成功", tone: "picked" }
+      : { label: "已签收", tone: "signed" };
+  }
+  if (pickup.canPickup) return { label: "待取件", tone: "waiting" };
+  // 还在路上：沿用订单自己的物流文案（配送中等）
+  return { label: pickup.statusLabel || "运输中", tone: "waiting" };
+}
+
 /** 把取件卡片发到指定角色的私聊（用户点「找人代取」时调用） */
 export function sendPickupProxyCard(orderId: string, character: { id: string; name: string }): {
   ok: boolean;

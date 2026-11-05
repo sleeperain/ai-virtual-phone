@@ -28,6 +28,8 @@ import { GeneratedImageErrorDialog } from "./generated-image-error-dialog";
 import { ScanPayCard } from "@/components/chat/scan-pay-card";
 import { payWithWalletBalance } from "@/lib/wallet-storage";
 import { formatShoppingPaymentRequestHistory } from "@/lib/shopping-payment-request";
+import { resolveDeliveryCardStatus, type DeliveryCardStatus } from "@/lib/shopping-pickup";
+import { SHOPPING_STATE_UPDATED_EVENT } from "@/lib/shopping-storage";
 import { toCustomAppIconId } from "@/lib/custom-app-types";
 import { ChatPluginSlot } from "@/components/chat/chat-plugin-slot";
 import { CHAT_PLUGIN_SLOTS_CHANGED_EVENT, getChatPluginRuntime } from "@/lib/chat-plugin-runtime";
@@ -1175,7 +1177,8 @@ function GiftBubble({ msg }: { msg: ChatMessage }) {
 
 // ── Delivery card（快递取件）─────────────────────────────
 // 版式：左侧正方形图标（浅灰纯色底、8px 圆角、无边框，高度跟随右侧文字块）+
-// 右侧取件码（大字加粗）与两行取件提示；一条细分割线之后，底部是承运商与包裹编号。
+// 右侧取件码（大字加粗）与两行取件提示；一条细分割线之后，
+// 底部左侧是承运商与包裹编号，右侧是随订单变化的取件状态。
 // 卡片刻意不含任何商品信息：角色拆件之前无从判断包裹里是什么。
 
 /** 快递箱图标（内联 SVG，保证各设备字形一致） */
@@ -1198,6 +1201,32 @@ function PackageBoxIcon({ style }: { style?: React.CSSProperties }) {
     );
 }
 
+/**
+ * 卡片底部状态要跟着订单实时走（待取件 → 代取成功 / 已签收），
+ * 所以订阅购物状态事件在卡片内部自己刷新，不依赖外层消息重渲染。
+ */
+function useDeliveryCardStatus(orderId?: string): DeliveryCardStatus | null {
+    const [status, setStatus] = useState<DeliveryCardStatus | null>(
+        () => (orderId ? resolveDeliveryCardStatus(orderId) : null),
+    );
+    useEffect(() => {
+        if (!orderId) {
+            setStatus(null);
+            return;
+        }
+        const sync = () => setStatus(resolveDeliveryCardStatus(orderId));
+        sync();
+        window.addEventListener(SHOPPING_STATE_UPDATED_EVENT, sync);
+        // 签收/退款流程同时会刷新消息列表，顺手同步一次
+        window.addEventListener("chat-messages-updated", sync);
+        return () => {
+            window.removeEventListener(SHOPPING_STATE_UPDATED_EVENT, sync);
+            window.removeEventListener("chat-messages-updated", sync);
+        };
+    }, [orderId]);
+    return status;
+}
+
 function DeliveryCardBubble({ msg }: { msg: ChatMessage }) {
     const d = msg.mediaData;
     // picked = 早期版本发出的「代取成功」卡片，只做历史数据兼容，新流程已改用系统通知
@@ -1211,6 +1240,14 @@ function DeliveryCardBubble({ msg }: { msg: ChatMessage }) {
         || (isPicked
             ? (d?.deliveryCardCaption || "快件已由对方代取")
             : `快件已到达${stationLabel}，请及时取件，如有问题请联系站点`);
+    // 订单已被删掉（或还没生成）时退回卡片自己的初值
+    const status = useDeliveryCardStatus(d?.deliveryCardOrderId);
+    const statusLabel = status?.label || (isPicked ? "代取成功" : "待取件");
+    const statusColor = status?.tone === "picked"
+        ? "var(--c-success)"
+        : status?.tone === "signed"
+            ? "var(--c-text)"
+            : "var(--c-icon)";
 
     return (
         <div
@@ -1264,8 +1301,11 @@ function DeliveryCardBubble({ msg }: { msg: ChatMessage }) {
                 </div>
             </div>
             <div style={{ height: 1, background: "color-mix(in srgb, var(--c-text-title) 10%, transparent)" }} />
-            <div className="px-4 py-1.5 ts-11 text-[var(--c-icon)] truncate">
-                {carrierLabel}{parcelNo ? ` ${parcelNo}` : ""}
+            <div className="px-4 py-1.5 ts-11 flex items-center justify-between gap-2">
+                <span className="min-w-0 truncate text-[var(--c-icon)]">
+                    {carrierLabel}{parcelNo ? ` ${parcelNo}` : ""}
+                </span>
+                <span className="shrink-0" style={{ color: statusColor }}>{statusLabel}</span>
             </div>
         </div>
     );
