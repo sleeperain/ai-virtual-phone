@@ -154,7 +154,6 @@ export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charNa
         if (prev.msg.mediaData?.deliveryCardKind !== next.msg.mediaData?.deliveryCardKind) return false;
         if (prev.msg.mediaData?.deliveryCardNotice !== next.msg.mediaData?.deliveryCardNotice) return false;
         if (prev.msg.mediaData?.deliveryCardCarrier !== next.msg.mediaData?.deliveryCardCarrier) return false;
-        if (prev.msg.mediaData?.deliveryCardParcelNo !== next.msg.mediaData?.deliveryCardParcelNo) return false;
         if (prev.msg.mediaData?.giftReturnedAt !== next.msg.mediaData?.giftReturnedAt) return false;
         if (prev.msg.mediaData?.claimedBy?.length !== next.msg.mediaData?.claimedBy?.length) return false;
         if (prev.msg.mediaData?.appName !== next.msg.mediaData?.appName) return false;
@@ -1234,7 +1233,6 @@ function DeliveryCardBubble({ msg }: { msg: ChatMessage }) {
     const codeLabel = d?.deliveryCardCodeLabel || d?.label || (isPicked ? "代取成功" : "取件码");
     const carrierLabel = d?.deliveryCardCarrier || "〇通速递";
     const stationLabel = d?.deliveryCardStation || "浮岛驿站";
-    const parcelNo = d?.deliveryCardParcelNo || "";
     // 老卡片没有新字段：取件提示按当前规则现算，代取卡片沿用当年存的 caption
     const notice = d?.deliveryCardNotice
         || (isPicked
@@ -1302,9 +1300,7 @@ function DeliveryCardBubble({ msg }: { msg: ChatMessage }) {
             </div>
             <div style={{ height: 1, background: "color-mix(in srgb, var(--c-text-title) 10%, transparent)" }} />
             <div className="px-4 py-1.5 ts-11 flex items-center justify-between gap-2">
-                <span className="min-w-0 truncate text-[var(--c-icon)]">
-                    {carrierLabel}{parcelNo ? ` ${parcelNo}` : ""}
-                </span>
+                <span className="min-w-0 truncate text-[var(--c-icon)]">{carrierLabel}</span>
                 <span className="shrink-0" style={{ color: statusColor }}>{statusLabel}</span>
             </div>
         </div>

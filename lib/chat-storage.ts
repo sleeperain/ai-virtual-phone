@@ -166,8 +166,6 @@ export type ChatMessage = {
         deliveryCardNotice?: string;
         /** 承运商 */
         deliveryCardCarrier?: string;
-        /** 包裹编号（运单号） */
-        deliveryCardParcelNo?: string;
         giftOrderId?: string;    // 礼物来源订单 ID
         giftItemId?: string;     // 礼物来源商品 ID
         giftName?: string;       // 礼物商品名

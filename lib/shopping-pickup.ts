@@ -359,17 +359,8 @@ export type DeliveryCardPayload = {
   notice: string;
   /** 承运商 */
   carrierLabel: string;
-  /** 包裹编号（运单号），同一订单永远一致 */
-  parcelNo: string;
   orderId: string;
 };
-
-/** 包裹编号：YT + 12 位数字，同一订单稳定不变 */
-export function generateParcelNo(orderId: string): string {
-  const head = stableHash(`parcel:${orderId}`) % 1000000;
-  const tail = stableHash(`parcel-tail:${orderId}`) % 1000000;
-  return `YT${String(head).padStart(6, "0")}${String(tail).padStart(6, "0")}`;
-}
 
 function pickupCaption(order: ShoppingOrder, code: string): string {
   return `${order.merchantLabel || "驿站"} · 凭码到柜自取`;
@@ -390,7 +381,6 @@ export function buildPickupCard(order: ShoppingOrder): DeliveryCardPayload {
     stationLabel,
     notice: buildPickupNotice(stationLabel),
     carrierLabel: DELIVERY_CARRIER_LABEL,
-    parcelNo: generateParcelNo(order.id),
     orderId: order.id,
   };
 }
@@ -449,7 +439,6 @@ export function sendPickupProxyCard(orderId: string, character: { id: string; na
       deliveryCardStation: card.stationLabel,
       deliveryCardNotice: card.notice,
       deliveryCardCarrier: card.carrierLabel,
-      deliveryCardParcelNo: card.parcelNo,
       label: card.codeLabel,
     },
   });
