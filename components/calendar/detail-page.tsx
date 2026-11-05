@@ -499,14 +499,15 @@ const ROUTINE_COLUMNS: Array<{ dayType: CalendarRoutineDayType; title: string; s
 
 export function CalendarRoutinePage({
   routineItems,
-  ownerStrip,
+  ownerName,
   onSwitchToSchedule,
   onOpenSettings,
   onClose,
   onEditRoutineItem,
 }: {
   routineItems: CalendarRoutineItem[];
-  ownerStrip: ReactNode;
+  /** 只在顶栏标一下这是谁的作息；不做角色切换——进这一页时角色早已选定 */
+  ownerName?: string;
   /** 切回「日程安排」日视图；生活节律只是日视图的一种呈现，不另开一整套入口 */
   onSwitchToSchedule: () => void;
   onOpenSettings: () => void;
@@ -556,6 +557,22 @@ export function CalendarRoutinePage({
         <button type="button" className="calendar-pill-btn calendar-back-btn" onClick={onClose} aria-label="返回桌面">
           <ChevronLeft size={19} /> 生活节律
         </button>
+        {ownerName ? (
+          <span
+            title={ownerName}
+            style={{
+              marginLeft: 2,
+              fontSize: 13,
+              color: "var(--c-calendar-sub)",
+              maxWidth: 120,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {ownerName}
+          </span>
+        ) : null}
         <span className="calendar-topbar-space" />
         {/* 生活节律 = 日视图的另一种排法，顶栏只留「切回日程安排」和设置两项，
             主题 / 知情角色 / 天数这些跟作息无关的入口不在这里重复一遍 */}
@@ -573,7 +590,8 @@ export function CalendarRoutinePage({
         </button>
       </div>
 
-      {ownerStrip}
+      {/* 这里不放角色选择条：进生活节律时角色已经在日视图/月视图选好了，
+          再摆一排 chips 既重复，点「我」还会把这个页面顶掉 */}
 
       {/* 双列版头：工作日 | 节假日（不显示具体日期） */}
       <div className="calendar-tl-headrow">

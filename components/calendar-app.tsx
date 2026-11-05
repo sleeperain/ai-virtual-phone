@@ -804,7 +804,7 @@ export function PhoneCalendarApp({
         {isRoutineMode ? (
           <CalendarRoutinePage
             routineItems={routineItems}
-            ownerStrip={ownerStrip}
+            ownerName={selectedOwner?.name}
             onSwitchToSchedule={() => setCharacterViewMode("schedule")}
             onOpenSettings={() => openSettings(null)}
             onClose={onClose}
