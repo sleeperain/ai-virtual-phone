@@ -12,6 +12,9 @@
 
 import { loadShoppingState, saveShoppingState } from "./shopping-storage";
 import { countSentGiftsForOrder } from "./shopping-gift-utils";
+// 签收后把商品同步进「我的背包」。依赖方向是单向的：
+// backpack-legacy 引 chat-storage / shopping-gift-utils，但不引本模块，不会成环。
+import { rescanShoppingOrders } from "./backpack-legacy";
 import { clearConsumedUnits } from "./backpack-consumed";
 import { removeBackpackItemsByOrder } from "./backpack-storage";
 import { createOrGetSession, loadChatMessages, loadChatSessions, pushChatMessage, updateMessageMediaData } from "./chat-storage";
@@ -258,7 +261,7 @@ type SignOrderOptions = {
 /** 签收：自己取件成 或 角色代取成功时调用，签收后商品才进入赠礼列表 */
 export function signShoppingOrder(orderId: string, options: SignOrderOptions): ShoppingOrder | null {
   const now = new Date();
-  return updateOrder(orderId, order => ({
+  const signed = updateOrder(orderId, order => ({
     ...order,
     pickupCode: getOrderPickupCode(order),
     pickupCodeAt: order.pickupCodeAt || now.toISOString(),
@@ -269,6 +272,19 @@ export function signShoppingOrder(orderId: string, options: SignOrderOptions): S
     proxySessionId: options.by === "user" ? undefined : order.proxySessionId,
     shippingTimeline: appendSignedEvent(order, now),
   }));
+  // 签收即到手：商品要立刻落进「我的背包」。
+  // 背包物品是独立数据（backpack_items_v1），不会从订单反推——除了那次一次性迁移，
+  // 只有用户手动点「重新扫描」才会写入。所以这里必须主动同步一次，
+  // 否则取件之后背包里什么都没有，只有在赠礼列表里能看见。
+  if (signed) {
+    try {
+      rescanShoppingOrders();
+    } catch (e) {
+      // 同步失败不影响签收本身：背包里还有菜单「重新扫描」可以补
+      console.warn("[shopping] 签收后同步背包失败", e);
+    }
+  }
+  return signed;
 }
 
 /** 确认收货：签收之后可点，点完按钮变「再买一单」 */
