@@ -318,6 +318,7 @@ function ReadingAnnotationContent({
      *  批注卡片样式接管，字体、字号、文字颜色一起变掉。 */
     contentClassName = "reading-annotation-text",
     translationClassName = "reading-annotation-translation",
+    translationStyle,
 }: {
     text: string;
     bilingualEnabled: boolean;
@@ -325,6 +326,8 @@ function ReadingAnnotationContent({
     onToggle: () => void;
     contentClassName?: string;
     translationClassName?: string;
+    /** 译文那块的附加样式（段评用它把颜色压浅一点） */
+    translationStyle?: CSSProperties;
 }) {
     const bilingual = bilingualEnabled ? splitBilingualText(text) : null;
     if (!bilingual) {
@@ -348,7 +351,9 @@ function ReadingAnnotationContent({
             >
                 {expanded ? "收起中文" : "中文"}
             </button>
-            {expanded && <div className={translationClassName}>{bilingual.translated}</div>}
+            {expanded && (
+                <div className={translationClassName} style={translationStyle}>{bilingual.translated}</div>
+            )}
         </div>
     );
 }
@@ -981,6 +986,14 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     /** 松手后读取选区：定位到覆盖的每一段，换算成段落内字符区间 */
     const captureSelection = useCallback(() => {
         if (Date.now() < suppressSelectionUntilRef.current) { setSelectionInfo(null); return; }
+        // 焦点在输入框里（段评输入框、批注输入框）：那是用户在改自己的字，
+        // 既不该弹正文的「高亮/划线」菜单，也不该因为每敲一下都 setState
+        // 把整棵树重渲染一遍——手机上重渲染会让输入框失焦，键盘收起又弹出。
+        const activeEl = typeof document !== "undefined" ? document.activeElement : null;
+        if (activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA")) {
+            setSelectionInfo(null);
+            return;
+        }
         const sel = typeof window !== "undefined" ? window.getSelection() : null;
         if (!sel || sel.isCollapsed || sel.rangeCount === 0) { setSelectionInfo(null); return; }
 
@@ -5173,7 +5186,16 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                     >
                         <div
                             className="reading-comment-modal"
-                            onClick={(e) => e.stopPropagation()}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                // 点输入框以外的区域就取消「回复某条评论」。输入区、发送键、
+                                // 每条评论的「回复」按钮和「⋯」菜单都要放过——
+                                // 它们自己会改这个状态，在这儿再清一次会把刚点下的目标抹掉。
+                                if (!paragraphCommentReplyTarget) return;
+                                const hit = e.target as HTMLElement | null;
+                                if (hit?.closest(".reading-comment-input-row, .reading-comment-reply-btn, .reading-comment-head-actions")) return;
+                                setParagraphCommentReplyTarget(null);
+                            }}
                         >
                             <div className="reading-comment-modal-header">
                                 <span className="reading-comment-modal-header-spacer" aria-hidden="true" />
@@ -5231,6 +5253,8 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                                             onToggle={() => handleAnnotationTranslationToggle(comment.id)}
                                                             contentClassName="reading-comment-content"
                                                             translationClassName="reading-comment-translation"
+                                                            // 译文比原文略淡一档：一眼分得出哪行是翻译，又不至于读着费劲
+                                                            translationStyle={{ opacity: 0.78 }}
                                                         />
                                                         <div className="reading-comment-meta">
                                                             <span className="reading-comment-time">{formatCommentTimestamp(comment.createdAt)}</span>
@@ -5280,6 +5304,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                                                                     onToggle={() => handleAnnotationTranslationToggle(reply.id)}
                                                                                     contentClassName="reading-comment-content"
                                                                                     translationClassName="reading-comment-translation"
+                                                                                    translationStyle={{ opacity: 0.78 }}
                                                                                 />
                                                                                 <div className="reading-comment-meta">
                                                                                     <span className="reading-comment-time">{formatCommentTimestamp(reply.createdAt)}</span>
@@ -5312,24 +5337,21 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                 )}
                             </div>
                             <div className="reading-comment-modal-footer">
-                                {paragraphCommentReplyTarget && (
-                                    <div className="reading-comment-reply-banner">
-                                        <span>回复 @{paragraphCommentReplyTarget.authorName}</span>
-                                        <button
-                                            type="button"
-                                            onClick={() => setParagraphCommentReplyTarget(null)}
-                                            aria-label="取消回复"
-                                        >
-                                            取消
-                                        </button>
-                                    </div>
-                                )}
+                                {/* 回复谁只写在输入框的 placeholder 里，不再单独占一行：
+                                    取消回复靠点输入框以外的区域（见 modal 的 onClick）。 */}
                                 <div className="reading-comment-input-row">
                                     <input
                                         type="text"
                                         className="reading-comment-input"
                                         value={paragraphCommentDraft}
                                         onChange={(e) => setParagraphCommentDraft(e.target.value)}
+                                        // 手机上点击已聚焦的输入框会被当成「重新选一次落点」，
+                                        // 光标和键盘跟着抖一下。输入框必须可编辑文本、
+                                        // 且不参与外层的选区/长按逻辑，这两条缺一条就会抖。
+                                        style={{ WebkitUserSelect: "text", userSelect: "text" }}
+                                        onPointerDown={(e) => e.stopPropagation()}
+                                        onPointerUp={(e) => e.stopPropagation()}
+                                        onClick={(e) => e.stopPropagation()}
                                         onKeyDown={(e) => {
                                             if (e.key === "Enter" && !e.shiftKey) {
                                                 e.preventDefault();
@@ -5338,7 +5360,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                         }}
                                         placeholder={
                                             paragraphCommentReplyTarget
-                                                ? `回复 ${paragraphCommentReplyTarget.authorName}...`
+                                                ? `回复 ${paragraphCommentReplyTarget.authorName}`
                                                 : "发一条段评..."
                                         }
                                     />
@@ -5346,7 +5368,11 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                         type="button"
                                         className="reading-comment-send-btn"
                                         disabled={!paragraphCommentDraft.trim()}
-                                        onClick={() => { void handleSendParagraphComment(); }}
+                                        onPointerDown={(e) => e.stopPropagation()}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            void handleSendParagraphComment();
+                                        }}
                                     >
                                         发送
                                     </button>
