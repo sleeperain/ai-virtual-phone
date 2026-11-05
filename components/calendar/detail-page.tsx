@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { ChevronLeft, Columns2, Palette, Settings2, Users } from "lucide-react";
+import { ChevronLeft, Columns2, Settings2 } from "lucide-react";
 import type { CalendarRoutineDayType, CalendarRoutineItem, CalendarScheduleItem } from "@/lib/calendar-types";
 import type { MenstrualDayState } from "@/lib/menstrual-storage";
 import { formatIsoDate, parseIsoDate, timeToMinutes } from "@/lib/calendar-utils";
@@ -500,19 +500,16 @@ const ROUTINE_COLUMNS: Array<{ dayType: CalendarRoutineDayType; title: string; s
 export function CalendarRoutinePage({
   routineItems,
   ownerStrip,
-  onOpenViewPicker,
-  onOpenTheme,
+  onSwitchToSchedule,
   onOpenSettings,
-  onOpenAccess,
   onClose,
   onEditRoutineItem,
 }: {
   routineItems: CalendarRoutineItem[];
   ownerStrip: ReactNode;
-  onOpenViewPicker: () => void;
-  onOpenTheme: () => void;
+  /** 切回「日程安排」日视图；生活节律只是日视图的一种呈现，不另开一整套入口 */
+  onSwitchToSchedule: () => void;
   onOpenSettings: () => void;
-  onOpenAccess: () => void;
   onClose: () => void;
   onEditRoutineItem: (item: CalendarRoutineItem) => void;
 }) {
@@ -560,16 +557,18 @@ export function CalendarRoutinePage({
           <ChevronLeft size={19} /> 生活节律
         </button>
         <span className="calendar-topbar-space" />
-        <button type="button" className="calendar-icon-btn" onClick={onOpenViewPicker} aria-label="视图与显示天数">
+        {/* 生活节律 = 日视图的另一种排法，顶栏只留「切回日程安排」和设置两项，
+            主题 / 知情角色 / 天数这些跟作息无关的入口不在这里重复一遍 */}
+        <button
+          type="button"
+          className="calendar-icon-btn"
+          onClick={onSwitchToSchedule}
+          aria-label="切换到日程安排"
+          title="切换到日程安排"
+        >
           <Columns2 size={17} />
         </button>
-        <button type="button" className="calendar-icon-btn caltool-access-button" onClick={onOpenAccess} aria-label="选择日历知情角色">
-          <Users size={17} />
-        </button>
-        <button type="button" className="calendar-icon-btn" onClick={onOpenTheme} aria-label="主题与自定义">
-          <Palette size={17} />
-        </button>
-        <button type="button" className="calendar-icon-btn" onClick={onOpenSettings} aria-label="日历设置">
+        <button type="button" className="calendar-icon-btn" onClick={onOpenSettings} aria-label="日历设置" title="日历设置">
           <Settings2 size={17} />
         </button>
       </div>

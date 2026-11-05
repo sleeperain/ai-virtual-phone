@@ -805,10 +805,8 @@ export function PhoneCalendarApp({
           <CalendarRoutinePage
             routineItems={routineItems}
             ownerStrip={ownerStrip}
-            onOpenViewPicker={() => setShowDaysPanel(true)}
-            onOpenTheme={() => setShowThemePanel(true)}
+            onSwitchToSchedule={() => setCharacterViewMode("schedule")}
             onOpenSettings={() => openSettings(null)}
-            onOpenAccess={() => setToolView({ kind: "access" })}
             onClose={onClose}
             onEditRoutineItem={openEditRoutineItem}
           />

@@ -22,6 +22,7 @@ import { getCustomStickerExample, getCustomStickerNames } from "./custom-sticker
 import { previewMessagesForApi, sendLLMRequest, type ChatEngineError } from "./chat-engine";
 import {
   buildCalendarScheduleMarker,
+  loadCalendarConfig,
   clearGeneratedRoutineItems,
   clearGeneratedWeekItems,
   cloneRoutinePlanWithManualEdits,
@@ -334,15 +335,31 @@ export function getCurrentWeekStart(): string {
   return getWeekStartIso(new Date());
 }
 
-function buildRoutineTriggerInstruction(ownerName: string): string {
+/** 作息提示词里的角色名占位符（写别的写法不会被替换） */
+export const ROUTINE_PROMPT_NAME_TOKEN = "{{name}}";
+
+/**
+ * 内置的「AI 生成作息」提示词。日历设置里的「生活节律提示词」留空时用它；
+ * 设置页的「填入内置提示词」也拿它做编辑起点。
+ */
+export function buildDefaultRoutinePrompt(): string {
   return [
-    `请为${ownerName}生成「工作日」与「节假日」的日常作息时间表（生活节律 / 常规事件）。`,
+    `请为${ROUTINE_PROMPT_NAME_TOKEN}生成「工作日」与「节假日」的日常作息时间表（生活节律 / 常规事件）。`,
     "请结合角色的人设、职业、性格与生活习惯，规划一天中各个时间段的典型日常活动（如起床、通勤/工作/学习、用餐、休闲娱乐、运动、休息就寝等）。",
     "每行一条，严格按以下 6 段格式输出：类型|开始时间|结束时间|地点|事项|备注",
     "其中「类型」只能填「工作日」或「节假日」；开始时间与结束时间为 HH:MM（24小时制，结束时间需晚于开始时间，跨夜请拆分为 23:59 前后）。",
     "「备注」写更细节的活动：这个时段具体在做什么、和谁、什么状态（例如“闹钟响三遍才爬起来，抓着面包出门”“边吃饭边刷手机看剧”）；没有细节可写时填「无」。",
     "工作日和节假日各安排 5~10 条，覆盖全天主要时间节律，不要输出解释文字。",
   ].join("\n");
+}
+
+/**
+ * 真正发出去的那段指令：设置了自定义提示词就用它，空着用内置的。
+ * 两种来源都做一次 {{name}} → 角色名 的替换。
+ */
+export function buildRoutineTriggerInstruction(ownerName: string, template?: string): string {
+  const body = (template ?? "").trim() || buildDefaultRoutinePrompt();
+  return body.split(ROUTINE_PROMPT_NAME_TOKEN).join(ownerName);
 }
 
 function parseRoutineLines(rawText: string): CalendarRoutineItem[] {
@@ -410,7 +427,8 @@ export async function generateCharacterRoutineSchedule(
   try {
     const weekStart = getCurrentWeekStart();
     const resolved = await resolveCalendarAssemblerInput("character", ownerId, weekStart);
-    const triggerInstruction = buildRoutineTriggerInstruction(resolved.ownerName);
+    // 设置 → 日历设置 → 生活节律提示词；留空就用内置的那份
+    const triggerInstruction = buildRoutineTriggerInstruction(resolved.ownerName, loadCalendarConfig().routinePrompt);
 
     const messages: LLMMessage[] = [
       ...resolved.llmMessages,

@@ -1,8 +1,9 @@
 "use client";
 
-// 日历设置：月历右上角单独的入口。四个折叠栏——经期设置（原来详情页的「周期设置」弹窗）、
-// 读取范围设置、节假日、视图设置。后三栏是原来「用户日历与备忘录增强」插件的那张设置表，
-// 字段、文案原样照搬；节假日颜色是色板，对应节假日没开时那行色板隐藏。
+// 日历设置：月历右上角单独的入口。五个折叠栏——经期设置（原来详情页的「周期设置」弹窗）、
+// 读取范围设置、节假日、视图设置、生活节律提示词。中间三栏是原来「用户日历与备忘录增强」
+// 插件的那张设置表，字段、文案原样照搬；节假日颜色是色板，对应节假日没开时那行色板隐藏。
+// 「生活节律提示词」是覆盖「AI 生成作息」那条指令的文本框，留空即内置。
 // 配色用日历自己的那套（--c-calendar-*），和经期设置、日历主题一致。
 
 import { useState, type ReactNode } from "react";
@@ -10,6 +11,7 @@ import { ChevronDown } from "lucide-react";
 import { PageShell } from "@/components/ui/page-shell";
 import { Toggle } from "@/components/ui/form";
 import { normalizeCalendarConfig, type CalendarConfig } from "@/lib/calendar-storage";
+import { buildDefaultRoutinePrompt, ROUTINE_PROMPT_NAME_TOKEN } from "@/lib/calendar-engine";
 import { MEMO_BANNER_COLORS } from "./calendar-tools";
 
 type NumberKey = "nearMinutes" | "futureDays" | "maxEvents";
@@ -65,7 +67,50 @@ function HolidayColorPicker({ label, value, onChange }: { label: string; value: 
     );
 }
 
-export type CalendarSettingsSection = "period" | "scope" | "holiday" | "view";
+export type CalendarSettingsSection = "period" | "scope" | "holiday" | "view" | "routine";
+
+/** 「AI 生成作息」提示词编辑器：改的是发出去的那整段指令，留空就回到内置那份 */
+function RoutinePromptEditor({ value, onChange }: { value: string; onChange: (next: string) => void }) {
+    // 输入过程留在本地，失焦才落盘——和上面数字输入一个思路，别每敲一个字写一次存储
+    const [draft, setDraft] = useState(value);
+    const commit = (next: string) => {
+        setDraft(next);
+        onChange(next);
+    };
+    return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <textarea
+                className="ui-input caltool-settings-full-input"
+                style={{ minHeight: 200, resize: "vertical", lineHeight: 1.6, fontSize: 13 }}
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                onBlur={() => {
+                    if (draft !== value) onChange(draft);
+                }}
+                placeholder="留空：使用内置提示词"
+                spellCheck={false}
+            />
+            <div style={{ display: "flex", gap: 8 }}>
+                <button
+                    type="button"
+                    className="calendar-block-btn"
+                    data-variant="ghost"
+                    onClick={() => commit(buildDefaultRoutinePrompt())}
+                >
+                    填入内置提示词
+                </button>
+                <button
+                    type="button"
+                    className="calendar-block-btn"
+                    data-variant="ghost"
+                    onClick={() => commit("")}
+                >
+                    清空（恢复内置）
+                </button>
+            </div>
+        </div>
+    );
+}
 
 function Section({ title, open, onToggle, children }: { title: string; open: boolean; onToggle: () => void; children: ReactNode }) {
     return (
@@ -200,6 +245,21 @@ export function CalendarSettingsPage({
                                 <option value="sunday">周日</option>
                             </select>
                         </Row>
+                    </Section>
+                    <Section title="生活节律提示词" open={openSections.has("routine")} onToggle={() => toggleSection("routine")}>
+                        <Row
+                            label="AI 生成作息时发送的提示词"
+                            description={`留空则使用内置提示词；填写后整段替换内置内容（预设、世界书、人设等仍会照常拼在前面，这里只是最后那一条指令）。${ROUTINE_PROMPT_NAME_TOKEN} 会替换为角色名。`}
+                        >
+                            <RoutinePromptEditor
+                                value={config.routinePrompt || ""}
+                                onChange={(next) => set({ routinePrompt: next })}
+                            />
+                        </Row>
+                        <span className="menu-desc">
+                            注意：生成结果要靠固定格式解析（每行 6 段：类型|开始时间|结束时间|地点|事项|备注，「类型」填「工作日」或「节假日」）。
+                            自定义时请保留这段格式说明，否则生成结果无法入库。
+                        </span>
                     </Section>
                 </div>
             </PageShell>

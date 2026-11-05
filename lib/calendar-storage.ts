@@ -68,6 +68,11 @@ export type CalendarConfig = {
   /** "auto" / 色键 / #hex */
   chinaHolidayColor: string;
   ontarioHolidayColor: string;
+  /**
+   * 覆盖「AI 生成作息」发给模型的那段指令；空串 = 用内置提示词。
+   * `{{name}}` 会替换成角色名，其余内容原样发出。
+   */
+  routinePrompt: string;
   /** 设置从哪个插件搬来的；有值就不再搬第二次 */
   pluginSettingsMigratedFrom?: string;
 };
@@ -86,6 +91,7 @@ export const DEFAULT_CALENDAR_CONFIG: CalendarConfig = {
   ontarioHolidays: false,
   chinaHolidayColor: "auto",
   ontarioHolidayColor: "auto",
+  routinePrompt: "",
 };
 
 function clampInt(value: unknown, fallback: number, min: number, max: number): number {
@@ -110,6 +116,7 @@ export function normalizeCalendarConfig(raw: Partial<CalendarConfig> & Record<st
     ontarioHolidays: merged.ontarioHolidays === true,
     chinaHolidayColor: typeof merged.chinaHolidayColor === "string" && merged.chinaHolidayColor ? merged.chinaHolidayColor : "auto",
     ontarioHolidayColor: typeof merged.ontarioHolidayColor === "string" && merged.ontarioHolidayColor ? merged.ontarioHolidayColor : "auto",
+    routinePrompt: typeof merged.routinePrompt === "string" ? merged.routinePrompt : "",
   };
 }
 
