@@ -342,36 +342,55 @@ export function refundShoppingOrder(orderId: string): RefundOrderResult {
 
 export type DeliveryCardKind = "pickup" | "picked";
 
+/** 承运商（虚构，避免和真实快递公司混淆） */
+export const DELIVERY_CARRIER_LABEL = "〇通速递";
+/** 包裹统一投递的驿站 */
+export const DEFAULT_PICKUP_STATION_LABEL = "浮岛驿站";
+
 export type DeliveryCardPayload = {
   readonly kind: DeliveryCardKind;
-  /** 卡片首行的主文案：取件码，或「代取成功」 */
+  /** 卡片首行的主文案：取件码（pickup），或「代取成功」（仅历史卡片） */
   codeLabel: string;
-  /** 取件码下方的小字装饰文案 */
+  /** 旧版一行小字，仅为兼容早期已发出的卡片保留 */
   caption: string;
+  /** 快件到达的驿站 */
+  stationLabel: string;
+  /** 取件提示（卡片里最多显示两行） */
+  notice: string;
+  /** 承运商 */
+  carrierLabel: string;
+  /** 包裹编号（运单号），同一订单永远一致 */
+  parcelNo: string;
   orderId: string;
 };
+
+/** 包裹编号：YT + 12 位数字，同一订单稳定不变 */
+export function generateParcelNo(orderId: string): string {
+  const head = stableHash(`parcel:${orderId}`) % 1000000;
+  const tail = stableHash(`parcel-tail:${orderId}`) % 1000000;
+  return `YT${String(head).padStart(6, "0")}${String(tail).padStart(6, "0")}`;
+}
 
 function pickupCaption(order: ShoppingOrder, code: string): string {
   return `${order.merchantLabel || "驿站"} · 凭码到柜自取`;
 }
 
+function buildPickupNotice(stationLabel: string): string {
+  return `快件已到达${stationLabel}，请及时取件，如有问题请联系站点`;
+}
+
 /** 生成「去取件前的」代取卡片内容（不含商品信息） */
 export function buildPickupCard(order: ShoppingOrder): DeliveryCardPayload {
   const code = getOrderPickupCode(order);
+  const stationLabel = DEFAULT_PICKUP_STATION_LABEL;
   return {
     kind: "pickup",
     codeLabel: code,
     caption: pickupCaption(order, code),
-    orderId: order.id,
-  };
-}
-
-export function buildPickedCard(order: ShoppingOrder): DeliveryCardPayload {
-  const code = getOrderPickupCode(order);
-  return {
-    kind: "picked",
-    codeLabel: "代取成功",
-    caption: `${order.signedByCharacterName || "对方"} 已替你取到包裹 · ${code}`,
+    stationLabel,
+    notice: buildPickupNotice(stationLabel),
+    carrierLabel: DELIVERY_CARRIER_LABEL,
+    parcelNo: generateParcelNo(order.id),
     orderId: order.id,
   };
 }
@@ -401,6 +420,10 @@ export function sendPickupProxyCard(orderId: string, character: { id: string; na
       deliveryCardOrderId: card.orderId,
       deliveryCardCodeLabel: card.codeLabel,
       deliveryCardCaption: card.caption,
+      deliveryCardStation: card.stationLabel,
+      deliveryCardNotice: card.notice,
+      deliveryCardCarrier: card.carrierLabel,
+      deliveryCardParcelNo: card.parcelNo,
       label: card.codeLabel,
     },
   });
@@ -420,7 +443,11 @@ export function sendPickupProxyCard(orderId: string, character: { id: string; na
   return { ok: true, sessionId: session.id, order: updated ?? undefined };
 }
 
-/** 角色代取成功：签收订单并在该角色的会话里落一张「代取成功」卡片（不含商品信息） */
+/**
+ * 角色代取成功：签收订单，并在该角色的会话里留一条系统通知。
+ * 早期版本这里会落一张「代取成功」卡片，现在改成系统通知——代取是事实陈述，
+ * 不需要再占一个卡片位（历史卡片仍按老数据正常渲染）。
+ */
 export function settlePickupProxySuccess(sessionId: string): ShoppingOrder | null {
   const state = loadShoppingState();
   const order = state.orders.find(item => item.proxySessionId === sessionId
@@ -435,21 +462,11 @@ export function settlePickupProxySuccess(sessionId: string): ShoppingOrder | nul
   });
   if (!signed) return null;
 
-  const card = buildPickedCard(signed);
+  const pickerName = order.proxyCharacterName || signed.signedByCharacterName || "对方";
   pushChatMessage({
     sessionId,
-    role: "assistant",
-    content: "",
-    mediaType: "delivery_card",
-    mediaData: {
-      deliveryCardKind: card.kind,
-      deliveryCardOrderId: card.orderId,
-      deliveryCardCodeLabel: card.codeLabel,
-      deliveryCardCaption: card.caption,
-      label: card.codeLabel,
-    },
-    senderCharacterId: order.proxyCharacterId,
-    senderName: order.proxyCharacterName,
+    role: "system",
+    content: `您的快件已被 ${pickerName} 代取`,
   });
   if (typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent("chat-messages-updated", { detail: { sessionId } }));

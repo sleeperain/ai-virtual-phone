@@ -21,7 +21,7 @@ import remarkGfm from "remark-gfm";
 import remarkCjkFriendly from "remark-cjk-friendly";
 import remarkBreaks from "remark-breaks";
 import { createPortal } from "react-dom";
-import { Blocks, Maximize2, Package, PackageCheck, ReceiptText } from "lucide-react";
+import { Blocks, Maximize2, ReceiptText } from "lucide-react";
 import { retryChatGeneratedImage } from "@/lib/generated-image-retry";
 import { hasCharacterReferenceImage, isImageGenerationConfigured } from "@/lib/image-generation-service";
 import { GeneratedImageErrorDialog } from "./generated-image-error-dialog";
@@ -150,6 +150,9 @@ export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charNa
         if (prev.msg.mediaData?.label !== next.msg.mediaData?.label) return false;
         if (prev.msg.mediaData?.deliveryCardCodeLabel !== next.msg.mediaData?.deliveryCardCodeLabel) return false;
         if (prev.msg.mediaData?.deliveryCardKind !== next.msg.mediaData?.deliveryCardKind) return false;
+        if (prev.msg.mediaData?.deliveryCardNotice !== next.msg.mediaData?.deliveryCardNotice) return false;
+        if (prev.msg.mediaData?.deliveryCardCarrier !== next.msg.mediaData?.deliveryCardCarrier) return false;
+        if (prev.msg.mediaData?.deliveryCardParcelNo !== next.msg.mediaData?.deliveryCardParcelNo) return false;
         if (prev.msg.mediaData?.giftReturnedAt !== next.msg.mediaData?.giftReturnedAt) return false;
         if (prev.msg.mediaData?.claimedBy?.length !== next.msg.mediaData?.claimedBy?.length) return false;
         if (prev.msg.mediaData?.appName !== next.msg.mediaData?.appName) return false;
@@ -1170,52 +1173,99 @@ function GiftBubble({ msg }: { msg: ChatMessage }) {
     );
 }
 
-// ── Delivery card（快递取件 / 代取成功）─────────────────────────────
-// 布局：左侧取件码（大字）+ 下方装饰小字，右侧正方形 8px 圆角色块 + 快递箱图标。
+// ── Delivery card（快递取件）─────────────────────────────
+// 版式：左侧正方形图标（浅灰纯色底、8px 圆角、无边框，高度跟随右侧文字块）+
+// 右侧取件码（大字加粗）与两行取件提示；一条细分割线之后，底部是承运商与包裹编号。
 // 卡片刻意不含任何商品信息：角色拆件之前无从判断包裹里是什么。
+
+/** 快递箱图标（内联 SVG，保证各设备字形一致） */
+function PackageBoxIcon({ style }: { style?: React.CSSProperties }) {
+    return (
+        <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.6}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            style={style}
+            aria-hidden
+        >
+            <path d="M12 2.7 3.4 7.1v9.8L12 21.3l8.6-4.4V7.1L12 2.7Z" />
+            <path d="M3.4 7.1 12 11.5l8.6-4.4" />
+            <path d="M12 11.5v9.8" />
+        </svg>
+    );
+}
 
 function DeliveryCardBubble({ msg }: { msg: ChatMessage }) {
     const d = msg.mediaData;
+    // picked = 早期版本发出的「代取成功」卡片，只做历史数据兼容，新流程已改用系统通知
     const isPicked = d?.deliveryCardKind === "picked";
     const codeLabel = d?.deliveryCardCodeLabel || d?.label || (isPicked ? "代取成功" : "取件码");
-    const caption = d?.deliveryCardCaption || (isPicked ? "快递已替你取到" : "凭取件码到驿站自取");
-    const accent = isPicked ? "var(--c-success)" : "var(--c-text-title)";
+    const carrierLabel = d?.deliveryCardCarrier || "〇通速递";
+    const stationLabel = d?.deliveryCardStation || "浮岛驿站";
+    const parcelNo = d?.deliveryCardParcelNo || "";
+    // 老卡片没有新字段：取件提示按当前规则现算，代取卡片沿用当年存的 caption
+    const notice = d?.deliveryCardNotice
+        || (isPicked
+            ? (d?.deliveryCardCaption || "快件已由对方代取")
+            : `快件已到达${stationLabel}，请及时取件，如有问题请联系站点`);
 
     return (
         <div
             className="chat-delivery-card w-[248px] rounded-[14px] overflow-hidden"
-            style={{ background: "var(--c-card)", boxShadow: "0 6px 22px rgba(0,0,0,0.08)" }}
+            style={{
+                display: "block",
+                // 近白纸感，而不是刺眼的纯白；跟随主题变量，暗色搭配下自动变暗
+                background: "color-mix(in srgb, var(--c-bubble-other) 80%, #E8E2D6)",
+                boxShadow: "0 6px 22px rgba(0,0,0,0.08)",
+            }}
             data-kind={d?.deliveryCardKind || "pickup"}
         >
-            <div className="flex items-center gap-3 px-4 py-4">
-                <div className="flex-1 min-w-0">
-                    <div
-                        className="ts-20 font-semibold leading-tight truncate"
-                        style={{ color: accent, letterSpacing: isPicked ? "0.02em" : "0.08em" }}
-                    >
-                        {codeLabel}
-                    </div>
-                    <div className="ts-10 mt-1.5 text-[var(--c-icon)] truncate">{caption}</div>
-                </div>
+            <div className="flex items-stretch gap-3 px-4 pt-3.5 pb-3">
                 <div
-                    className="w-[56px] h-[56px] shrink-0 flex items-center justify-center"
+                    className="shrink-0 flex items-center justify-center"
                     style={{
+                        // 高度跟着右侧「取件码 + 两行小字」走，宽度靠 1:1 比例与之相等
+                        alignSelf: "stretch",
+                        aspectRatio: "1 / 1",
                         borderRadius: "8px",
-                        background: isPicked
-                            ? "color-mix(in srgb, var(--c-success) 16%, var(--c-input))"
-                            : "color-mix(in srgb, var(--c-text-title) 10%, var(--c-input))",
-                        color: isPicked ? "var(--c-success)" : "var(--c-text-title)",
+                        background: "var(--c-input)",
+                        color: "var(--c-icon)",
                     }}
                     aria-hidden
                 >
-                    {isPicked
-                        ? <PackageCheck size={26} strokeWidth={1.7} />
-                        : <Package size={26} strokeWidth={1.7} />}
+                    <PackageBoxIcon style={{ width: "58%", height: "58%" }} />
+                </div>
+                <div className="flex-1 min-w-0">
+                    <div
+                        className="ts-20 font-bold leading-tight truncate"
+                        style={{ color: "var(--c-text-title)" }}
+                    >
+                        {codeLabel}
+                    </div>
+                    <div
+                        className="ts-11 mt-1 text-[var(--c-icon)]"
+                        style={{
+                            // 最多两行，放不下就在第二行结尾省略
+                            display: "-webkit-box",
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: "vertical",
+                            overflow: "hidden",
+                            lineHeight: 1.45,
+                            // 预留两行高度：只有一行时头像也不会缩水，卡面高度稳定
+                            minHeight: "2.9em",
+                            wordBreak: "break-word",
+                        }}
+                    >
+                        {notice}
+                    </div>
                 </div>
             </div>
-            <div className="ui-media-footer px-4 py-1.5 ts-11 flex justify-between items-center">
-                <span>{isPicked ? "快递代取" : "快递取件"}</span>
-                <span className="opacity-70">{isPicked ? "已签收" : "待签收"}</span>
+            <div style={{ height: 1, background: "color-mix(in srgb, var(--c-text-title) 10%, transparent)" }} />
+            <div className="px-4 py-1.5 ts-11 text-[var(--c-icon)] truncate">
+                {carrierLabel}{parcelNo ? ` ${parcelNo}` : ""}
             </div>
         </div>
     );

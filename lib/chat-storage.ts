@@ -153,12 +153,21 @@ export type ChatMessage = {
         walletRefundTransactionId?: string; // 被拒收/退回时退款流水
         walletDepositTransactionId?: string; // 领取红包/转账时入账流水
         shoppingGiftId?: string; // 购物订单中的可送礼物实例 ID
-        /** 快递取件卡片：pickup=用户发出的取件码卡，picked=角色代取成功卡。两者都不含商品信息 */
+        /** 快递取件卡片：pickup=用户发出的取件码卡，picked=早期的角色代取成功卡（现已改用系统通知）。两者都不含商品信息 */
         deliveryCardKind?: "pickup" | "picked";
         deliveryCardOrderId?: string;
         /** 卡片首行主文案：取件码（pickup）或「代取成功」（picked） */
         deliveryCardCodeLabel?: string;
+        /** 旧版一行小字（仅历史卡片有） */
         deliveryCardCaption?: string;
+        /** 快件到达的驿站 */
+        deliveryCardStation?: string;
+        /** 两行取件提示文案 */
+        deliveryCardNotice?: string;
+        /** 承运商 */
+        deliveryCardCarrier?: string;
+        /** 包裹编号（运单号） */
+        deliveryCardParcelNo?: string;
         giftOrderId?: string;    // 礼物来源订单 ID
         giftItemId?: string;     // 礼物来源商品 ID
         giftName?: string;       // 礼物商品名
