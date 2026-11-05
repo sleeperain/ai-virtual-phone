@@ -1249,48 +1249,51 @@ function DeliveryCardBubble({ msg }: { msg: ChatMessage }) {
 
     return (
         <div
-            className="chat-delivery-card w-[248px] rounded-[14px] overflow-hidden"
+            className="chat-delivery-card w-[220px] rounded-[12px] overflow-hidden"
             style={{
                 display: "block",
                 // 近白纸感，而不是刺眼的纯白；跟随主题变量，暗色搭配下自动变暗
                 background: "color-mix(in srgb, var(--c-bubble-other) 80%, #E8E2D6)",
-                boxShadow: "0 6px 22px rgba(0,0,0,0.08)",
+                boxShadow: "0 4px 14px rgba(0,0,0,0.06)",
             }}
             data-kind={d?.deliveryCardKind || "pickup"}
         >
-            <div className="flex items-stretch gap-3 px-4 pt-3.5 pb-3">
+            <div className="flex items-stretch gap-2.5 px-3 py-2.5">
                 <div
                     className="shrink-0 flex items-center justify-center"
                     style={{
-                        // 高度跟着右侧「取件码 + 两行小字」走，宽度靠 1:1 比例与之相等
+                        // 高度跟着右侧「取件码 + 两行小字」走（stretch），宽度写死同一个值。
+                        // 不能同时用 aspect-ratio：它会拿被拉伸的高度反过来算宽度，
+                        // 宽度又撑高行高，图标就被无限放大成整张卡（上一版的翻车点）。
                         alignSelf: "stretch",
-                        aspectRatio: "1 / 1",
+                        width: 52,
+                        minHeight: 52,
                         borderRadius: "8px",
                         background: "var(--c-input)",
                         color: "var(--c-icon)",
                     }}
                     aria-hidden
                 >
-                    <PackageBoxIcon style={{ width: "58%", height: "58%" }} />
+                    <PackageBoxIcon style={{ width: 24, height: 24 }} />
                 </div>
-                <div className="flex-1 min-w-0">
+                <div className="flex-1 min-w-0 flex flex-col justify-center" style={{ minHeight: 52 }}>
                     <div
-                        className="ts-20 font-bold leading-tight truncate"
+                        className="ts-15 font-bold leading-tight truncate"
                         style={{ color: "var(--c-text-title)" }}
                     >
                         {codeLabel}
                     </div>
                     <div
-                        className="ts-11 mt-1 text-[var(--c-icon)]"
+                        className="ts-11 mt-0.5 text-[var(--c-icon)]"
                         style={{
                             // 最多两行，放不下就在第二行结尾省略
                             display: "-webkit-box",
                             WebkitLineClamp: 2,
                             WebkitBoxOrient: "vertical",
                             overflow: "hidden",
-                            lineHeight: 1.45,
+                            lineHeight: 1.4,
                             // 预留两行高度：只有一行时头像也不会缩水，卡面高度稳定
-                            minHeight: "2.9em",
+                            minHeight: "2.8em",
                             wordBreak: "break-word",
                         }}
                     >
@@ -1299,7 +1302,7 @@ function DeliveryCardBubble({ msg }: { msg: ChatMessage }) {
                 </div>
             </div>
             <div style={{ height: 1, background: "color-mix(in srgb, var(--c-text-title) 10%, transparent)" }} />
-            <div className="px-4 py-1.5 ts-11 flex items-center justify-between gap-2">
+            <div className="px-3 py-1.5 ts-10 flex items-center justify-between gap-2">
                 <span className="min-w-0 truncate text-[var(--c-icon)]">{carrierLabel}</span>
                 <span className="shrink-0" style={{ color: statusColor }}>{statusLabel}</span>
             </div>
