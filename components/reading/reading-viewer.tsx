@@ -5217,7 +5217,14 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                                             <span className="reading-comment-name">{author.name}</span>
                                                             {renderCommentActions(comment, "段评")}
                                                         </div>
-                                                        <div className="reading-comment-content">{comment.content}</div>
+                                                        <div className="reading-comment-content">
+                                                            <ReadingAnnotationContent
+                                                                text={comment.content}
+                                                                bilingualEnabled={bilingualTranslationEnabled}
+                                                                expanded={isAnnotationTranslationExpanded(comment.id)}
+                                                                onToggle={() => handleAnnotationTranslationToggle(comment.id)}
+                                                            />
+                                                        </div>
                                                         <div className="reading-comment-meta">
                                                             <span className="reading-comment-time">{formatCommentTimestamp(comment.createdAt)}</span>
                                                             <button
@@ -5259,7 +5266,14 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                                                                     </span>
                                                                                     {renderCommentActions(reply, "回复")}
                                                                                 </div>
-                                                                                <div className="reading-comment-content">{reply.content}</div>
+                                                                                <div className="reading-comment-content">
+                                                                                    <ReadingAnnotationContent
+                                                                                        text={reply.content}
+                                                                                        bilingualEnabled={bilingualTranslationEnabled}
+                                                                                        expanded={isAnnotationTranslationExpanded(reply.id)}
+                                                                                        onToggle={() => handleAnnotationTranslationToggle(reply.id)}
+                                                                                    />
+                                                                                </div>
                                                                                 <div className="reading-comment-meta">
                                                                                     <span className="reading-comment-time">{formatCommentTimestamp(reply.createdAt)}</span>
                                                                                     <button
@@ -5477,7 +5491,12 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
             )}
             {editingAnnotation && (
                 <ContentDialog
-                    title={isUserAnnotation(editingAnnotation) ? "编辑我的批注" : `编辑${editingAnnotation.characterName || "TA"}的批注`}
+                    title={(() => {
+                        const kindLabel = isCommentAnnotation(editingAnnotation) ? "段评" : "批注";
+                        return isUserAnnotation(editingAnnotation)
+                            ? `编辑我的${kindLabel}`
+                            : `编辑${editingAnnotation.characterName || "TA"}的${kindLabel}`;
+                    })()}
                     confirmLabel="保存"
                     cancelLabel="取消"
                     onConfirm={() => { void saveEditedAnnotation(); }}
