@@ -344,40 +344,46 @@ export function resolveCharacterIdByName(name: string): string | null {
 /**
  * 目标列表缓存。
  * loadBackpackTargets() 每次都要遍历角色并构造对象数组，而界面（弹窗刷新、
- * 每次背包变化）会频繁调用它。角色表本身是按 key 整体读写的，背包操作
- * 不会改角色，所以缓存到下一次角色写入为止。
+ * 每次背包变化）会频繁调用它。角色表本身由 loadCharacters() 维护内存缓存，
+ * saveCharacters 时会生成新数组引用——同时核对 targetsSourceChars 引用，
+ * 角色增删改名后即使未手动清缓存也会自动重建。
  */
 let targetsListCache: BackpackTarget[] | null = null;
+let targetsSourceChars: unknown = null;
 
 /** 角色表变动后由 UI / 存储层调用（角色增删时） */
 export function invalidateBackpackTargetsCache(): void {
     targetsListCache = null;
+    targetsSourceChars = null;
 }
 
 export function loadBackpackTargets(): BackpackTarget[] {
-    if (targetsListCache) return targetsListCache;
+    let chars: ReturnType<typeof loadCharacters> = [];
+    try {
+        chars = loadCharacters();
+    } catch {
+        /* 角色读不出来就只留我的背包 */
+    }
+    if (targetsListCache && targetsSourceChars === chars) return targetsListCache;
     const targets: BackpackTarget[] = [{
         id: "user",
         name: "我的背包",
         rawName: "我的背包",
         isUser: true,
     }];
-    try {
-        for (const char of loadCharacters()) {
-            if (!char?.id) continue;
-            const name = String(char.name ?? "").trim() || "角色";
-            targets.push({
-                id: char.id,
-                name: `【${name}】的背包`,
-                rawName: name,
-                isUser: false,
-                characterId: char.id,
-            });
-        }
-    } catch {
-        /* 角色读不出来就只留我的背包 */
+    for (const char of chars) {
+        if (!char?.id) continue;
+        const name = String(char.name ?? "").trim() || "角色";
+        targets.push({
+            id: char.id,
+            name: `【${name}】的背包`,
+            rawName: name,
+            isUser: false,
+            characterId: char.id,
+        });
     }
     targetsListCache = targets;
+    targetsSourceChars = chars;
     return targets;
 }
 

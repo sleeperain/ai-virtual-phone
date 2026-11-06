@@ -156,9 +156,9 @@ export function BackpackModal({
     const [transferItem, setTransferItem] = useState<BackpackItem | null>(null);
     const [deliverItem, setDeliverItem] = useState<BackpackItem | null>(null);
 
-    // 只刷物品：目标列表由 loadBackpackTargets 内部缓存，
-    // 每次操作都重建一次数组没有必要。
+    // 同步刷新物品与目标列表（loadBackpackTargets 内部已按角色表引用缓存，未变动时零开销）
     const refresh = useCallback(() => {
+        setTargets(loadBackpackTargets());
         setItems(loadBackpackItems());
     }, []);
 
