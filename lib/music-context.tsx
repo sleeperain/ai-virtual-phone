@@ -4,7 +4,7 @@
 import { createContext, useContext, useState, useRef, useCallback, useEffect, useMemo, type ReactNode } from "react";
 import type { MusicTrack } from "./music-storage";
 import { getAudioBlob, markTrackPlayed } from "./music-storage";
-import { findPlayableMatch, getNeteaseLyrics, getNeteasePlayUrl, getNeteasePlayInfo, getNeteaseSongDetail } from "./music-service";
+import { findPlayableMatch, getNeteaseLyricsData, getNeteasePlayUrl, getNeteasePlayInfo, getNeteaseSongDetail } from "./music-service";
 import { kvGet, kvSet, registerDynamicPrefix, registerKvMigration } from "./kv-db";
 import { registerMusicControlBridge } from "./music-control-bridge";
 
@@ -22,6 +22,7 @@ export type MusicState = {
     volume: number;
     showFullPlayer: boolean;
     floatDismissed: boolean;
+    showTranslation: boolean;
 };
 
 export type MusicActions = {
@@ -41,6 +42,7 @@ export type MusicActions = {
     dismissFloat: () => void;
     showFloat: () => void;
     toggleFloat: () => void;
+    toggleTranslation: () => void;
     openFullPlayer: () => void;
     closeFullPlayer: () => void;
 };
@@ -75,9 +77,11 @@ export function useMusicControlsOptional(): MusicControlsValue | null {
 // ── Queue & Listen Together persistence ──
 
 const QUEUE_STORAGE_KEY = "ai_phone_music_queue_v1";
+const LYRIC_TRANS_KEY = "ai_phone_music_lyric_trans_v1";
 export const LISTEN_TOGETHER_SESSION_KEY = "ai_phone_music_listen_together_session_v1";
 export const LISTEN_TOGETHER_STATS_PREFIX = "ai_phone_music_listen_together_secs_";
 registerKvMigration(QUEUE_STORAGE_KEY);
+registerKvMigration(LYRIC_TRANS_KEY);
 // 一起听的会话（跟着谁听）和每人累计时长也要落盘：切走再回来要还在，
 // 时长还得接着往上累。注册给 kv 之后才会跟着水合 + localStorage 兜底。
 registerKvMigration(LISTEN_TOGETHER_SESSION_KEY);
@@ -113,6 +117,20 @@ export function MusicProvider({ children }: { children: ReactNode }) {
     const [volume, setVolumeState] = useState(0.8);
     const [showFullPlayer, setShowFullPlayer] = useState(false);
     const [floatDismissed, setFloatDismissed] = useState(false);
+    const [showTranslation, setShowTranslation] = useState<boolean>(() => {
+        if (typeof window === "undefined") return true;
+        return kvGet(LYRIC_TRANS_KEY) !== "0";
+    });
+
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            const v = kvGet(LYRIC_TRANS_KEY);
+            if (v === "0" || v === "1") {
+                setShowTranslation(v === "1");
+            }
+        }, 350);
+        return () => clearTimeout(timer);
+    }, []);
 
     // Persist queue on change.
     useEffect(() => {
@@ -231,17 +249,18 @@ export function MusicProvider({ children }: { children: ReactNode }) {
             const nid = parseInt(track.id.replace("netease_", ""), 10);
             const playUrl = await getNeteasePlayUrl(nid);
             if (!playUrl) return;
-            if (!track.lyrics) {
-                const [detail, lyrics] = await Promise.all([
+            if (!track.lyrics || track.tlyrics === undefined) {
+                const [detail, lyricData] = await Promise.all([
                     getNeteaseSongDetail(nid).catch(() => null),
-                    getNeteaseLyrics(nid).catch(() => ""),
+                    getNeteaseLyricsData(nid).catch(() => ({ lyric: "", tlyric: "" })),
                 ]);
                 track = {
                     ...track,
                     title: detail?.name || track.title,
                     artist: detail?.artists || track.artist,
                     coverUrl: detail?.coverUrl || track.coverUrl,
-                    lyrics: lyrics || track.lyrics,
+                    lyrics: lyricData.lyric || track.lyrics,
+                    tlyrics: lyricData.tlyric || track.tlyrics || "",
                 };
             }
             audio.src = playUrl;
@@ -380,6 +399,14 @@ export function MusicProvider({ children }: { children: ReactNode }) {
         setFloatDismissed(prev => !prev);
     }, []);
 
+    const toggleTranslation = useCallback(() => {
+        setShowTranslation(prev => {
+            const next = !prev;
+            try { kvSet(LYRIC_TRANS_KEY, next ? "1" : "0"); } catch { /* ignore */ }
+            return next;
+        });
+    }, []);
+
     const openFullPlayer = useCallback(() => { setShowFullPlayer(true); }, []);
     const closeFullPlayer = useCallback(() => setShowFullPlayer(false), []);
 
@@ -392,16 +419,17 @@ export function MusicProvider({ children }: { children: ReactNode }) {
             const info = await getNeteasePlayInfo(nid);
             const url = info.url;
             if (!url) return { ok: false, message: info.reason || "没有找到可播放的音乐" };
-            const [detail, lyrics] = await Promise.all([
+            const [detail, lyricData] = await Promise.all([
                 getNeteaseSongDetail(nid).catch(() => null),
-                getNeteaseLyrics(nid).catch(() => ""),
+                getNeteaseLyricsData(nid).catch(() => ({ lyric: "", tlyric: "" })),
             ]);
             const resolvedTrack: MusicTrack = {
                 ...track,
                 title: detail?.name || track.title,
                 artist: detail?.artists || track.artist,
                 coverUrl: detail?.coverUrl || track.coverUrl,
-                lyrics: lyrics || track.lyrics,
+                lyrics: lyricData.lyric || track.lyrics,
+                tlyrics: lyricData.tlyric || track.tlyrics || "",
             };
             playUrl(url, resolvedTrack);
             return { ok: true, message: `正在播放「${resolvedTrack.title}」`, track: resolvedTrack };
@@ -420,9 +448,9 @@ export function MusicProvider({ children }: { children: ReactNode }) {
         }
         if (result.source === "netease" && result.neteaseResult && onlineUrl) {
             const r = result.neteaseResult;
-            const [detail, lyrics] = await Promise.all([
+            const [detail, lyricData] = await Promise.all([
                 getNeteaseSongDetail(r.id).catch(() => null),
-                getNeteaseLyrics(r.id).catch(() => ""),
+                getNeteaseLyricsData(r.id).catch(() => ({ lyric: "", tlyric: "" })),
             ]);
             const track: MusicTrack = {
                 id: `netease_${r.id}`,
@@ -430,7 +458,8 @@ export function MusicProvider({ children }: { children: ReactNode }) {
                 artist: detail?.artists || r.artists,
                 duration: r.duration / 1000,
                 coverUrl: detail?.coverUrl || r.coverUrl,
-                lyrics,
+                lyrics: lyricData.lyric,
+                tlyrics: lyricData.tlyric,
                 liked: false,
                 addedAt: new Date().toISOString(),
             };
@@ -499,13 +528,13 @@ export function MusicProvider({ children }: { children: ReactNode }) {
     ]);
 
     const controlsValue = useMemo<MusicControlsValue>(() => ({
-        currentTrack, isPlaying, duration, playMode, queue, volume, showFullPlayer, floatDismissed,
+        currentTrack, isPlaying, duration, playMode, queue, volume, showFullPlayer, floatDismissed, showTranslation,
         playTrack, playUrl, pause, resume, togglePlay, next, prev, seek,
-        setPlayMode, setQueue, removeFromQueue, setVolume, stop, dismissFloat, showFloat, toggleFloat, openFullPlayer, closeFullPlayer,
+        setPlayMode, setQueue, removeFromQueue, setVolume, stop, dismissFloat, showFloat, toggleFloat, toggleTranslation, openFullPlayer, closeFullPlayer,
     }), [
-        currentTrack, isPlaying, duration, playMode, queue, volume, showFullPlayer, floatDismissed,
+        currentTrack, isPlaying, duration, playMode, queue, volume, showFullPlayer, floatDismissed, showTranslation,
         playTrack, playUrl, pause, resume, togglePlay, next, prev, seek,
-        setQueue, removeFromQueue, setVolume, stop, dismissFloat, showFloat, toggleFloat, openFullPlayer, closeFullPlayer,
+        setQueue, removeFromQueue, setVolume, stop, dismissFloat, showFloat, toggleFloat, toggleTranslation, openFullPlayer, closeFullPlayer,
     ]);
 
     const value = useMemo<MusicContextValue>(() => ({

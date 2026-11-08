@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMusicPlayerOptional } from "@/lib/music-context";
+import { parseBilingualLyrics, getNeteaseLyricsData, isNeteaseConfigured } from "@/lib/music-service";
 import { kvGet, kvSet, registerKvMigration } from "@/lib/kv-db";
 
 const DRAG_START_THRESHOLD = 5;
@@ -48,25 +49,7 @@ const MIN_FONT_SIZE = 12;
 const MAX_FONT_SIZE = 20;
 const DEFAULT_FONT_SIZE = 14;
 
-type LyricLine = { time: number; text: string };
-
-function parseLyrics(lrc: string): LyricLine[] {
-    if (!lrc) return [];
-    const lines: LyricLine[] = [];
-    for (const line of lrc.split("\n")) {
-        const match = line.match(/\[(\d+):(\d+(?:\.\d+)?)\](.*)/);
-        if (match) {
-            const mins = parseInt(match[1], 10);
-            const secs = parseFloat(match[2]);
-            const text = match[3].trim();
-            if (text) {
-                lines.push({ time: mins * 60 + secs, text });
-            }
-        }
-    }
-    lines.sort((a, b) => a.time - b.time);
-    return lines;
-}
+// Uses parseBilingualLyrics from music-service for unified bilingual LRC parsing
 
 export default function MusicFloat({ hidden }: { hidden?: boolean }) {
     const player = useMusicPlayerOptional();
@@ -247,7 +230,26 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
         }
     }, [floatDismissed]);
 
-    const lyrics = useMemo(() => parseLyrics(player?.currentTrack?.lyrics || ""), [player?.currentTrack?.lyrics]);
+    const [fetchedTlyrics, setFetchedTlyrics] = useState<{ id: string; tlyric: string } | null>(null);
+    useEffect(() => {
+        const cur = player?.currentTrack;
+        if (!cur || !cur.id.startsWith("netease_") || cur.tlyrics !== undefined || !isNeteaseConfigured()) return;
+        const nid = parseInt(cur.id.replace("netease_", ""), 10);
+        if (!nid) return;
+        let cancelled = false;
+        getNeteaseLyricsData(nid).then(data => {
+            if (!cancelled) setFetchedTlyrics({ id: cur.id, tlyric: data.tlyric || "" });
+        }).catch(() => {});
+        return () => { cancelled = true; };
+    }, [player?.currentTrack]);
+
+    const effectiveTlyrics = player?.currentTrack?.tlyrics
+        ?? (fetchedTlyrics?.id === player?.currentTrack?.id ? fetchedTlyrics.tlyric : "");
+
+    const lyrics = useMemo(
+        () => parseBilingualLyrics(player?.currentTrack?.lyrics, effectiveTlyrics).filter(l => l.text),
+        [player?.currentTrack?.lyrics, effectiveTlyrics],
+    );
 
     // ── 长句左右滑动 ──
     // 一句歌词比悬浮窗还宽时，让它跟着播放进度横向挪，唱到哪儿看哪儿。
@@ -257,14 +259,22 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
     for (let i = lyrics.length - 1; i >= 0; i--) {
         if (measureTime >= lyrics[i].time) { measureIdx = i; break; }
     }
-    const activeMeasureText = lyrics.length > 0
-        ? (lyrics[measureIdx >= 0 ? measureIdx : 0]?.text || "")
-        : "";
+    const activeMeasureLine = lyrics.length > 0
+        ? lyrics[measureIdx >= 0 ? measureIdx : 0]
+        : undefined;
+    const activeMeasureText = activeMeasureLine?.text || "";
+    const activeMeasureSubText = player?.showTranslation && activeMeasureLine?.trans
+        ? activeMeasureLine.trans
+        : (lyrics[measureIdx >= 0 ? measureIdx + 1 : 1]?.text || "");
     const activeLineRef = useRef<HTMLSpanElement>(null);
     /** 当前行那个裁切盒：量「文字多宽」和「盒子多宽」都拿它当基准 */
     const activeLineWrapRef = useRef<HTMLDivElement>(null);
     /** 这一句比可视宽度多出多少像素；0 表示不用挪 */
     const [lineOverflow, setLineOverflow] = useState(0);
+
+    const subLineRef = useRef<HTMLSpanElement>(null);
+    const subLineWrapRef = useRef<HTMLDivElement>(null);
+    const [subLineOverflow, setSubLineOverflow] = useState(0);
 
     useEffect(() => {
         const span = activeLineRef.current;
@@ -275,6 +285,14 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
         const overflow = Math.max(0, Math.ceil(span.scrollWidth - wrap.clientWidth));
         setLineOverflow(prev => (prev === overflow ? prev : overflow));
     }, [activeMeasureText, fontSize, expanded, lyricColor]);
+
+    useEffect(() => {
+        const span = subLineRef.current;
+        const wrap = subLineWrapRef.current;
+        if (!span || !wrap) { setSubLineOverflow(0); return; }
+        const overflow = Math.max(0, Math.ceil(span.scrollWidth - wrap.clientWidth));
+        setSubLineOverflow(prev => (prev === overflow ? prev : overflow));
+    }, [activeMeasureSubText, fontSize, expanded, lyricColor, player?.showTranslation]);
 
     if (!player || !player.currentTrack || hidden || player.floatDismissed) return null;
 
@@ -296,6 +314,10 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
     const nextLine = hasLyrics
         ? (activeIdx >= 0 ? lyrics[activeIdx + 1] ?? null : lyrics[1] ?? null)
         : null;
+    const hasCurrentTrans = Boolean(player.showTranslation && currentLine?.trans);
+    const secondLineText = hasCurrentTrans
+        ? currentLine!.trans!
+        : (nextLine?.text || "\u00A0");
 
     let lineProgress = 0;
     if (currentLine) {
@@ -398,8 +420,26 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
                                 {currentLine?.text || " "}
                             </span>
                         </div>
-                        <div className="music-float-line music-float-line-next">
-                            {nextLine?.text || "\u00A0"}
+                        <div
+                            className="music-float-line music-float-line-next"
+                            ref={subLineWrapRef}
+                            style={hasCurrentTrans && subLineOverflow > 0 ? { textAlign: "left", textOverflow: "clip" } : undefined}
+                        >
+                            {hasCurrentTrans ? (
+                                <span
+                                    ref={subLineRef}
+                                    className="music-float-line-trans-span"
+                                    style={{
+                                        transform: subLineOverflow > 0
+                                            ? `translateX(${-Math.round(subLineOverflow * Math.max(0, Math.min(1, lineProgress)))}px)`
+                                            : undefined,
+                                    } as React.CSSProperties}
+                                >
+                                    {secondLineText}
+                                </span>
+                            ) : (
+                                secondLineText
+                            )}
                         </div>
                     </>
                 ) : (

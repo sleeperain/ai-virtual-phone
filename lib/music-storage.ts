@@ -10,6 +10,7 @@ export type MusicTrack = {
     duration: number;        // seconds
     coverUrl?: string;       // data URL or blob URL
     lyrics?: string;         // LRC format or plain text
+    tlyrics?: string;        // Translated LRC format
     liked: boolean;
     addedAt: string;         // ISO timestamp
     lastPlayedAt?: string;   // ISO timestamp

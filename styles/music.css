@@ -5278,6 +5278,65 @@
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
 }
 
+/* ── Progress Area Top Row ("译" pure text button at rightmost) & Bilingual Lyrics ── */
+
+.mp-progress-top-row {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    margin-bottom: 2px;
+}
+
+.mp-trans-toggle-btn {
+    background: none;
+    border: none;
+    padding: 2px 4px;
+    font-size: calc(13.5px * var(--app-text-scale, 1));
+    font-weight: 600;
+    font-family: inherit;
+    line-height: 1;
+    color: rgba(215, 225, 240, 0.42);
+    cursor: pointer;
+    transition: color 0.2s, transform 0.15s;
+}
+
+.mp-trans-toggle-btn[data-active] {
+    color: #ffffff;
+}
+
+.mp-trans-toggle-btn:active {
+    transform: scale(0.92);
+}
+
+.mp-lyric-trans {
+    font-size: calc(13px * var(--app-text-scale, 1));
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    line-height: 1.5;
+    margin-top: 3px;
+    opacity: 0.85;
+}
+
+.mp-lyric-line[data-active] .mp-lyric-trans {
+    font-size: calc(14.5px * var(--app-text-scale, 1));
+    opacity: 0.92;
+}
+
+.mp-lyric-peek-trans {
+    font-size: calc(10.8px * var(--app-text-scale, 1));
+    color: rgba(220, 232, 255, 0.5);
+    line-height: 1.4;
+}
+
+.music-float-line-trans-span {
+    display: inline-block;
+    max-width: none;
+    white-space: nowrap;
+    vertical-align: bottom;
+    transition: transform 0.3s linear;
+    will-change: transform;
+}
+
 /* ═══════════════════════════════════════════════════════
    Full Player — Listen Together Banner
    ═══════════════════════════════════════════════════════ */

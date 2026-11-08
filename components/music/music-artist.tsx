@@ -7,7 +7,7 @@ import { useMusicPlayer } from "@/lib/music-context";
 import type { MusicTrack } from "@/lib/music-storage";
 import {
     getArtistDetail, getArtistTopSongs, getArtistAlbums,
-    getNeteasePlayInfo, getNeteaseSongDetail, getNeteaseLyrics,
+    getNeteasePlayInfo, getNeteaseSongDetail, getNeteaseLyricsData,
     type NeteaseArtist, type NeteaseAlbum, type NeteaseSearchResult,
 } from "@/lib/music-service";
 
@@ -74,9 +74,9 @@ export default function MusicArtistPage({ artistId, artistName, onClose }: Props
             return;
         }
         const url = info.url;
-        const [detail, lyrics] = await Promise.all([
+        const [detail, lyricData] = await Promise.all([
             getNeteaseSongDetail(song.id).catch(() => null),
-            getNeteaseLyrics(song.id).catch(() => ""),
+            getNeteaseLyricsData(song.id).catch(() => ({ lyric: "", tlyric: "" })),
         ]);
         const track: MusicTrack = {
             id: `netease_${song.id}`,
@@ -84,7 +84,8 @@ export default function MusicArtistPage({ artistId, artistName, onClose }: Props
             artist: detail?.artists || song.artists,
             duration: song.duration / 1000,
             coverUrl: detail?.coverUrl || song.coverUrl,
-            lyrics,
+            lyrics: lyricData.lyric,
+            tlyrics: lyricData.tlyric,
             liked: false,
             addedAt: new Date().toISOString(),
         };

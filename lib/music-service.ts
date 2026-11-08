@@ -266,17 +266,95 @@ export async function getNeteasePlayUrl(songId: number): Promise<string | null> 
     return info.url;
 }
 
-/** Get lyrics for a Netease song */
-export async function getNeteaseLyrics(songId: number): Promise<string> {
+export type NeteaseLyricsPayload = {
+    lyric: string;
+    tlyric: string;
+};
+
+/** Get original + translated lyrics for a Netease song */
+export async function getNeteaseLyricsData(songId: number): Promise<NeteaseLyricsPayload> {
     const base = neteaseBase();
-    if (!base) return "";
+    if (!base) return { lyric: "", tlyric: "" };
     try {
         const resp = await fetch(withNeteaseParams(`${base}/lyric?id=${songId}`));
         const data = await resp.json();
-        return data?.lrc?.lyric || "";
+        return {
+            lyric: data?.lrc?.lyric || "",
+            tlyric: data?.tlyric?.lyric || "",
+        };
     } catch {
-        return "";
+        return { lyric: "", tlyric: "" };
     }
+}
+
+/** Get lyrics for a Netease song */
+export async function getNeteaseLyrics(songId: number): Promise<string> {
+    const res = await getNeteaseLyricsData(songId);
+    return res.lyric;
+}
+
+export type BilingualLyricLine = {
+    time: number;
+    text: string;
+    trans?: string;
+};
+
+/** Parse single LRC string into sorted time-stamped lines (supports multiple time tags per line) */
+export function parseRawLrcLines(lrc?: string | null): { time: number; text: string }[] {
+    if (!lrc) return [];
+    const timeTagRe = /\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
+    const lines: { time: number; text: string }[] = [];
+    for (const rawLine of lrc.split(/\r?\n/)) {
+        const times: number[] = [];
+        timeTagRe.lastIndex = 0;
+        let match: RegExpExecArray | null;
+        while ((match = timeTagRe.exec(rawLine))) {
+            const mins = parseInt(match[1], 10);
+            const secs = parseInt(match[2], 10);
+            const fracStr = match[3] ?? "";
+            const frac = fracStr ? parseInt(fracStr, 10) / Math.pow(10, fracStr.length) : 0;
+            times.push(mins * 60 + secs + frac);
+        }
+        if (times.length === 0) continue;
+        const text = rawLine.replace(timeTagRe, "").trim();
+        for (const time of times) {
+            lines.push({ time, text });
+        }
+    }
+    lines.sort((a, b) => a.time - b.time);
+    return lines;
+}
+
+/** Merge original LRC and translated LRC by timestamp (with tolerance for slight offset) */
+export function parseBilingualLyrics(lrc?: string | null, tlrc?: string | null): BilingualLyricLine[] {
+    const origLines = parseRawLrcLines(lrc);
+    if (origLines.length === 0) return [];
+    const transLines = parseRawLrcLines(tlrc).filter(t => t.text && t.text !== "//");
+    if (transLines.length === 0) return origLines;
+
+    const transMap = new Map<number, string>();
+    for (const t of transLines) {
+        const key = Math.round(t.time * 10);
+        if (!transMap.has(key)) transMap.set(key, t.text);
+    }
+
+    return origLines.map(line => {
+        if (!line.text) return line;
+        const key = Math.round(line.time * 10);
+        let trans = transMap.get(key);
+        if (trans === undefined) {
+            // Tolerance fallback within 0.35s
+            let bestDiff = 0.35;
+            for (const t of transLines) {
+                const diff = Math.abs(t.time - line.time);
+                if (diff < bestDiff) {
+                    bestDiff = diff;
+                    trans = t.text;
+                }
+            }
+        }
+        return trans && trans !== line.text ? { ...line, trans } : line;
+    });
 }
 
 /** Get song detail (cover, artist ids, etc.) */

@@ -11,8 +11,8 @@ import { extractCoverPalette, DEFAULT_COVER_PALETTE, type CoverPalette } from "@
 import {
     getUserPlaylists, addTracksToPlaylist, removeTracksFromPlaylist, getNeteasePlayInfo,
     isNeteaseConfigured, recordTrackPlaylist, removeTrackPlaylistRecord, getTrackPlaylistId,
-    getSongCommentPage, getNeteaseSongDetail, getNeteaseLyrics,
-    type NeteasePlaylist,
+    getSongCommentPage, getNeteaseSongDetail, getNeteaseLyricsData, parseBilingualLyrics,
+    type NeteasePlaylist, type BilingualLyricLine,
 } from "@/lib/music-service";
 import MusicCommentsPage from "./music-comments";
 import MusicArtistPage from "./music-artist";
@@ -255,55 +255,53 @@ export default function MusicPlayer() {
         });
     }, [showMusicToast]);
 
-    // ── Parse LRC lyrics ──
-    const parsedLyrics = useRef<{ time: number; text: string }[]>([]);
+    // ── Parse LRC lyrics (with bilingual translation) ──
+    const [fetchedTlyrics, setFetchedTlyrics] = useState<{ id: string; tlyric: string } | null>(null);
+    useEffect(() => {
+        if (!isNeteaseTrack || !neteaseId || !isNeteaseConfigured()) return;
+        const cur = player.currentTrack;
+        if (!cur || cur.tlyrics !== undefined) return;
+        let cancelled = false;
+        getNeteaseLyricsData(neteaseId).then(data => {
+            if (!cancelled) setFetchedTlyrics({ id: cur.id, tlyric: data.tlyric || "" });
+        }).catch(() => {});
+        return () => { cancelled = true; };
+    }, [isNeteaseTrack, neteaseId, player.currentTrack]);
+
+    const effectiveTlyrics = player.currentTrack?.tlyrics
+        ?? (fetchedTlyrics?.id === player.currentTrack?.id ? fetchedTlyrics.tlyric : "");
+
+    const parsedLyrics = useMemo<BilingualLyricLine[]>(
+        () => parseBilingualLyrics(player.currentTrack?.lyrics, effectiveTlyrics),
+        [player.currentTrack?.lyrics, effectiveTlyrics],
+    );
     const [activeLyricIdx, setActiveLyricIdx] = useState(-1);
     const lyricsContainerRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
-        const lrc = player.currentTrack?.lyrics || "";
-        if (!lrc) {
-            parsedLyrics.current = [];
-            return;
-        }
-        const lines: { time: number; text: string }[] = [];
-        for (const line of lrc.split("\n")) {
-            const match = line.match(/\[(\d+):(\d+(?:\.\d+)?)\](.*)/);
-            if (match) {
-                const mins = parseInt(match[1], 10);
-                const secs = parseFloat(match[2]);
-                lines.push({ time: mins * 60 + secs, text: match[3].trim() });
-            }
-        }
-        lines.sort((a, b) => a.time - b.time);
-        parsedLyrics.current = lines;
-    }, [player.currentTrack?.lyrics]);
-
-    useEffect(() => {
-        const lyrics = parsedLyrics.current;
-        if (lyrics.length === 0) { setActiveLyricIdx(-1); return; }
+        if (parsedLyrics.length === 0) { setActiveLyricIdx(-1); return; }
         let idx = -1;
-        for (let i = lyrics.length - 1; i >= 0; i--) {
-            if (player.currentTime >= lyrics[i].time) {
+        for (let i = parsedLyrics.length - 1; i >= 0; i--) {
+            if (player.currentTime >= parsedLyrics[i].time) {
                 idx = i;
                 break;
             }
         }
         setActiveLyricIdx(idx);
-    }, [player.currentTime]);
+    }, [player.currentTime, parsedLyrics]);
 
     // Auto-scroll lyrics
     useEffect(() => {
         if (view !== "lyrics" || activeLyricIdx < 0 || !lyricsContainerRef.current) return;
         const el = lyricsContainerRef.current.children[activeLyricIdx] as HTMLElement;
         if (el) scrollElementWithinContainer(lyricsContainerRef.current, el, { behavior: "smooth", block: "center" });
-    }, [activeLyricIdx, view]);
+    }, [activeLyricIdx, view, player.showTranslation]);
 
     const handleLyricClick = useCallback((idx: number, e: React.MouseEvent) => {
         e.stopPropagation();
-        const line = parsedLyrics.current[idx];
+        const line = parsedLyrics[idx];
         if (line) player.seek(line.time);
-    }, [player]);
+    }, [parsedLyrics, player]);
 
     const [liked, setLiked] = useState(false);
     const [showPlaylistPicker, setShowPlaylistPicker] = useState(false);
@@ -574,17 +572,18 @@ export default function MusicPlayer() {
                 return;
             }
             let resolvedTarget = target;
-            if (!target.lyrics) {
-                const [detail, lyrics] = await Promise.all([
+            if (!target.lyrics || target.tlyrics === undefined) {
+                const [detail, lyricData] = await Promise.all([
                     getNeteaseSongDetail(nid).catch(() => null),
-                    getNeteaseLyrics(nid).catch(() => ""),
+                    getNeteaseLyricsData(nid).catch(() => ({ lyric: "", tlyric: "" })),
                 ]);
                 resolvedTarget = {
                     ...target,
                     title: detail?.name || target.title,
                     artist: detail?.artists || target.artist,
                     coverUrl: detail?.coverUrl || target.coverUrl,
-                    lyrics: lyrics || target.lyrics,
+                    lyrics: lyricData.lyric || target.lyrics,
+                    tlyrics: lyricData.tlyric || target.tlyrics || "",
                 };
             }
             player.playUrl(info.url, resolvedTarget);
@@ -616,9 +615,11 @@ export default function MusicPlayer() {
 
     if (!track) return null;
 
-    const hasLyrics = parsedLyrics.current.length > 0;
+    const hasLyrics = parsedLyrics.length > 0;
     const modeInfo = PLAY_MODE_ICONS[player.playMode];
-    const activeLyricText = activeLyricIdx >= 0 ? parsedLyrics.current[activeLyricIdx]?.text : "";
+    const activeLyricLine = activeLyricIdx >= 0 ? parsedLyrics[activeLyricIdx] : undefined;
+    const activeLyricText = activeLyricLine?.text || "";
+    const activeLyricTrans = player.showTranslation ? (activeLyricLine?.trans || "") : "";
     const customBg = playerBgStyle(bgCfg);
     const ambientVars = {
         "--mp-c1": palette[0],
@@ -772,7 +773,7 @@ export default function MusicPlayer() {
                     <div className="mp-lyrics-wrap" onClick={() => setView("cover")}>
                         {hasLyrics ? (
                             <div className="mp-lyrics" ref={lyricsContainerRef}>
-                                {parsedLyrics.current.map((line, i) => {
+                                {parsedLyrics.map((line, i) => {
                                     const dist = Math.abs(i - activeLyricIdx);
                                     return (
                                         <div
@@ -781,7 +782,10 @@ export default function MusicPlayer() {
                                             {...(i === activeLyricIdx ? { "data-active": "" } : dist === 1 ? { "data-near": "" } : {})}
                                             onClick={(e) => handleLyricClick(i, e)}
                                         >
-                                            {line.text || " "}
+                                            <div className="mp-lyric-orig">{line.text || " "}</div>
+                                            {player.showTranslation && line.trans && (
+                                                <div className="mp-lyric-trans">{line.trans}</div>
+                                            )}
                                         </div>
                                     );
                                 })}
@@ -834,7 +838,11 @@ export default function MusicPlayer() {
                         </div>
                         <div className="mp-lyric-peek">
                             {activeLyricText ? (
-                                <>「{activeLyricText}」<span>点击查看歌词</span></>
+                                <>
+                                    <div>「{activeLyricText}」</div>
+                                    {activeLyricTrans && <div className="mp-lyric-peek-trans">{activeLyricTrans}</div>}
+                                    <span>点击查看歌词</span>
+                                </>
                             ) : hasLyrics ? (
                                 <span>点击查看歌词</span>
                             ) : null}
@@ -845,6 +853,17 @@ export default function MusicPlayer() {
 
             {/* Waveform progress */}
             <div className="mp-progress-area">
+                <div className="mp-progress-top-row">
+                    <button
+                        type="button"
+                        className="mp-trans-toggle-btn"
+                        {...(player.showTranslation ? { "data-active": "" } : {})}
+                        onClick={player.toggleTranslation}
+                        title={player.showTranslation ? "关闭歌词翻译" : "开启歌词翻译"}
+                    >
+                        译
+                    </button>
+                </div>
                 <div
                     ref={progressRef}
                     className="mp-wave"
