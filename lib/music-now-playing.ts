@@ -87,8 +87,9 @@ let lyricCacheValue: TimedLyricLine[] = [];
  * 无时间戳的纯文本歌词返回空数组——没有时间轴就定位不到「正在唱哪句」，
  * 硬塞前五行只会误导模型。
  */
-export function parseLrc(lyrics: string | undefined | null): TimedLyricLine[] {
-    if (!lyrics) return [];
+export function parseLrc(lyrics: unknown): TimedLyricLine[] {
+    // 和 music-service 的解析器同一套前提：只认字符串，其它类型一律当"没有歌词"
+    if (typeof lyrics !== "string" || !lyrics) return [];
     if (lyrics === lyricCacheKey) return lyricCacheValue;
     const timeTagRe = /\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
     const out: TimedLyricLine[] = [];

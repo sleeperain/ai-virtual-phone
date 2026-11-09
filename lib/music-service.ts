@@ -330,8 +330,10 @@ export type BilingualLyricLine = {
 };
 
 /** Parse single LRC string into sorted time-stamped lines (supports multiple time tags per line) */
-export function parseRawLrcLines(lrc?: string | null): { time: number; text: string }[] {
-    if (!lrc) return [];
+export function parseRawLrcLines(lrc?: unknown): { time: number; text: string }[] {
+    // 只认字符串：老数据 / 第三方接口可能塞进来 null、对象或数字，
+    // 直接 .split 会在渲染期抛错并把整页带崩。
+    if (typeof lrc !== "string" || !lrc) return [];
     const timeTagRe = /\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
     const lines: { time: number; text: string }[] = [];
     for (const rawLine of lrc.split(/\r?\n/)) {
@@ -356,7 +358,7 @@ export function parseRawLrcLines(lrc?: string | null): { time: number; text: str
 }
 
 /** Merge original LRC and translated LRC by timestamp (with tolerance for slight offset) */
-export function parseBilingualLyrics(lrc?: string | null, tlrc?: string | null): BilingualLyricLine[] {
+export function parseBilingualLyrics(lrc?: unknown, tlrc?: unknown): BilingualLyricLine[] {
     const origLines = parseRawLrcLines(lrc);
     if (origLines.length === 0) return [];
     const transLines = parseRawLrcLines(tlrc).filter(t => t.text && t.text !== "//");

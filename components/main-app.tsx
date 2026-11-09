@@ -10,6 +10,7 @@ import { MediaMaintenanceScheduler } from "@/components/media-maintenance-schedu
 import { DesktopShell } from "./desktop-shell";
 import { OfflinePushRevampAnnouncement } from "./offline-push-revamp-announcement";
 import { SplashAnimation } from "./splash-animation";
+import { LocalErrorBoundary } from "@/components/ui/local-error-boundary";
 import { MusicProvider } from "@/lib/music-context";
 import { hydrateKvDb, isKvHydrated } from "@/lib/kv-db";
 import { getThemeAssetMap, readThemeProfile } from "@/lib/theme-storage";
@@ -313,10 +314,15 @@ export function MainApp() {
       ) : (
         <main className="app-root">
           <MusicProvider>
-            <DesktopShell
-              initialThemeProfile={preparedDesktopTheme?.profile}
-              initialThemeAssets={preparedDesktopTheme?.assets}
-            />
+            <LocalErrorBoundary
+              label="桌面"
+              hint="桌面在渲染时崩了，本地数据没有丢。可以点重试；反复出现就把控制台里的报错发给小坊。"
+            >
+              <DesktopShell
+                initialThemeProfile={preparedDesktopTheme?.profile}
+                initialThemeAssets={preparedDesktopTheme?.assets}
+              />
+            </LocalErrorBoundary>
             <OfflinePushRevampAnnouncement />
             <CloudBackupScheduler />
             <RealityBridgeScheduler />

@@ -3,7 +3,7 @@
 
 import { createContext, useContext, useState, useRef, useCallback, useEffect, useMemo, type ReactNode } from "react";
 import type { MusicTrack } from "./music-storage";
-import { getAudioBlob, markTrackPlayed } from "./music-storage";
+import { getAudioBlob, markTrackPlayed, normalizeMusicTracks } from "./music-storage";
 import { findPlayableMatch, getNeteaseLyricsData, getNeteasePlayUrl, getNeteasePlayInfo, getNeteaseSongDetail } from "./music-service";
 import { kvGet, kvSet, registerDynamicPrefix, registerKvMigration } from "./kv-db";
 import { registerMusicControlBridge } from "./music-control-bridge";
@@ -94,7 +94,9 @@ function loadPersistedQueue(): MusicTrack[] {
         const raw = kvGet(QUEUE_STORAGE_KEY);
         if (!raw) return [];
         const arr = JSON.parse(raw);
-        return Array.isArray(arr) ? arr.slice(0, QUEUE_MAX_SIZE) : [];
+        // 队列快照可能是老版本写的（那时还没有 tlyrics），也可能是 null 歌词被序列化进去的。
+        // 直接拿去渲染，歌词解析碰上非字符串就会在渲染期抛错 → 整页崩，所以先归一。
+        return normalizeMusicTracks(arr).slice(0, QUEUE_MAX_SIZE);
     } catch { return []; }
 }
 
@@ -161,9 +163,9 @@ export function MusicProvider({ children }: { children: ReactNode }) {
         return () => clearInterval(timer);
     }, [isPlaying]);
 
-    /** Wrapped setQueue with max size enforcement */
+    /** Wrapped setQueue with max size enforcement（入口同样归一，挡住外部塞进来的脏数据） */
     const setQueue = useCallback((tracks: MusicTrack[]) => {
-        setQueueRaw(tracks.slice(0, QUEUE_MAX_SIZE));
+        setQueueRaw(normalizeMusicTracks(tracks).slice(0, QUEUE_MAX_SIZE));
     }, []);
 
     // Initialize audio element once

@@ -22,6 +22,7 @@ import MiniAppWindow from "@/components/music/mini-app-window";
 import { PhoneCalendarApp } from "@/components/calendar-app";
 import { PhoneQaApp } from "@/components/phone-qa-app";
 import { ChatPluginPageBoundary } from "@/components/chat/chat-plugin-page-boundary";
+import { LocalErrorBoundary } from "@/components/ui/local-error-boundary";
 import { ResourceHubApp } from "@/components/resource-hub/resource-hub-app";
 import "@/lib/qa-error-log";
 import { RealityBridgeApp } from "@/components/reality-bridge-app";
@@ -1189,8 +1190,16 @@ const MusicShellOverlays = memo(function MusicShellOverlays({
 
   return (
     <>
-      {musicPlayer?.showFullPlayer && musicPlayer.currentTrack && <MusicPlayer />}
-      <MusicFloat hidden={activeApp === "music" || musicPlayer?.showFullPlayer} />
+      {/* 播放页 / 桌面歌词各自关在自己的边界里：任何一方渲染崩溃只坏那一块，
+          不会再像以前那样顺着 React 树冒到根节点，把整台手机变成错误页。 */}
+      {musicPlayer?.showFullPlayer && musicPlayer.currentTrack && (
+        <LocalErrorBoundary label="音乐播放页">
+          <MusicPlayer />
+        </LocalErrorBoundary>
+      )}
+      <LocalErrorBoundary label="桌面歌词" silent>
+        <MusicFloat hidden={activeApp === "music" || musicPlayer?.showFullPlayer} />
+      </LocalErrorBoundary>
     </>
   );
 });
@@ -4335,7 +4344,11 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
     }
 
     if (activeApp === "music") {
-      return <MusicApp onClose={() => setActiveApp(null)} />;
+      return (
+        <LocalErrorBoundary label="音乐" hint="音乐页渲染失败，返回桌面即可继续使用其它功能。">
+          <MusicApp onClose={() => setActiveApp(null)} />
+        </LocalErrorBoundary>
+      );
     }
 
     if (activeApp === "calendar") {
@@ -4721,10 +4734,13 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
               {resolvedMusicCss && <style dangerouslySetInnerHTML={{ __html: resolvedMusicCss }} />}
 
               {/* Music overlays are isolated so playback progress does not rerender the desktop shell. */}
-              <MusicShellOverlays
-                activeApp={activeApp}
-                onControllerChange={handleMusicOverlayControllerChange}
-              />
+              {/* 这层兜住 MusicShellOverlays 自身（hook 阶段）的异常：浮层没了也不能没桌面 */}
+              <LocalErrorBoundary label="音乐浮层" silent>
+                <MusicShellOverlays
+                  activeApp={activeApp}
+                  onControllerChange={handleMusicOverlayControllerChange}
+                />
+              </LocalErrorBoundary>
 
               {/* Mini chat window — persists across music pages */}
               <MiniAppWindow
