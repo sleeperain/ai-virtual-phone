@@ -268,8 +268,15 @@ export default function MusicPlayer() {
         return () => { cancelled = true; };
     }, [isNeteaseTrack, neteaseId, player.currentTrack]);
 
-    const effectiveTlyrics = player.currentTrack?.tlyrics
-        ?? (fetchedTlyrics?.id === player.currentTrack?.id ? fetchedTlyrics.tlyric : "");
+    // 同 music-float：fetchedTlyrics?.id === player.currentTrack?.id 两边都可能
+    // 是 undefined，undefined === undefined 为真 → 去读 fetchedTlyrics.tlyric，
+    // 此时 fetchedTlyrics 还是 null → TypeError。必须先判空再比 id。
+    const currentTrackId = player.currentTrack?.id;
+    const effectiveTlyrics = typeof player.currentTrack?.tlyrics === "string"
+        ? player.currentTrack.tlyrics
+        : (fetchedTlyrics && currentTrackId && fetchedTlyrics.id === currentTrackId
+            ? fetchedTlyrics.tlyric || ""
+            : "");
 
     const parsedLyrics = useMemo<BilingualLyricLine[]>(
         () => parseBilingualLyrics(player.currentTrack?.lyrics, effectiveTlyrics),

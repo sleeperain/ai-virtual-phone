@@ -245,8 +245,19 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
         return () => { cancelled = true; };
     }, [player?.currentTrack]);
 
-    const effectiveTlyrics = player?.currentTrack?.tlyrics
-        ?? (fetchedTlyrics?.id === player?.currentTrack?.id ? fetchedTlyrics.tlyric : "");
+    // 注意这个 === 两边都用了可选链：没有正在播放的曲目时，
+    // fetchedTlyrics?.id 和 player?.currentTrack?.id 都是 undefined，
+    // undefined === undefined 成立 → 条件为真 → 去读 fetchedTlyrics.tlyric，
+    // 而 fetchedTlyrics 还是 null，于是抛
+    // "Cannot read properties of null (reading 'tlyric')"。
+    // 这行在下面的提前 return 之前执行，所以"没放歌打开就崩"就是它造成的。
+    // 必须先确认 fetchedTlyrics 本身不是 null，再比 id。
+    const currentTrackId = player?.currentTrack?.id;
+    const effectiveTlyrics = typeof player?.currentTrack?.tlyrics === "string"
+        ? player.currentTrack.tlyrics
+        : (fetchedTlyrics && currentTrackId && fetchedTlyrics.id === currentTrackId
+            ? fetchedTlyrics.tlyric || ""
+            : "");
 
     const lyrics = useMemo(
         () => parseBilingualLyrics(player?.currentTrack?.lyrics, effectiveTlyrics).filter(l => l.text),
