@@ -15,6 +15,19 @@
 
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
+/**
+ * 局部崩溃的广播事件：边界吞掉异常后，外层还能收到一份。
+ * 手机上打不开控制台，silent 边界把浮层按 null 渲染出去，用户只会觉得
+ * 「这个功能被删了」，所以必须有一条能给用户看的通路。
+ */
+export const LOCAL_ERROR_EVENT = "app-local-error";
+
+export type LocalErrorDetail = {
+    label: string;
+    message: string;
+    stack?: string;
+};
+
 type LocalErrorBoundaryProps = {
     /** 出错时报出来的名字，例如「播放页」「桌面歌词」 */
     label: string;
@@ -48,11 +61,26 @@ export class LocalErrorBoundary extends Component<LocalErrorBoundaryProps, Local
     }
 
     componentDidCatch(error: unknown, info: ErrorInfo): void {
+        const message = describeError(error);
         // 不往上抛，只留日志：宿主页面的控制台里能查到具体是哪个子树炸的
         console.warn(
-            `[LocalErrorBoundary] 「${this.props.label}」渲染崩溃：${describeError(error)}`,
+            `[LocalErrorBoundary] 「${this.props.label}」渲染崩溃：${message}`,
             info.componentStack,
         );
+        // 再广播一份给外层（桌面用它弹提示），否则 silent 边界等于静默删功能
+        try {
+            if (typeof window !== "undefined") {
+                window.dispatchEvent(new CustomEvent<LocalErrorDetail>(LOCAL_ERROR_EVENT, {
+                    detail: {
+                        label: this.props.label,
+                        message,
+                        stack: info.componentStack ?? undefined,
+                    },
+                }));
+            }
+        } catch {
+            // 事件派发失败不影响兜底渲染
+        }
     }
 
     private retry = (): void => {

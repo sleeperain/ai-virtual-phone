@@ -233,7 +233,9 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
     const [fetchedTlyrics, setFetchedTlyrics] = useState<{ id: string; tlyric: string } | null>(null);
     useEffect(() => {
         const cur = player?.currentTrack;
-        if (!cur || !cur.id.startsWith("netease_") || cur.tlyrics !== undefined || !isNeteaseConfigured()) return;
+        // id / tlyrics 都来自播放队列，老快照或外部注入可能不是字符串，
+        // 直接 .startsWith 这类调用会在渲染期抛错 → 歌词整块消失
+        if (!cur || typeof cur.id !== "string" || !cur.id.startsWith("netease_") || typeof cur.tlyrics === "string" || !isNeteaseConfigured()) return;
         const nid = parseInt(cur.id.replace("netease_", ""), 10);
         if (!nid) return;
         let cancelled = false;

@@ -22,7 +22,7 @@ import MiniAppWindow from "@/components/music/mini-app-window";
 import { PhoneCalendarApp } from "@/components/calendar-app";
 import { PhoneQaApp } from "@/components/phone-qa-app";
 import { ChatPluginPageBoundary } from "@/components/chat/chat-plugin-page-boundary";
-import { LocalErrorBoundary } from "@/components/ui/local-error-boundary";
+import { LOCAL_ERROR_EVENT, LocalErrorBoundary, type LocalErrorDetail } from "@/components/ui/local-error-boundary";
 import { ResourceHubApp } from "@/components/resource-hub/resource-hub-app";
 import "@/lib/qa-error-log";
 import { RealityBridgeApp } from "@/components/reality-bridge-app";
@@ -1224,6 +1224,18 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
   const [glassPaintPass, setGlassPaintPass] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const [activeApp, setActiveApp] = useState<DesktopIconId | null>(null);
+  // 局部边界会把崩掉的子树按 null 渲染，界面上不留痕迹。手机上又打不开控制台，
+  // 所以这里把边界广播出来的错误弹成一条提示——用户至少知道「哪块坏了、为什么」，
+  // 反馈时也能直接把这句话抄给我。
+  useEffect(() => {
+    const onLocalError = (event: Event) => {
+      const detail = (event as CustomEvent<LocalErrorDetail>).detail;
+      if (!detail?.label) return;
+      setNotice(`「${detail.label}」加载出错：${detail.message || "未知错误"}`);
+    };
+    window.addEventListener(LOCAL_ERROR_EVENT, onLocalError);
+    return () => window.removeEventListener(LOCAL_ERROR_EVENT, onLocalError);
+  }, []);
   const [customApps, setCustomApps] = useState<InstalledCustomApp[]>([]);
   // 自定义 APP 桌面图标样式偏好（global = 忽略上传图标走全局效果）
   const [customAppIconStyles, setCustomAppIconStyles] = useState<Record<string, CustomAppIconStyle>>({});
