@@ -84,8 +84,8 @@ export default function MusicArtistPage({ artistId, artistName, onClose }: Props
             artist: detail?.artists || song.artists,
             duration: song.duration / 1000,
             coverUrl: detail?.coverUrl || song.coverUrl,
-            lyrics: lyricData.lyric,
-            tlyrics: lyricData.tlyric,
+            lyrics: lyricData?.lyric || "",
+            tlyrics: lyricData?.tlyric || "",
             liked: false,
             addedAt: new Date().toISOString(),
         };

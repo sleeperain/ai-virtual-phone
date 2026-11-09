@@ -271,19 +271,49 @@ export type NeteaseLyricsPayload = {
     tlyric: string;
 };
 
-/** Get original + translated lyrics for a Netease song */
+/**
+ * 把 /lyric 返回里的 lyric / tlyric 字段压成字符串。
+ *
+ * 这个接口的返回体很不老实：没有官方翻译时 tlyric 会是 null；自建 / 第三方的
+ * NeteaseCloudMusicApi 兼容实例还可能直接吐 "null"、空串、HTML 错误页，或者把
+ * 歌词塞成对象 / 数组。所以这里一律先当 unknown 接住，逐层剥到字符串为止。
+ * 拿不到就返回空串——歌词缺失只该让歌词区显示「暂无歌词」，绝不该抛错。
+ */
+function readLrcField(value: unknown, depth = 0): string {
+    if (typeof value === "string") return value;
+    if (typeof value === "number") return "";
+    if (depth > 3 || value === null || typeof value !== "object") return "";
+    if (Array.isArray(value)) {
+        return value.map(item => readLrcField(item, depth + 1)).filter(Boolean).join("\n");
+    }
+    const inner = (value as { lyric?: unknown }).lyric;
+    if (typeof inner === "string") return inner;
+    if (inner !== undefined && inner !== null) return readLrcField(inner, depth + 1);
+    return "";
+}
+
+/** Get original + translated lyrics for a Netease song（任何异常都降级为空歌词） */
 export async function getNeteaseLyricsData(songId: number): Promise<NeteaseLyricsPayload> {
+    const empty: NeteaseLyricsPayload = { lyric: "", tlyric: "" };
     const base = neteaseBase();
-    if (!base) return { lyric: "", tlyric: "" };
+    if (!base) return empty;
     try {
         const resp = await fetch(withNeteaseParams(`${base}/lyric?id=${songId}`));
-        const data = await resp.json();
+        if (!resp || !resp.ok) return empty;
+        // 先按文本接住：body 可能是 "null" / 空串 / HTML 错误页，直接 .json() 会抛
+        const raw = await resp.text();
+        if (!raw || !raw.trim()) return empty;
+        let data: unknown;
+        try { data = JSON.parse(raw); } catch { return empty; }
+        if (!data || typeof data !== "object" || Array.isArray(data)) return empty;
+        const payload = data as { lrc?: unknown; tlyric?: unknown; klyric?: unknown };
+        // 有些实例把逐字歌词放 klyric，原文取不到时退化用它
         return {
-            lyric: data?.lrc?.lyric || "",
-            tlyric: data?.tlyric?.lyric || "",
+            lyric: readLrcField(payload.lrc) || readLrcField(payload.klyric),
+            tlyric: readLrcField(payload.tlyric),
         };
     } catch {
-        return { lyric: "", tlyric: "" };
+        return empty;
     }
 }
 

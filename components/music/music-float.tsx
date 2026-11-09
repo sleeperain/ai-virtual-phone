@@ -238,7 +238,7 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
         if (!nid) return;
         let cancelled = false;
         getNeteaseLyricsData(nid).then(data => {
-            if (!cancelled) setFetchedTlyrics({ id: cur.id, tlyric: data.tlyric || "" });
+            if (!cancelled) setFetchedTlyrics({ id: cur.id, tlyric: data?.tlyric || "" });
         }).catch(() => {});
         return () => { cancelled = true; };
     }, [player?.currentTrack]);

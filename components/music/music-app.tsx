@@ -206,9 +206,10 @@ export default function MusicApp({ onClose }: Props) {
             showMusicToast(info.reason || "加载失败，请稍后重试", 2600);
             return;
         }
-        const detail = await getNeteaseSongDetail(result.id);
-        const lyricData = await getNeteaseLyricsData(result.id);
-        const track = toMusicTrack(result, { lyrics: lyricData.lyric, tlyrics: lyricData.tlyric, coverUrl: detail?.coverUrl, name: detail?.name, artists: detail?.artists });
+        // 详情 / 歌词都只是增强信息：任何一步失败都不该影响这首歌能不能播
+        const detail = await getNeteaseSongDetail(result.id).catch(() => null);
+        const lyricData = await getNeteaseLyricsData(result.id).catch(() => null);
+        const track = toMusicTrack(result, { lyrics: lyricData?.lyric || "", tlyrics: lyricData?.tlyric || "", coverUrl: detail?.coverUrl, name: detail?.name, artists: detail?.artists });
         // Prepend to existing queue
         if (!player.queue.some(t => t.id === track.id)) {
             player.setQueue([track, ...player.queue]);
@@ -242,9 +243,9 @@ export default function MusicApp({ onClose }: Props) {
         }
 
         beginMusicLoadingToast(`netease_${playable.song.id}`);
-        const detail = await getNeteaseSongDetail(playable.song.id);
-        const lyricData = await getNeteaseLyricsData(playable.song.id);
-        const track = toMusicTrack(playable.song, { lyrics: lyricData.lyric, tlyrics: lyricData.tlyric, coverUrl: detail?.coverUrl, name: detail?.name, artists: detail?.artists });
+        const detail = await getNeteaseSongDetail(playable.song.id).catch(() => null);
+        const lyricData = await getNeteaseLyricsData(playable.song.id).catch(() => null);
+        const track = toMusicTrack(playable.song, { lyrics: lyricData?.lyric || "", tlyrics: lyricData?.tlyric || "", coverUrl: detail?.coverUrl, name: detail?.name, artists: detail?.artists });
         player.playUrl(playable.url, track);
         if (playable.index > 0) showMusicToast(`已跳过 ${playable.index} 首不可播放歌曲`);
         else if (playable.trial) showMusicToast("VIP 歌曲，当前播放 30 秒试听", 2600);

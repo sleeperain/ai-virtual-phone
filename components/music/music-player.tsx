@@ -263,7 +263,7 @@ export default function MusicPlayer() {
         if (!cur || cur.tlyrics !== undefined) return;
         let cancelled = false;
         getNeteaseLyricsData(neteaseId).then(data => {
-            if (!cancelled) setFetchedTlyrics({ id: cur.id, tlyric: data.tlyric || "" });
+            if (!cancelled) setFetchedTlyrics({ id: cur.id, tlyric: data?.tlyric || "" });
         }).catch(() => {});
         return () => { cancelled = true; };
     }, [isNeteaseTrack, neteaseId, player.currentTrack]);
@@ -582,8 +582,8 @@ export default function MusicPlayer() {
                     title: detail?.name || target.title,
                     artist: detail?.artists || target.artist,
                     coverUrl: detail?.coverUrl || target.coverUrl,
-                    lyrics: lyricData.lyric || target.lyrics,
-                    tlyrics: lyricData.tlyric || target.tlyrics || "",
+                    lyrics: lyricData?.lyric || target.lyrics,
+                    tlyrics: lyricData?.tlyric || target.tlyrics || "",
                 };
             }
             player.playUrl(info.url, resolvedTarget);

@@ -259,8 +259,8 @@ export function MusicProvider({ children }: { children: ReactNode }) {
                     title: detail?.name || track.title,
                     artist: detail?.artists || track.artist,
                     coverUrl: detail?.coverUrl || track.coverUrl,
-                    lyrics: lyricData.lyric || track.lyrics,
-                    tlyrics: lyricData.tlyric || track.tlyrics || "",
+                    lyrics: lyricData?.lyric || track.lyrics,
+                    tlyrics: lyricData?.tlyric || track.tlyrics || "",
                 };
             }
             audio.src = playUrl;
@@ -428,8 +428,8 @@ export function MusicProvider({ children }: { children: ReactNode }) {
                 title: detail?.name || track.title,
                 artist: detail?.artists || track.artist,
                 coverUrl: detail?.coverUrl || track.coverUrl,
-                lyrics: lyricData.lyric || track.lyrics,
-                tlyrics: lyricData.tlyric || track.tlyrics || "",
+                lyrics: lyricData?.lyric || track.lyrics,
+                tlyrics: lyricData?.tlyric || track.tlyrics || "",
             };
             playUrl(url, resolvedTrack);
             return { ok: true, message: `正在播放「${resolvedTrack.title}」`, track: resolvedTrack };
