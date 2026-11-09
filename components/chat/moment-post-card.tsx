@@ -611,7 +611,7 @@ export function MomentPostCard({ post, onUpdate, onRequestDelete, onOpenCommentC
                                 <Heart size={15} strokeWidth={1.75} />
                             </span>
                             <span className="feed-like-summary-text opacity-90">
-                                {likeNames.join("、")}{likeNames.length > 0 ? " 赞了" : ""}
+                                {likeNames.join("、")}
                             </span>
                         </div>
                     )}
