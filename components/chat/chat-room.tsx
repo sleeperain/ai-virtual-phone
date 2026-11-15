@@ -1106,26 +1106,42 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     const [theaterMode, setTheaterMode] = useState(() => kvGet(CHAT_THEATER_MODE_PREFIX + session.id) === "1");
     const [showBackpack, setShowBackpack] = useState(false);
     /**
-     * 背包「送给…」：物品转到对方背包，并在本会话留一张礼物卡片。
+     * 背包「送给…」：物品转到对方背包，并在**对方自己的私聊会话**里留一张礼物卡片。
+     * 卡片不落在当前打开的会话——在群里送给某个成员时，那等于把私聊礼物留在群里；
+     * 收礼人还没聊天室时由 deliverBackpackItemToCharacter 建一个。
      * 这里不弹 toast —— 调用发生在背包弹窗内，聊天室 toast 层级低于弹窗会被遮住，
      * 提示由背包自己用 app 级 toast 发出。
      */
-    const deliverBackpackItem = (request: BackpackDeliverRequest): { ok: boolean; error?: string } => {
-        const result = deliverBackpackItemToCharacter({
-            item: request.item,
-            targetCharacterId: request.targetCharacterId,
-            targetName: request.targetName,
-            sessionId: session.id,
-        });
-        if (!result.ok) return { ok: false, error: result.error || "送出失败，请重试" };
+    const deliverBackpackItem = (request: BackpackDeliverRequest): {
+        ok: boolean;
+        error?: string;
+        sessionCreated?: boolean;
+    } => {
+        try {
+            const result = deliverBackpackItemToCharacter({
+                item: request.item,
+                targetCharacterId: request.targetCharacterId,
+                targetName: request.targetName,
+            });
+            if (!result.ok) return { ok: false, error: result.error || "送出失败，请重试" };
 
-        // 立刻把新卡片并进本地消息列表，不用等下一次整表同步
-        setMessages(prev => {
-            const latest = loadChatMessages(session.id);
-            const added = latest.filter(m => !prev.some(p => p.id === m.id));
-            return added.length > 0 ? [...prev, ...added] : prev;
-        });
-        return { ok: true, error: result.error };
+            if (result.sessionId === session.id) {
+                // 卡片正好落在当前会话：立刻并进本地消息列表，不用等下一次整表同步
+                setMessages(prev => {
+                    const latest = loadChatMessages(session.id);
+                    const added = latest.filter(m => !prev.some(p => p.id === m.id));
+                    return added.length > 0 ? [...prev, ...added] : prev;
+                });
+            } else if (typeof window !== "undefined") {
+                // 卡片落在别的角色聊天室：只让消息列表刷新预览/未读，
+                // 绝不动当前会话的 messages（否则别人的卡片会画到这个会话里）
+                window.dispatchEvent(new CustomEvent("chat-messages-updated"));
+            }
+            return { ok: true, error: result.error, sessionCreated: result.sessionCreated };
+        } catch (e) {
+            console.warn("[backpack] 送出礼物失败", e);
+            return { ok: false, error: "送出失败，请重试" };
+        }
     };
     const [offlineTurns, setOfflineTurns] = useState<ChatOfflineTurn[]>([]);
     const [offlineVisibleCount, setOfflineVisibleCount] = useState(OFFLINE_INITIAL_LOAD);

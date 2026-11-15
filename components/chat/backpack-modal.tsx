@@ -18,7 +18,6 @@ import {
     loadBackpackTargets,
     mutateBackpackItems,
     removeBackpackItems,
-    resolveCharacterName,
 } from "@/lib/backpack-storage";
 import { rescanShoppingOrders } from "@/lib/backpack-legacy";
 import { appToastId, showAppToast } from "@/lib/app-toast";
@@ -38,7 +37,12 @@ type BackpackModalProps = {
     currentCharacterId?: string;
     onClose: () => void;
     /** 送出物品并发送礼物卡片；失败时带上原因供背包提示 */
-    onDeliver?: (request: BackpackDeliverRequest) => { ok: boolean; error?: string };
+    onDeliver?: (request: BackpackDeliverRequest) => {
+        ok: boolean;
+        error?: string;
+        /** 收礼角色原本没有聊天室，这次新建了一个（提示文案区分一下） */
+        sessionCreated?: boolean;
+    };
 };
 
 /**
@@ -254,20 +258,13 @@ export function BackpackModal({
     };
 
     /**
-     * 送出物品。
-     * 私聊：能送的对象只有当前聊天角色，直接送出，不弹选择列表。
-     * 群聊：群里有多个人，需要选择具体送给谁。
+     * 送出物品：不管私聊还是群聊，一律先弹「送给…」选收礼人，
+     * 不再按 chat 类型走「直接送给当前聊天角色」的捷径——
+     * 那条捷径不给确认机会，送出后也不复位状态，就是之前点了像卡住的样子。
      */
     const startDeliver = (item: BackpackItem) => {
-        if (!onDeliver) return;
-        if (currentCharacterId) {
-            const targetName = resolveCharacterName(currentCharacterId) || "对方";
-            const result = onDeliver({ item, targetCharacterId: currentCharacterId, targetName });
-            if (!result.ok) {
-                toast(result.error || "送出失败，请重试");
-                return;
-            }
-            toast(result.error ? result.error : `已送给 ${targetName}`);
+        if (!onDeliver) {
+            toast("当前环境不支持送出礼物");
             return;
         }
         setDeliverItem(item);
@@ -629,22 +626,37 @@ export function BackpackModal({
                         mode="deliver"
                         onClose={() => setDeliverItem(null)}
                         onDone={target => {
-                            if (!target) {
-                                setDeliverItem(null);
-                                return;
-                            }
-                            const result = onDeliver?.({
-                                item: deliverItem,
-                                targetCharacterId: target.id,
-                                targetName: target.rawName,
-                            });
-                            if (!result) return;
-                            if (!result.ok) {
-                                toast(result.error || "送出失败，请重试");
-                                return;
-                            }
-                            toast(result.error ? result.error : `已送给 ${target.rawName}`);
+                            const sending = deliverItem;
+                            // 先收起列表再送出：失败或抛异常时留在列表上，
+                            // 看起来就是「点了没反应」，正是之前卡住的现象。
                             setDeliverItem(null);
+                            if (!target) return;
+                            try {
+                                const result = onDeliver?.({
+                                    item: sending,
+                                    targetCharacterId: target.id,
+                                    targetName: target.rawName,
+                                });
+                                if (!result) {
+                                    toast("送出失败，请重试");
+                                    return;
+                                }
+                                if (!result.ok) {
+                                    toast(result.error || "送出失败，请重试");
+                                    return;
+                                }
+                                // ok 但带 error：物品已送到，只是某一步没成（例如卡片没发出来）
+                                if (result.error) {
+                                    toast(result.error);
+                                    return;
+                                }
+                                toast(result.sessionCreated
+                                    ? `已送给 ${target.rawName}，礼物卡片在他的聊天室`
+                                    : `已送给 ${target.rawName}`);
+                            } catch (e) {
+                                console.warn("[backpack] 送出失败", e);
+                                toast("送出失败，请重试");
+                            }
                         }}
                     />
                 )}

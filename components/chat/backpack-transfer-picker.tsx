@@ -85,7 +85,9 @@ export function BackpackTransferPicker({
 
                 <div className="bp-sub-list">
                     {candidates.length === 0 ? (
-                        <div className="bp-sub-empty">没有可放入的目标</div>
+                        <div className="bp-sub-empty">
+                            {mode === "deliver" ? "还没有可送礼的角色" : "没有可放入的目标"}
+                        </div>
                     ) : (
                         candidates.map(t => (
                             <div
