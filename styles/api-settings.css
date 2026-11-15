@@ -1,0 +1,19 @@
+/* ══════════════════════════════════════════
+   设置 → API 配置 →「选择模型」底栏弹窗
+   模型名是一列短文本，用默认的 .modal-sheet（高度 90%）会拉满整屏，
+   这里单独收小到六成左右，超出部分在列表内部滚动。
+   只作用于带 api-model-picker-sheet 这一个弹窗，不影响其它 modal-sheet。
+   ══════════════════════════════════════════ */
+
+.modal-sheet.api-model-picker-sheet {
+  max-height: min(62vh, 560px);
+}
+
+/* 高度收小之后列表要滚得更久，搜索框吸顶：往下翻时始终能改关键词。
+   底色取弹窗底色，避免下面的模型名从缝隙里透上来。 */
+.api-model-picker-sheet .modal-body > .binding-sheet-list > .ui-input {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--c-panel);
+}

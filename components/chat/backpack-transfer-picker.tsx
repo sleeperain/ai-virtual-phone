@@ -72,49 +72,20 @@ export function BackpackTransferPicker({
     };
 
     return (
-        <div
-            onClick={onClose}
-            style={{
-                // 必须 fixed + 高于 .modal-overlay 的 9999：
-                // 这个列表是从详情弹窗里点出来的，详情弹窗本身是 fixed 全屏遮罩，
-                // 用 absolute 会被它压在下面（表现为「列表跑到详情页后面」）。
-                position: "fixed",
-                inset: 0,
-                background: "rgba(0,0,0,0.45)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                zIndex: 10000,
-                padding: 20,
-            }}
-        >
-            {/* 尺寸交给 .bp-picker-box：宽固定、高固定为整屏 2/3，和其它背包弹窗一致 */}
-            <div
-                onClick={e => e.stopPropagation()}
-                className="bp-picker-box"
-            >
-                <div style={{
-                    padding: "12px 14px",
-                    borderBottom: "1px solid rgba(128,128,128,0.12)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                }}>
-                    <span style={{ fontWeight: 600, fontSize: TS(13), color: "var(--c-text)" }}>
+        <div className="bp-sub-overlay" onClick={onClose}>
+            {/* 和「查看谁的背包」「让哪些角色知道这件物品」共用同一套 .bp-sub-panel：
+                宽 min(78vw,300px)、高度按内容长、超额在列表里滑动。
+                遮罩 .bp-sub-overlay 已是 fixed + z-index 10000，能压过详情弹窗的 .modal-overlay */}
+            <div className="bp-sub-panel" onClick={e => e.stopPropagation()}>
+                <div className="bp-sub-head">
+                    <div className="bp-sub-title">
                         {mode === "deliver" ? "送给…" : "放入到"}
-                    </span>
+                    </div>
                 </div>
 
-                <div className="bp-picker-list">
+                <div className="bp-sub-list">
                     {candidates.length === 0 ? (
-                        <div style={{
-                            padding: "24px 12px",
-                            textAlign: "center",
-                            fontSize: TS(12),
-                            color: "var(--c-icon)",
-                        }}>
-                            没有可放入的目标
-                        </div>
+                        <div className="bp-sub-empty">没有可放入的目标</div>
                     ) : (
                         candidates.map(t => (
                             <div
@@ -122,19 +93,15 @@ export function BackpackTransferPicker({
                                 className="bp-transfer-item"
                                 onClick={() => handlePick(t)}
                             >
-                                {/* 送给某角色只显示角色名；放入到某处显示完整背包名 */}
-                                {mode === "deliver" ? t.rawName : t.name}
+                                {/* 和「查看谁的背包」一致：只显示人名（「我的背包」也照原样），
+                                    不再拼成「【角色名】的背包」 */}
+                                {t.rawName}
                             </div>
                         ))
                     )}
                 </div>
 
-                <div style={{
-                    padding: "8px 12px",
-                    borderTop: "1px solid rgba(128,128,128,0.12)",
-                    display: "flex",
-                    justifyContent: "flex-end",
-                }}>
+                <div className="bp-sub-foot">
                     <button
                         type="button"
                         onClick={onClose}

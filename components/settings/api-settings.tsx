@@ -1018,7 +1018,7 @@ export function ApiSettings() {
                         onClick={() => setModelPickerConfigId(null)}
                     >
                         <div
-                            className="modal-sheet"
+                            className="modal-sheet api-model-picker-sheet"
                             data-ui="modal-sheet"
                             role="dialog"
                             aria-modal="true"

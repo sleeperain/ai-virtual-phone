@@ -65,24 +65,8 @@
   gap: 12px;
 }
 
-/* 转送 / 送给… 的选择面板 */
-.bp-picker-box {
-  display: flex;
-  flex-direction: column;
-  width: var(--bp-dialog-width);
-  height: var(--bp-dialog-height);
-  background: var(--c-page-body-bg, #fff);
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3);
-}
-
-.bp-picker-list {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 6px;
-}
+/* 「送给…」「放入到…」的选择面板已并入 .bp-sub-panel（和「查看谁的背包」同一套），
+   不再单独维护 .bp-picker-box / .bp-picker-list。 */
 
 .backpack-select-bar {
   display: flex;
@@ -442,11 +426,12 @@
   padding: 20px;
 }
 
-/* 角色选择浮层：「查看谁的背包」与「让哪些角色知道这件物品」共用这一套。
-   两者都是「列一串人、点一下选」的轻量列表，条目一般就几项，
+/* 三个「选一个人」的浮层共用这一套：
+   「查看谁的背包」、「让哪些角色知道这件物品」、「送给… / 放入到…」。
+   都是「列一串人、点一下选」的轻量列表，条目一般就几项，
    所以不和主弹窗一样吃满 2/3 屏——宽度窄一档、高度跟着内容长，
    超过上限才由 .bp-sub-list 自己滚。
-   遮罩是 fixed 盖满视口（见 .bp-sub-overlay）：这两层有时叠在物品详情里，
+   遮罩是 fixed 盖满视口（见 .bp-sub-overlay）：其中两层叠在物品详情里，
    父级只有 2/3 屏高且带 overflow:hidden，absolute 会被裁掉一圈。 */
 .bp-sub-panel {
   background: var(--c-page-body-bg, #fff);
