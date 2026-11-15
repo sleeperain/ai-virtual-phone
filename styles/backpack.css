@@ -14,8 +14,8 @@
   --bp-accent-border: rgba(52, 199, 89, 0.38);
 
   /* 背包弹窗的统一尺寸：宽固定、高固定为整屏的 2/3。
-     主弹窗、物品详情/新建、转送选择（含编辑器里的角色浮层）全部照这两个值走，
-     窗口缩放时一起变，但三个弹窗之间永远一样大。
+     主弹窗、物品详情/新建、转送选择、角色选择浮层全部照这两个值走，
+     窗口缩放时一起变，四个弹窗之间永远一样大（内容多了各自内部滚动）。
      overlay 本身是 fixed inset:0（视口尺寸），所以这里用 dvh 和它对齐。 */
   --bp-dialog-width: min(92vw, 450px);
   --bp-dialog-height: calc(100dvh / 3 * 2);
@@ -426,27 +426,31 @@
   font-weight: 500;
 }
 
-/* 浮层（转送 / 角色选择 / 可见角色）：沿用插件的浮层观感 */
+/* 浮层（角色选择 / 可见角色）：沿用插件的浮层观感。
+   必须 fixed 而不是 absolute：这一层是从「物品详情」里点出来的，父弹窗本身
+   是 2/3 屏高 + overflow:hidden，absolute 会被裁掉一圈；同时 z-index 要压过
+   .modal-overlay 的 9999，否则面板会跑到详情弹窗后面。
+   （转送选择器是组件内联的同一套做法，这里抽到 CSS 里统一。） */
 .bp-sub-overlay {
-  position: absolute;
+  position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.45);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 120;
+  z-index: 10000;
   padding: 20px;
 }
 
-/* 角色选择等浮层：和其它背包弹窗同一宽度、同一高度上限。
-   这一层是叠在物品详情里的（父级本身已经是 2/3 屏高），所以高度取
-   「撑满父级」和「2/3 屏」里更小的那个，既不会溢出父弹窗，也不会比它更高。 */
+/* 角色选择等浮层：和主弹窗、详情、转送选择完全同一尺寸（宽固定、高 2/3 屏）。
+   角色多的时候由 .bp-sub-list 自己滚。
+   遮罩改成 fixed 盖满视口（见 .bp-sub-overlay）：这一层是叠在物品详情里的，
+   父级本身就只有 2/3 屏高且带 overflow:hidden，高度按父级算会被裁掉一圈。 */
 .bp-sub-panel {
   background: var(--c-page-body-bg, #fff);
   border-radius: 12px;
   width: var(--bp-dialog-width);
-  height: 100%;
-  max-height: var(--bp-dialog-height);
+  height: var(--bp-dialog-height);
   overflow: hidden;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3);
   display: flex;
@@ -473,9 +477,15 @@
   margin-top: 3px;
 }
 
+/* 角色列表：占满面板剩下的高度，角色再多也是在这里面滑动选择。
+   min-height: 0 不能省——flex 子项默认按内容高度撑开，不加的话
+   列表会把底部「全选 / 取消 / 保存」挤出弹窗。 */
 .bp-sub-list {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   padding: 6px;
 }
 
