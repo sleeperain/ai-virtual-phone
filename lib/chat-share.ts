@@ -2,6 +2,8 @@ export type MusicChatSharePayload = {
     type: "music";
     title: string;
     artist: string;
+    /** 分享时这首歌的专辑封面（本地曲库的 coverUrl / 网易云的 picUrl）；拿不到就留空 */
+    coverUrl?: string;
 };
 
 export type XiaohongshuNoteChatSharePayload = {

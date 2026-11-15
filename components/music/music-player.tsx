@@ -471,7 +471,15 @@ export default function MusicPlayer() {
         setShareMenuAnchor(null);
         if (!player.currentTrack) return;
         window.dispatchEvent(new CustomEvent("open-mini-chat", {
-            detail: { share: { type: "music", title: player.currentTrack.title, artist: player.currentTrack.artist } },
+            detail: {
+                share: {
+                    type: "music",
+                    title: player.currentTrack.title,
+                    artist: player.currentTrack.artist,
+                    // 带上专辑封面：分享卡直接用这首歌的封面图，不用再回查
+                    ...(player.currentTrack.coverUrl ? { coverUrl: player.currentTrack.coverUrl } : {}),
+                },
+            },
         }));
     }, [player.currentTrack]);
 

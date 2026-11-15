@@ -210,6 +210,8 @@ export type ChatMessage = {
         adminMuteMinutes?: number;// 禁言时长（分钟）
         musicTitle?: string;      // 音乐标题
         musicArtist?: string;     // 音乐歌手
+        /** 音乐分享卡上的专辑封面（正方形小图）；历史消息没有这个字段，卡片按标题回查曲库 */
+        musicCoverUrl?: string;
         xiaohongshuAuthor?: string;       // 小红书分享作者
         xiaohongshuTitle?: string;        // 小红书分享标题
         xiaohongshuBody?: string;         // 小红书分享正文

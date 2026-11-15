@@ -2331,9 +2331,60 @@ function MediaFileBubble({
     );
 }
 
+// 音乐分享卡的专辑封面回查缓存：同一首歌只查一次，滚动进出聊天不重复请求
+const _musicCoverCache = new Map<string, string>();
+
+/**
+ * 音乐分享卡的封面：先认消息里存的，再回查本地曲库，最后（配了网易云时）按歌名搜一次。
+ * 三步都没结果就返回空串，卡片退回原来的音符图标——绝不因为封面缺失而空一块。
+ * 音频、乐库、搜索都是按需动态引入，聊天页不会为了这一张小图把它们打进首包。
+ */
+async function resolveMusicShareCover(title: string, artist: string): Promise<string> {
+    const cacheKey = `${title}|${artist}`;
+    const cached = _musicCoverCache.get(cacheKey);
+    if (cached !== undefined) return cached;
+    const remember = (url: string) => { _musicCoverCache.set(cacheKey, url); return url; };
+
+    // 1. 本地曲库：先要歌名 + 歌手都对上，退而只对歌名
+    try {
+        const { loadAllTracks } = await import("@/lib/music-storage");
+        const tracks = await loadAllTracks();
+        const hit = tracks.find(t => t.title === title && (!artist || t.artist === artist))
+            ?? tracks.find(t => t.title === title);
+        if (hit?.coverUrl) return remember(hit.coverUrl);
+    } catch { /* 本地曲库读不出来就当没有 */ }
+
+    // 2. 网易云：按「歌名 歌手」搜一次，优先同名同歌手的第一条
+    try {
+        const { isNeteaseConfigured, searchNetease } = await import("@/lib/music-service");
+        if (isNeteaseConfigured()) {
+            const results = await searchNetease(`${title} ${artist}`.trim(), 5);
+            const hit = results.find(r => r.name === title && (!artist || r.artists.includes(artist))) ?? results[0];
+            if (hit?.coverUrl) return remember(hit.coverUrl);
+        }
+    } catch { /* 没配网易云或请求失败：用占位图标 */ }
+
+    return remember("");
+}
+
 function MusicShareBubble({ msg, onPlay }: { msg: ChatMessage; onPlay?: (title: string, artist?: string) => void }) {
     const title = msg.mediaData?.musicTitle || "未知歌曲";
     const artist = msg.mediaData?.musicArtist || "";
+    const storedCover = msg.mediaData?.musicCoverUrl || "";
+    const [coverUrl, setCoverUrl] = useState(storedCover);
+    // 封面图裂掉（外链防盗链、链接过期）就退回音符图标，不留一块裂图
+    const [coverBroken, setCoverBroken] = useState(false);
+
+    useEffect(() => {
+        setCoverBroken(false);
+        if (storedCover) { setCoverUrl(storedCover); return; }
+        let cancelled = false;
+        resolveMusicShareCover(title, artist).then(url => { if (!cancelled) setCoverUrl(url); });
+        return () => { cancelled = true; };
+    }, [storedCover, title, artist]);
+
+    const showCover = Boolean(coverUrl) && !coverBroken;
+
     return (
         <div
             className="chat-music-share-card"
@@ -2341,10 +2392,22 @@ function MusicShareBubble({ msg, onPlay }: { msg: ChatMessage; onPlay?: (title: 
             onClick={(e) => { e.stopPropagation(); onPlay?.(title, artist || undefined); }}
         >
             <div className="chat-music-share-body">
-                <div className="chat-music-share-cover">
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--c-music-accent, #7c9a92)" strokeWidth="1.2">
-                        <path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" />
-                    </svg>
+                {/* 专辑封面：正方形、5px 圆角；查不到封面（或图裂了）才退回音符图标 */}
+                <div className="chat-music-share-cover" data-fallback={showCover ? undefined : ""}>
+                    {showCover ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                            src={coverUrl}
+                            alt=""
+                            loading="lazy"
+                            draggable={false}
+                            onError={() => setCoverBroken(true)}
+                        />
+                    ) : (
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--c-music-accent, #7c9a92)" strokeWidth="1.2">
+                            <path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" />
+                        </svg>
+                    )}
                 </div>
                 <div className="chat-music-share-info">
                     <div className="chat-music-share-title">{title}</div>

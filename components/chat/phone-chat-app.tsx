@@ -177,6 +177,8 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
                         musicTitle: sharePayload.title,
                         musicArtist: sharePayload.artist,
                         label: `${sharePayload.title} - ${sharePayload.artist}`,
+                        // 分享时顺手把封面存进消息，之后卡片不再依赖音乐 App 的当前状态
+                        ...(sharePayload.coverUrl ? { musicCoverUrl: sharePayload.coverUrl } : {}),
                     },
                 });
 
