@@ -442,19 +442,28 @@
   padding: 20px;
 }
 
-/* 角色选择等浮层：和主弹窗、详情、转送选择完全同一尺寸（宽固定、高 2/3 屏）。
-   角色多的时候由 .bp-sub-list 自己滚。
-   遮罩改成 fixed 盖满视口（见 .bp-sub-overlay）：这一层是叠在物品详情里的，
-   父级本身就只有 2/3 屏高且带 overflow:hidden，高度按父级算会被裁掉一圈。 */
+/* 角色选择浮层：「查看谁的背包」与「让哪些角色知道这件物品」共用这一套。
+   两者都是「列一串人、点一下选」的轻量列表，条目一般就几项，
+   所以不和主弹窗一样吃满 2/3 屏——宽度窄一档、高度跟着内容长，
+   超过上限才由 .bp-sub-list 自己滚。
+   遮罩是 fixed 盖满视口（见 .bp-sub-overlay）：这两层有时叠在物品详情里，
+   父级只有 2/3 屏高且带 overflow:hidden，absolute 会被裁掉一圈。 */
 .bp-sub-panel {
   background: var(--c-page-body-bg, #fff);
   border-radius: 12px;
-  width: var(--bp-dialog-width);
-  height: var(--bp-dialog-height);
+  width: min(78vw, 300px);
+  height: auto;
+  max-height: min(52dvh, 360px);
   overflow: hidden;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3);
   display: flex;
   flex-direction: column;
+}
+
+/* 头与脚固定在两端：列表再长，标题和「关闭 / 保存」也不会被挤走 */
+.bp-sub-panel .bp-sub-head,
+.bp-sub-panel .bp-sub-foot {
+  flex: 0 0 auto;
 }
 
 .bp-sub-head {
@@ -477,11 +486,11 @@
   margin-top: 3px;
 }
 
-/* 角色列表：占满面板剩下的高度，角色再多也是在这里面滑动选择。
-   min-height: 0 不能省——flex 子项默认按内容高度撑开，不加的话
-   列表会把底部「全选 / 取消 / 保存」挤出弹窗。 */
+/* 角色列表：条目少时按内容高度（面板跟着缩短），多了才在这个盒子里滑动浏览。
+   flex: 0 1 auto + min-height: 0 一起用，才能既「按内容长」又「超额可收缩滚动」；
+   只写 flex: 1 的话面板高度为 auto 时会把列表压成 0 高。 */
 .bp-sub-list {
-  flex: 1;
+  flex: 0 1 auto;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;

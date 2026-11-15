@@ -668,7 +668,9 @@ export function BackpackModal({
                                             setPickerOpen(false);
                                         }}
                                     >
-                                        <span className="bp-pick-name">{t.name}</span>
+                                        {/* 用 rawName 而不是 name：name 在存储层被拼成了
+                                            「【角色名】的背包」，这里只显示人名，和「可见角色」一致 */}
+                                        <span className="bp-pick-name">{t.rawName}</span>
                                     </div>
                                 ))}
                             </div>
