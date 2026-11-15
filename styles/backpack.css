@@ -12,13 +12,23 @@
   --bp-accent-hover: #2FB350;
   --bp-accent-light: rgba(52, 199, 89, 0.14);
   --bp-accent-border: rgba(52, 199, 89, 0.38);
+
+  /* 背包弹窗的统一尺寸：宽固定、高固定为整屏的 2/3。
+     主弹窗、物品详情/新建、转送选择（含编辑器里的角色浮层）全部照这两个值走，
+     窗口缩放时一起变，但三个弹窗之间永远一样大。
+     overlay 本身是 fixed inset:0（视口尺寸），所以这里用 dvh 和它对齐。 */
+  --bp-dialog-width: min(92vw, 450px);
+  --bp-dialog-height: calc(100dvh / 3 * 2);
 }
 
 .backpack-modal-box {
   display: flex;
   flex-direction: column;
-  width: min(92vw, 450px);
-  max-height: 84vh;
+  width: var(--bp-dialog-width);
+  /* 原来是 max-height: 84vh（跟着内容长），改成固定高：列表再少也是一整块，
+     内容多了由 .backpack-scroll-content 自己滚 */
+  height: var(--bp-dialog-height);
+  max-height: none;
   background: var(--c-page-body-bg, #ffffff);
   color: var(--c-text, #1f2937);
   border-radius: 16px;
@@ -26,6 +36,52 @@
   box-shadow: 0 12px 36px rgba(0, 0, 0, 0.22);
   font-family: inherit;
   position: relative;
+}
+
+/* 物品详情 / 新建（backpack-item-editor）：外观照搬插件，尺寸跟主弹窗统一 */
+.backpack-editor-box {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: var(--bp-dialog-width);
+  height: var(--bp-dialog-height);
+  background: var(--c-page-body-bg, #ffffff);
+  color: var(--c-text, #1f2937);
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
+  font-family: inherit;
+}
+
+/* 编辑器的表单区：占满弹窗剩下的高度，超出自己滚（原来写死 max-height:70vh，
+   在固定高度的弹窗里会和底部按钮抢空间） */
+.backpack-editor-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 转送 / 送给… 的选择面板 */
+.bp-picker-box {
+  display: flex;
+  flex-direction: column;
+  width: var(--bp-dialog-width);
+  height: var(--bp-dialog-height);
+  background: var(--c-page-body-bg, #fff);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3);
+}
+
+.bp-picker-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px;
 }
 
 .backpack-select-bar {
@@ -49,6 +105,9 @@
 
 .backpack-scroll-content {
   flex: 1;
+  /* 弹窗高度固定后，列表必须能被压缩到剩下的空间里自己滚，
+     否则 flex 子项按内容高度撑开会把底部按钮挤出弹窗 */
+  min-height: 0;
   overflow-y: auto;
   padding: 14px;
   display: flex;
@@ -379,16 +438,19 @@
   padding: 20px;
 }
 
+/* 角色选择等浮层：和其它背包弹窗同一宽度、同一高度上限。
+   这一层是叠在物品详情里的（父级本身已经是 2/3 屏高），所以高度取
+   「撑满父级」和「2/3 屏」里更小的那个，既不会溢出父弹窗，也不会比它更高。 */
 .bp-sub-panel {
   background: var(--c-page-body-bg, #fff);
   border-radius: 12px;
-  width: 100%;
-  max-width: 340px;
+  width: var(--bp-dialog-width);
+  height: 100%;
+  max-height: var(--bp-dialog-height);
   overflow: hidden;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3);
   display: flex;
   flex-direction: column;
-  max-height: 80vh;
 }
 
 .bp-sub-head {

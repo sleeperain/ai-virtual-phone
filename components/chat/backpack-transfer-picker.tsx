@@ -88,16 +88,10 @@ export function BackpackTransferPicker({
                 padding: 20,
             }}
         >
+            {/* 尺寸交给 .bp-picker-box：宽固定、高固定为整屏 2/3，和其它背包弹窗一致 */}
             <div
                 onClick={e => e.stopPropagation()}
-                style={{
-                    background: "var(--c-page-body-bg,#fff)",
-                    borderRadius: 12,
-                    width: "100%",
-                    maxWidth: 320,
-                    overflow: "hidden",
-                    boxShadow: "0 12px 32px rgba(0,0,0,0.3)",
-                }}
+                className="bp-picker-box"
             >
                 <div style={{
                     padding: "12px 14px",
@@ -111,7 +105,7 @@ export function BackpackTransferPicker({
                     </span>
                 </div>
 
-                <div style={{ maxHeight: 280, overflowY: "auto", padding: 6 }}>
+                <div className="bp-picker-list">
                     {candidates.length === 0 ? (
                         <div style={{
                             padding: "24px 12px",

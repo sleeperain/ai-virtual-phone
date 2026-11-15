@@ -252,21 +252,10 @@ export function BackpackItemEditor({
 
     return (
         <div className="modal-overlay" data-ui="modal" onClick={onClose}>
+            {/* 尺寸交给 .backpack-editor-box：宽固定、高固定为整屏 2/3，和主弹窗一致 */}
             <div
                 onClick={e => e.stopPropagation()}
-                style={{
-                    position: "relative",
-                    display: "flex",
-                    flexDirection: "column",
-                    width: "min(92vw, 450px)",
-                    maxHeight: "84vh",
-                    background: "var(--c-page-body-bg,#ffffff)",
-                    color: "var(--c-text,#1f2937)",
-                    borderRadius: 16,
-                    overflow: "hidden",
-                    boxShadow: "0 16px 40px rgba(0,0,0,0.22)",
-                    fontFamily: "inherit",
-                }}
+                className="backpack-editor-box"
             >
                 {/* 标题栏 */}
                 <div style={{
@@ -296,15 +285,8 @@ export function BackpackItemEditor({
                     </button>
                 </div>
 
-                {/* 内容 */}
-                <div style={{
-                    padding: "16px 18px",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 12,
-                    overflowY: "auto",
-                    maxHeight: "70vh",
-                }}>
+                {/* 内容：占满标题栏与底部按钮之间的高度，超出自己滚 */}
+                <div className="backpack-editor-body">
                     {/* 图标 + 名称 */}
                     <div style={{
                         display: "flex",

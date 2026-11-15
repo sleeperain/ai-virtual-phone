@@ -2162,13 +2162,13 @@
   padding: 12px;
 }
 
-/* 分享卡左侧：正方形专辑封面（5px 圆角）。
+/* 分享卡左侧：正方形专辑封面（1px 圆角，几乎是直角）。
    有封面图时整块就是图；查不到封面才显示音符图标（data-fallback）。 */
 .chat-music-share-cover {
   width: 44px;
   height: 44px;
   aspect-ratio: 1 / 1;
-  border-radius: 5px;
+  border-radius: 1px;
   overflow: hidden;
   background: var(--c-music-surface-solid, rgba(255,255,255,0.12));
   display: flex;

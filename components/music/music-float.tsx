@@ -153,6 +153,9 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
     const handlePointerMove = useCallback((e: React.PointerEvent) => {
         const d = dragRef.current;
         if (!d.active || d.pointerId !== e.pointerId) return;
+        // 锁定后一律不动位置：CSS 那边的 pointer-events: none 只是第一道闸，
+        // 一旦被自定义 CSS 覆盖、或上一次拖拽的指针捕获没收干净，move 还会进来。
+        if (locked) return;
         const dx = e.clientX - d.startX;
         const dy = e.clientY - d.startY;
         if (Math.abs(dx) > DRAG_START_THRESHOLD || Math.abs(dy) > DRAG_START_THRESHOLD) {
@@ -161,7 +164,7 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
         if (d.moved) {
             setPos(clampPos(d.origX + dx, d.origY + dy));
         }
-    }, [clampPos]);
+    }, [clampPos, locked]);
 
     /** 落位并记住：下次打开桌面歌词还在这个位置 */
     const commitPos = useCallback((next: { x: number; y: number }) => {
@@ -178,6 +181,9 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
         d.active = false;
         d.pointerId = null;
 
+        // 锁定状态：既不落位，也不展开/收起（位置留成锁定前那份）
+        if (locked) return;
+
         if (d.moved) {
             const dx = e.clientX - d.startX;
             const dy = e.clientY - d.startY;
@@ -185,20 +191,26 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
             return;
         }
 
-        if (!locked) {
-            // 点一下歌词 = 展开完整悬浮窗；再点一下 = 收起，只留两行歌词
-            setExpanded(prev => {
-                const next = !prev;
-                if (!next) setShowSettings(false);
-                // 展开 / 收起都会改高度，位置得重新夹一次别越界
-                requestAnimationFrame(() => setPos(p => clampPos(p.x, p.y)));
-                return next;
-            });
-        }
+        // 点一下歌词 = 展开完整悬浮窗；再点一下 = 收起，只留两行歌词
+        setExpanded(prev => {
+            const next = !prev;
+            if (!next) setShowSettings(false);
+            // 展开 / 收起都会改高度，位置得重新夹一次别越界
+            requestAnimationFrame(() => setPos(p => clampPos(p.x, p.y)));
+            return next;
+        });
     }, [clampPos, commitPos, locked]);
 
     const handleLockClick = useCallback((e: React.MouseEvent) => {
         e.stopPropagation();
+        // 上锁前先把可能还在进行的拖拽收干净：指针捕获不放掉的话，
+        // 锁定后手指继续滑动仍会触发 move 事件。
+        const d = dragRef.current;
+        if (d.active && d.pointerId !== null) {
+            try { floatRef.current?.releasePointerCapture?.(d.pointerId); } catch { /* ignore */ }
+        }
+        dragRef.current.active = false;
+        dragRef.current.pointerId = null;
         setLocked(true);
         setExpanded(false);
         setShowSettings(false);
