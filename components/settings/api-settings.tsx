@@ -755,37 +755,6 @@ export function ApiSettings() {
                                             </Alert>
                                         )}
 
-                                        <div
-                                            className="ui-toggle-row mt-2 overflow-visible"
-                                            style={{ display: "block", position: "relative", height: "auto", flexShrink: 0, padding: "14px 76px 14px 16px" }}
-                                        >
-                                            <span className="menu-label font-medium">启用原生工具调用</span>
-                                            <span className="menu-desc whitespace-normal break-words leading-[1.45]">
-                                                开启后自动选择该服务商可用的原生工具格式（当前：{getNativeToolProtocolLabel(config)}）；关闭后使用文本动作协议。
-                                            </span>
-                                            <span style={{ position: "absolute", top: 0, bottom: 0, right: 16, display: "flex", alignItems: "center" }}>
-                                                <Toggle
-                                                    checked={config.enableNativeTools !== false}
-                                                    onChange={(v) => updateConfig(config.id, { enableNativeTools: v })}
-                                                />
-                                            </span>
-                                        </div>
-
-                                        <div className="ui-toggle-row mt-2">
-                                            <span className="menu-label font-medium">启用图像识别</span>
-                                            <Toggle checked={config.enableImageRecognition} onChange={(v) => updateConfig(config.id, { enableImageRecognition: v })} />
-                                        </div>
-
-                                        <div className="ui-toggle-row mt-2">
-                                            <span className="flex min-w-0 flex-col">
-                                                <span className="menu-label font-medium">防胡言乱语</span>
-                                                <span className="menu-desc">防止没有用户输入时胡言乱语</span>
-                                            </span>
-                                            <Toggle
-                                                checked={config.preventEmptyGenerateRambling === true}
-                                                onChange={(v) => updateConfig(config.id, { preventEmptyGenerateRambling: v })}
-                                            />
-                                        </div>
                                         {/* 生成参数：一条配置一套（服务商 + 模型），不再放预设里 */}
                                         <div className="ui-collapsible mt-2 shrink-0">
                                             <div
@@ -858,10 +827,42 @@ export function ApiSettings() {
                                             )}
                                         </div>
 
-                                        {/* 置顶：排在生成参数后面 */}
+                                        {/* 置顶：紧跟生成参数 */}
                                         <div className="ui-toggle-row mt-2">
                                             <span className="menu-label font-medium">置顶</span>
                                             <Toggle checked={config.pinned === true} onChange={(v) => updateConfig(config.id, { pinned: v || undefined })} />
+                                        </div>
+
+                                        <div
+                                            className="ui-toggle-row mt-2 overflow-visible"
+                                            style={{ display: "block", position: "relative", height: "auto", flexShrink: 0, padding: "14px 76px 14px 16px" }}
+                                        >
+                                            <span className="menu-label font-medium">启用原生工具调用</span>
+                                            <span className="menu-desc whitespace-normal break-words leading-[1.45]">
+                                                开启后自动选择该服务商可用的原生工具格式（当前：{getNativeToolProtocolLabel(config)}）；关闭后使用文本动作协议。
+                                            </span>
+                                            <span style={{ position: "absolute", top: 0, bottom: 0, right: 16, display: "flex", alignItems: "center" }}>
+                                                <Toggle
+                                                    checked={config.enableNativeTools !== false}
+                                                    onChange={(v) => updateConfig(config.id, { enableNativeTools: v })}
+                                                />
+                                            </span>
+                                        </div>
+
+                                        <div className="ui-toggle-row mt-2">
+                                            <span className="menu-label font-medium">启用图像识别</span>
+                                            <Toggle checked={config.enableImageRecognition} onChange={(v) => updateConfig(config.id, { enableImageRecognition: v })} />
+                                        </div>
+
+                                        <div className="ui-toggle-row mt-2">
+                                            <span className="flex min-w-0 flex-col">
+                                                <span className="menu-label font-medium">防胡言乱语</span>
+                                                <span className="menu-desc">防止没有用户输入时胡言乱语</span>
+                                            </span>
+                                            <Toggle
+                                                checked={config.preventEmptyGenerateRambling === true}
+                                                onChange={(v) => updateConfig(config.id, { preventEmptyGenerateRambling: v })}
+                                            />
                                         </div>
 
                                         <button type="button" onClick={() => duplicateConfig(config)} className="ui-btn ui-btn-soft-action mt-2 w-full">
