@@ -5547,31 +5547,28 @@
    弹窗本体沿用 .music-settings-modal-dialog，这里只补内部布局。
    ═══════════════════════════════════════════════════════ */
 
-/* 弹窗自己兜住高度并做纵向布局：内容区滚动、底部按钮固定。
-   不依赖外层 .music-settings-modal-dialog 是否已经设了 flex / max-height。 */
+/* 弹窗本身沿用 .music-settings-modal-dialog（无内边距，间距全在 header / body 上），
+   这里只是把内容区的高度兜住：四项叠起来比 80% 高，得让中间那段滚。 */
 .music-upload-dialog {
-    display: flex;
-    flex-direction: column;
     max-height: 86dvh;
-    overflow: hidden;
 }
 
 .music-upload-body {
-    /* 四项叠起来比一屏高：让这一段滚，min-height:0 才允许 flex 子项真正收缩 */
-    flex: 1 1 auto;
+    /* min-height:0 才允许 flex 子项真正收缩，否则内容会把弹窗顶开、底部按钮跑出屏幕 */
     min-height: 0;
-    overflow-y: auto;
     overscroll-behavior: contain;
-    -webkit-overflow-scrolling: touch;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
+    /* 底部留白交给 .music-upload-foot，这里收窄一点，免得按钮上方空出一大截 */
+    padding-bottom: 16px;
 }
 
+/* 按钮区是 .music-settings-body 的兄弟节点（不在 body 里），
+   所以 body 的 padding: 0 20px 24px 它一条都吃不到——
+   不补的话「取消 / 添加到本地」会贴着弹窗左右和底部边缘。
+   这里沿用同一套 20px 节奏，底部再加上安全区。 */
 .music-upload-foot {
     flex-shrink: 0;
-    padding: 10px 0 0;
-    border-top: 1px solid var(--c-music-surface-solid, rgba(128, 128, 128, 0.16));
+    padding: 12px 20px calc(20px + env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid var(--c-music-surface-solid);
 }
 
 .music-upload-cover-row {
