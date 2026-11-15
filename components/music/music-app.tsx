@@ -3,8 +3,9 @@
 
 import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
 import {
-    loadAllTracks, saveTrack, deleteTrack,
-    generateTrackId, parseFilename, getAudioDuration,
+    // 新增曲目由 music-upload-dialog 写库（它才知道音频/歌词/封面三样各自的来源），
+    // 这里只负责读列表、删曲目，所以不再需要 saveTrack / parseFilename / getAudioDuration
+    loadAllTracks, deleteTrack,
     type MusicTrack,
 } from "@/lib/music-storage";
 import { useMusicControls, type MusicControlsValue } from "@/lib/music-context";
@@ -28,6 +29,7 @@ import {
 } from "@/lib/music-service";
 import { clearMusicCloudSyncData } from "@/lib/chat-engine";
 import MusicCommentsPage from "./music-comments";
+import MusicUploadDialog from "./music-upload-dialog";
 import {
     loadMusicBg, saveMusicBg, clearMusicBg, fileToCompressedDataUrl, appBgStyle,
     MUSIC_BG_EVENT, type MusicBgConfig, type MusicPlayerBgMode,
@@ -50,7 +52,8 @@ export default function MusicApp({ onClose }: Props) {
     const [playlistsLoading, setPlaylistsLoading] = useState(true);
     const [musicToast, setMusicToast] = useState<string | null>(null);
     const [pendingPlayTrackId, setPendingPlayTrackId] = useState<string | null>(null);
-    const fileInputRef = useRef<HTMLInputElement>(null);
+    /** 添加本地音乐的弹窗：歌曲 / 歌词 / 封面逐项选，不再是一口气多选文件 */
+    const [showUpload, setShowUpload] = useState(false);
     const musicToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const musicLoadingFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [bgCfg, setBgCfg] = useState<MusicBgConfig>(() => loadMusicBg());
@@ -150,24 +153,11 @@ export default function MusicApp({ onClose }: Props) {
         if (musicLoadingFallbackRef.current) clearTimeout(musicLoadingFallbackRef.current);
     }, []);
 
-    // ── Upload handler ──
-    const handleUpload = async (files: FileList | null) => {
-        if (!files || files.length === 0) return;
-        const newTracks: MusicTrack[] = [];
-        for (let i = 0; i < files.length; i++) {
-            const file = files[i];
-            const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
-            const audioExts = ["mp3", "m4a", "aac", "ogg", "wav", "flac", "wma", "opus", "webm"];
-            if (!file.type.startsWith("audio/") && !audioExts.includes(ext)) continue;
-            const { title, artist } = parseFilename(file.name);
-            const duration = await getAudioDuration(file);
-            const track: MusicTrack = { id: generateTrackId(), title, artist, duration, liked: false, addedAt: new Date().toISOString() };
-            await saveTrack(track, file);
-            newTracks.push(track);
-        }
-        if (newTracks.length > 0) setTracks(prev => [...newTracks, ...prev]);
-        if (fileInputRef.current) fileInputRef.current.value = "";
-    };
+    /** 弹窗里已经写库了，这里只负责把它并进列表（顺序与 loadAllTracks 一致：新的在前） */
+    const handleTrackAdded = useCallback((track: MusicTrack) => {
+        setTracks(prev => [track, ...prev.filter(t => t.id !== track.id)]);
+        showMusicToast(`已添加「${track.title}」`);
+    }, [showMusicToast]);
 
     const handlePlay = (track: MusicTrack) => {
         // Add this single track to front of queue (if not already in it)
@@ -372,9 +362,6 @@ export default function MusicApp({ onClose }: Props) {
 
             {tab === "local" && (
                 <>
-                    {/* Header Action: Upload Area inside the tab - Removed inline version */}
-                    <input ref={fileInputRef} type="file" accept="audio/*,.mp3,.m4a,.aac,.ogg,.wav,.flac" multiple hidden onChange={(e) => handleUpload(e.target.files)} />
-
                     {/* Song list */}
                     {loading ? (
                         <div className="music-empty"><div className="music-empty-text">加载中...</div></div>
@@ -406,7 +393,7 @@ export default function MusicApp({ onClose }: Props) {
                     </button>
                     <button
                         className="music-fab-add"
-                        onClick={() => fileInputRef.current?.click()}
+                        onClick={() => setShowUpload(true)}
                         title="添加本地音乐"
                         style={{ bottom: player.currentTrack ? "calc(146px + env(safe-area-inset-bottom, 0px))" : "calc(90px + env(safe-area-inset-bottom, 0px))" }}
                     >
@@ -495,6 +482,11 @@ export default function MusicApp({ onClose }: Props) {
                         <MusicSettingsTab onBack={() => setShowSettings(false)} onSaved={onSettingsSaved} />
                     </div>
                 </div>
+            )}
+
+            {/* Upload Modal */}
+            {showUpload && (
+                <MusicUploadDialog onClose={() => setShowUpload(false)} onAdded={handleTrackAdded} />
             )}
 
             {/* CSS Editor Modal */}

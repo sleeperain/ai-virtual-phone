@@ -5541,3 +5541,84 @@
 .mp-listen-exit:active {
     opacity: 0.6;
 }
+
+/* ═══════════════════════════════════════════════════════
+   本地音乐 · 逐项导入弹窗（歌曲 / 歌词 / 封面 / 曲目信息）
+   弹窗本体沿用 .music-settings-modal-dialog，这里只补内部布局。
+   ═══════════════════════════════════════════════════════ */
+
+/* 弹窗自己兜住高度并做纵向布局：内容区滚动、底部按钮固定。
+   不依赖外层 .music-settings-modal-dialog 是否已经设了 flex / max-height。 */
+.music-upload-dialog {
+    display: flex;
+    flex-direction: column;
+    max-height: 86dvh;
+    overflow: hidden;
+}
+
+.music-upload-body {
+    /* 四项叠起来比一屏高：让这一段滚，min-height:0 才允许 flex 子项真正收缩 */
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.music-upload-foot {
+    flex-shrink: 0;
+    padding: 10px 0 0;
+    border-top: 1px solid var(--c-music-surface-solid, rgba(128, 128, 128, 0.16));
+}
+
+.music-upload-cover-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-top: 8px;
+}
+
+.music-upload-cover {
+    width: 88px;
+    height: 88px;
+    flex-shrink: 0;
+    border-radius: 12px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--c-music-surface, rgba(255, 255, 255, 0.06));
+    border: 1px solid var(--c-music-surface-solid, rgba(255, 255, 255, 0.12));
+    color: var(--c-music-accent, #b49de8);
+    font-size: calc(26px * var(--app-text-scale, 1));
+}
+
+.music-upload-cover img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.music-upload-cover-side {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.music-upload-error {
+    margin-top: 8px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.28);
+    color: #ef4444;
+    font-size: calc(11.5px * var(--app-text-scale, 1));
+    line-height: 1.6;
+    word-break: break-word;
+}
