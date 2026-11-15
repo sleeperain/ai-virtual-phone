@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useContext } from "react";
-import { Plus, RefreshCw, Rss, AlertCircle, FileEdit, Trash2, X, Check, Copy, Folder, FolderPlus, FolderInput, Pencil, ChevronRight, ChevronDown, Pin, List, MoreHorizontal } from "lucide-react";
+import { Plus, RefreshCw, Rss, AlertCircle, FileEdit, Trash2, X, Check, Copy, Folder, FolderPlus, FolderInput, Pencil, ChevronRight, ChevronDown, Pin, MoreHorizontal } from "lucide-react";
 import { SettingsContext } from "../phone-settings-app";
 import { useLongPressReorder } from "./use-long-press-reorder";
 import { applyGroupOrder } from "@/lib/list-order";
@@ -722,7 +722,6 @@ export function ApiSettings() {
                                                         title="从已拉取列表选择模型"
                                                         aria-label="从已拉取列表选择模型"
                                                     >
-                                                        <List size={16} />
                                                         <span>模型列表</span>
                                                     </button>
                                                 )}
@@ -755,11 +754,6 @@ export function ApiSettings() {
                                                 <span className="break-all leading-[1.5]">{testResult[config.id].message}</span>
                                             </Alert>
                                         )}
-
-                                        <div className="ui-toggle-row mt-2">
-                                            <span className="menu-label font-medium">置顶</span>
-                                            <Toggle checked={config.pinned === true} onChange={(v) => updateConfig(config.id, { pinned: v || undefined })} />
-                                        </div>
 
                                         <div
                                             className="ui-toggle-row mt-2 overflow-visible"
@@ -862,6 +856,12 @@ export function ApiSettings() {
                                                     </div>
                                                 </div>
                                             )}
+                                        </div>
+
+                                        {/* 置顶：排在生成参数后面 */}
+                                        <div className="ui-toggle-row mt-2">
+                                            <span className="menu-label font-medium">置顶</span>
+                                            <Toggle checked={config.pinned === true} onChange={(v) => updateConfig(config.id, { pinned: v || undefined })} />
                                         </div>
 
                                         <button type="button" onClick={() => duplicateConfig(config)} className="ui-btn ui-btn-soft-action mt-2 w-full">
@@ -1012,30 +1012,39 @@ export function ApiSettings() {
                     : allModels;
                 return (
                     <div
-                        className="modal-overlay"
+                        className="modal-overlay modal-overlay-bottom"
                         data-ui="modal"
                         onClick={() => setModelPickerConfigId(null)}
                     >
                         <div
-                            className="binding-picker-dialog"
+                            className="modal-sheet"
+                            data-ui="modal-sheet"
                             role="dialog"
                             aria-modal="true"
                             aria-label="选择模型"
                             onClick={(event) => event.stopPropagation()}
                         >
-                            <div className="binding-picker-header">
+                            {/* 和「编辑配置」弹窗同一套头：× 关闭 / 标题 / ✓ 完成 */}
+                            <div className="modal-header" data-ui="modal-header">
                                 <button
                                     type="button"
-                                    className="binding-picker-icon-btn"
+                                    className="modal-header-btn modal-header-btn-muted"
                                     onClick={() => setModelPickerConfigId(null)}
                                     aria-label="关闭"
                                 >
-                                    <X size={17} />
+                                    <X size={18} />
                                 </button>
-                                <h3 className="binding-picker-title">选择模型</h3>
-                                <span className="binding-picker-header-spacer" />
+                                <span className="modal-header-title">选择模型</span>
+                                <button
+                                    type="button"
+                                    className="modal-header-btn modal-header-btn-action"
+                                    onClick={() => setModelPickerConfigId(null)}
+                                    aria-label="完成"
+                                >
+                                    <Check size={18} />
+                                </button>
                             </div>
-                            <div className="binding-picker-body">
+                            <div className="modal-body hide-scrollbar flex flex-col gap-4 pb-10" data-ui="modal-body">
                                 <div className="binding-sheet-list">
                                     <Input
                                         type="text"
@@ -1057,10 +1066,7 @@ export function ApiSettings() {
                                                     className="binding-sheet-option"
                                                     data-selected={selected}
                                                     aria-pressed={selected}
-                                                    onClick={() => {
-                                                        updateConfig(modelPickerConfigId, { defaultModel: modelName });
-                                                        setModelPickerConfigId(null);
-                                                    }}
+                                                    onClick={() => updateConfig(modelPickerConfigId, { defaultModel: modelName })}
                                                 >
                                                     <span className="binding-sheet-check">{selected && <Check size={15} />}</span>
                                                     <span className="binding-sheet-option-text">{modelName}</span>

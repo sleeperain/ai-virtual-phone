@@ -89,14 +89,25 @@ function formatTodoDeadline(todo: CalendarTodo): string {
     return `${todo.dueDate}${todo.dueTime ? ` ${todo.dueTime}` : " 当天"}`;
 }
 
+/** 弹窗右上角那颗键的形态：默认 ✓ 圆形图标键 / 按内容撑开的文字键 / 一组图标 */
+type ToolSheetActionVariant = "icon" | "wide" | "icons";
+/** 弹窗标题栏：center = 标题居中（插件原版）；leading = 标题跟着返回键靠左 */
+type ToolSheetHeaderAlign = "center" | "leading";
+
 /** 插件 openCalendarModal 那层壳：遮罩 + 居中白卡 + 「‹ 标题 ✓」。
- *  返回键回上一层，点遮罩直接关掉，和插件一样。 */
+ *  返回键回上一层，点遮罩直接关掉，和插件一样。
+ *  · headerAlign="leading"：标题不再居中，跟着返回键靠左，颜色降一档（备忘录查看 / 编辑两页）；
+ *  · actionVariant="wide"：右上角那颗按钮改成按内容撑开的文字键（完成 / DONE）；
+ *  · actionVariant="icons"：右上角换成「撤销 / 重做 / 分享 + 圈形三点」那组图标（备忘录查看页）。 */
 function ToolSheet({
     title,
     actionText = "✓",
     actionLabel = "保存",
     hideAction = false,
-    actionNode,
+    action,
+    actionVariant = "icon",
+    headerAlign = "center",
+    page,
     onBack,
     onAction,
     onDismiss,
@@ -106,36 +117,86 @@ function ToolSheet({
     actionText?: string;
     actionLabel?: string;
     hideAction?: boolean;
-    actionNode?: ReactNode;
+    action?: ReactNode;
+    actionVariant?: ToolSheetActionVariant;
+    headerAlign?: ToolSheetHeaderAlign;
+    /** 给 CSS 认这一页用的标记（memoList / memoView / memoEdit …） */
+    page?: string;
     onBack: () => void;
     onAction?: () => void;
     onDismiss: () => void;
     children: ReactNode;
 }) {
+    const actionClass = [
+        "modal-header-btn modal-header-btn-action",
+        actionVariant === "wide" ? "caltool-action-wide" : "",
+        actionVariant === "icons" ? "caltool-edit-action" : "",
+    ].filter(Boolean).join(" ");
     return (
         <div
             className="modal-overlay calendar-edit-modal-overlay caltool-overlay"
             onClick={(event) => { if (event.target === event.currentTarget) onDismiss(); }}
         >
-            <div className="calendar-edit-modal caltool-modal">
-                <div className="modal-header">
-                    <button type="button" className="modal-header-btn modal-header-btn-muted" aria-label="返回" onClick={onBack}>
-                        <ChevronLeft size={18} />
+            <div className="calendar-edit-modal caltool-modal" data-page={page}>
+                <div className="modal-header" data-align={headerAlign}>
+                    <button type="button" className="modal-header-btn modal-header-btn-muted caltool-back-btn" aria-label="返回" onClick={onBack}>
+                        <ChevronLeft className="caltool-back-icon" size={20} strokeWidth={2.4} aria-hidden="true" />
                     </button>
                     <span className="modal-header-title">{title}</span>
                     <button
                         type="button"
-                        className={`modal-header-btn modal-header-btn-action${actionNode ? " caltool-edit-action" : ""}`}
+                        className={actionClass}
                         aria-label={actionLabel}
                         style={hideAction ? { visibility: "hidden" } : undefined}
                         onClick={onAction}
                     >
-                        {actionNode ?? actionText}
+                        {action ?? actionText}
                     </button>
                 </div>
                 <div className="modal-body hide-scrollbar caltool-modal-body">{children}</div>
             </div>
         </div>
+    );
+}
+
+/** 右上角文字键上的那串字：plain = 完成（15px、跟主文字同色）；
+ *  caps = DONE（13px 粗体、拉开字距、降一档灰） */
+function HeaderTextAction({ children, variant = "plain" }: { children: ReactNode; variant?: "plain" | "caps" }) {
+    return <span className="caltool-header-text-action" data-variant={variant}>{children}</span>;
+}
+
+/** 备忘录查看页右上角：撤销 / 重做 / 分享 三个装饰图标 + 圈形三点（整颗按钮就是「进编辑页」） */
+function MemoViewToolCluster() {
+    return (
+        <span className="caltool-memo-view-tools">
+            <span className="caltool-memo-view-tool" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="1 4 1 10 7 10" />
+                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                </svg>
+            </span>
+            <span className="caltool-memo-view-tool" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="23 4 23 10 17 10" />
+                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                </svg>
+            </span>
+            <span className="caltool-memo-view-tool" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 15V3" />
+                    <path d="M8 7l4-4 4 4" />
+                    <path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4" />
+                </svg>
+            </span>
+            <span className="caltool-memo-view-dots" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="19" height="19" fill="none">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.6" />
+                    <circle cx="7.8" cy="12" r="1.4" fill="currentColor" />
+                    <circle cx="12" cy="12" r="1.4" fill="currentColor" />
+                    <circle cx="16.2" cy="12" r="1.4" fill="currentColor" />
+                </svg>
+            </span>
+        </span>
     );
 }
 
@@ -293,6 +354,7 @@ function MemoList({ nav, close }: { nav: CalendarToolNav; close: () => void }) {
     return (
         <ToolSheet
             title="备忘录"
+            page="memoList"
             actionText="＋"
             actionLabel="新建备忘录"
             onBack={close}
@@ -345,8 +407,11 @@ function MemoViewer({ memoId, nav, close }: { memoId: string; nav: CalendarToolN
     return (
         <ToolSheet
             title="备忘录"
+            page="memoView"
+            headerAlign="leading"
+            actionVariant="icons"
             actionLabel="编辑备忘录"
-            actionNode={<span className="caltool-pencil-icon" />}
+            action={<MemoViewToolCluster />}
             onBack={() => nav.go({ kind: "memoList" })}
             onDismiss={close}
             onAction={() => nav.go({ kind: "memoEdit", memoId })}
@@ -432,7 +497,17 @@ function MemoEditor({ memoId, nav, close }: { memoId: string | null; nav: Calend
     };
 
     return (
-        <ToolSheet title={source ? "编辑备忘录" : "新增备忘录"} onBack={back} onDismiss={close} onAction={save}>
+        <ToolSheet
+            title={source ? "编辑备忘录" : "新增备忘录"}
+            page="memoEdit"
+            headerAlign="leading"
+            actionVariant="wide"
+            actionLabel="完成"
+            action={<HeaderTextAction variant="caps">DONE</HeaderTextAction>}
+            onBack={back}
+            onDismiss={close}
+            onAction={save}
+        >
             <Field label="标题">
                 <input type="text" className="ui-input" value={title} placeholder="标题" onChange={(event) => setTitle(event.target.value)} />
             </Field>
@@ -722,7 +797,15 @@ function AccessPanel({ characters, nav, close }: { characters: CalendarToolChara
     };
 
     return (
-        <ToolSheet title="日历知情角色" actionLabel="保存角色权限" onBack={close} onDismiss={close} onAction={save}>
+        <ToolSheet
+            title="日历知情角色"
+            actionVariant="wide"
+            actionLabel="完成"
+            action={<HeaderTextAction>完成</HeaderTextAction>}
+            onBack={close}
+            onDismiss={close}
+            onAction={save}
+        >
             <p className="caltool-access-intro">
                 右侧勾选后，角色可以在聊天与剧情中读取日历并接收临近提醒。两个菜单分别控制待办完成后的回应方式，以及角色能否在私聊中修改日历；修改权限不包含任何删除操作。
             </p>

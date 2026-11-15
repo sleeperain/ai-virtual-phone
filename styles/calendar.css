@@ -2238,47 +2238,110 @@
   font-size: 12px;
 }
 
+/* ── 弹窗标题栏的三种排法 ──
+   默认：返回键 / 居中标题 / 右上角 ✓，和插件原版一致。
+   data-align="leading"：标题不再居中，跟着返回键靠左，字号降一档、颜色换成次级灰
+   （备忘录查看页与编辑页用）；返回箭头同时左挪 3px，视觉上贴住标题。 */
+.calendar-app-shell .caltool-modal .modal-header[data-align=leading] {
+  justify-content: flex-start;
+  gap: 0;
+}
+
+.calendar-app-shell .caltool-modal .modal-header[data-align=leading] .modal-header-title {
+  margin-left: -3px;
+  margin-right: auto;
+  font-size: calc(16px * var(--app-text-scale, 1));
+  font-weight: 500;
+  color: var(--c-calendar-sub);
+}
+
+/* 备忘录这几页的整体色调：箭头 / 图标用浅一档的灰，深色主题下会自动往下压，
+   不会因为 faint 太淡而在深色底上彻底看不见 */
+.calendar-app-shell .caltool-modal[data-page^=memo] .caltool-back-btn {
+  color: color-mix(in srgb, var(--c-calendar-sub) 30%, var(--c-calendar-faint));
+}
+
+.calendar-app-shell .caltool-modal[data-page^=memo] .caltool-back-icon {
+  transform: translateX(-3px);
+}
+
+/* ── 右上角文字键（完成 / DONE）：不再固定 28px 圆点，按字撑开 ── */
+.calendar-app-shell .caltool-modal .modal-header-btn.caltool-action-wide {
+  justify-content: flex-end;
+  width: auto;
+  min-width: 46px;
+  height: 28px;
+  padding: 0 4px;
+  border-radius: 0;
+  background: none;
+}
+
+.calendar-app-shell .caltool-header-text-action {
+  display: block;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* 知情角色弹窗的「完成」：跟正文同色、常规字重 */
+.calendar-app-shell .caltool-header-text-action[data-variant=plain] {
+  font-size: calc(15px * var(--app-text-scale, 1));
+  font-weight: 500;
+  color: var(--c-calendar-ink);
+}
+
+/* 备忘录编辑页的「DONE」：小一号、加粗、拉开字距、降一档灰 */
+.calendar-app-shell .caltool-header-text-action[data-variant=caps] {
+  font-size: calc(13px * var(--app-text-scale, 1));
+  font-weight: 600;
+  letter-spacing: 1.2px;
+  color: var(--c-calendar-sub);
+}
+
+/* ── 备忘录查看页右上角：撤销 / 重做 / 分享 三个装饰图标 + 圈形三点（真按钮区域） ──
+   整组从按钮右缘往左铺 124px：三点贴右侧 8px，三个装饰图标依次向左各隔 16px。
+   装饰图标只是画上去的，点击仍然落在三点那颗键上（就是「进编辑页」）。 */
 .calendar-app-shell .caltool-edit-action {
+  position: relative;
   display: flex!important;
   align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
+  justify-content: flex-end;
+  width: 28px;
+  height: 28px;
   padding: 0!important;
-  border-radius: 50%;
+  border-radius: 0;
+  background: none;
+  color: color-mix(in srgb, var(--c-calendar-sub) 30%, var(--c-calendar-faint));
+  overflow: visible;
 }
 
-.calendar-app-shell .caltool-pencil-icon {
-  position: relative;
-  display: block;
-  width: 8px;
-  height: 20px;
-  transform: rotate(42deg);
-  transform-origin: center;
-}
-
-.calendar-app-shell .caltool-pencil-icon:before {
-  content: "";
+.calendar-app-shell .caltool-memo-view-tools {
   position: absolute;
-  left: 1px;
-  top: 0;
-  width: 6px;
-  height: 15px;
-  border: 1.5px solid currentColor;
-  border-radius: 2px 2px 0 0;
-  box-sizing: border-box;
-  background: linear-gradient(to bottom,currentColor 0 2px,transparent 2px 100%);
+  top: 50%;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  transform: translateY(-50%);
 }
 
-.calendar-app-shell .caltool-pencil-icon:after {
-  content: "";
-  position: absolute;
-  left: 1px;
-  top: 14px;
-  width: 6px;
-  height: 6px;
-  background: currentColor;
-  clip-path: polygon(0 0,100% 0,50% 100%);
+.calendar-app-shell .caltool-memo-view-tool {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 19px;
+  height: 19px;
+  color: inherit;
+  /* 装饰图标不接管点击：点上去等于点那颗三点键 */
+  pointer-events: none;
+}
+
+.calendar-app-shell .caltool-memo-view-dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 19px;
+  height: 19px;
+  color: inherit;
 }
 
 /* 备忘录归档：列表最下面的折叠栏、归档的那几页淡一点；编辑页「删除」上面那颗灰色的归档按钮 */
