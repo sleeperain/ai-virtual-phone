@@ -3,14 +3,16 @@
 // components/music/music-upload-dialog.tsx
 // 本地音乐 · 逐项导入
 //
-// 一次只加一首，但每一项都能单独换来源：
-//   歌曲：本地文件，或音频直链（直链会先抓成 Blob 再存——播放层只认 IndexedDB 里的 blob）
+// 一次只加一首，每一项来源各自可选：
+//   歌曲：只收本地文件——「本地音乐」就该是真正存下来的东西，不吃链接时效和防盗链
 //   歌词：.lrc / .txt 文件，原样存文本（时间轴由播放层解析）
 //   封面：本地图片（压成 data URL 存）或图片直链（直接存地址）
 // 歌名 / 歌手 / 专辑都可以手改：写进去的就是最终落库的值。
 //
-// 为什么直链要先抓成 blob：lib/music-context 播本地曲目走 getAudioBlob(track.id)，
-// 库里没有 blob 就播不出声。只存一个远程地址的话，曲目会进列表但点了没反应。
+// 歌曲为什么不收链接：播放层的本地分支走 getAudioBlob(track.id)，只认库里的 blob；
+// 要支持链接就得给 MusicTrack 加远程地址字段、再改播放分支走流式。
+// 与其留一条「点了没声音」的入口，不如只留文件——链接播放的需求归网易云在线那套。
+// 封面是另一回事：它只用于展示，存个地址就能显示，不需要落成二进制。
 
 import { useRef, useState } from "react";
 import {
@@ -30,17 +32,6 @@ const COVER_MAX_DIM = 640;
 
 function extOf(name: string): string {
     return name.split(".").pop()?.toLowerCase() ?? "";
-}
-
-/** 直链最后一段当文件名：https://x.com/a/Artist%20-%20Title.mp3 → "Artist - Title.mp3" */
-function filenameFromUrl(raw: string): string {
-    try {
-        const url = new URL(raw);
-        const last = url.pathname.split("/").filter(Boolean).pop() || "";
-        return decodeURIComponent(last);
-    } catch {
-        return "";
-    }
 }
 
 function looksLikeHttpUrl(raw: string): boolean {
@@ -63,7 +54,6 @@ export default function MusicUploadDialog({ onClose, onAdded }: Props) {
     const [title, setTitle] = useState("");
     const [artist, setArtist] = useState("");
     const [album, setAlbum] = useState("");
-    const [audioUrlDraft, setAudioUrlDraft] = useState("");
     const [coverUrlDraft, setCoverUrlDraft] = useState("");
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
@@ -76,7 +66,7 @@ export default function MusicUploadDialog({ onClose, onAdded }: Props) {
 
     /**
      * 落定音频源。歌名/歌手只在用户还没手填时才用文件名覆盖——
-     * 先选文件、改好名字、再换一次链接时，不该把改好的名字冲掉。
+     * 先选一个文件、改好名字、又「重新选择」换了另一个时，不该把改好的名字冲掉。
      */
     const applyAudioSource = async (blob: Blob, name: string) => {
         const seconds = await getAudioDuration(blob).catch(() => 0);
@@ -105,35 +95,6 @@ export default function MusicUploadDialog({ onClose, onAdded }: Props) {
         } finally {
             setBusy(false);
             if (audioInputRef.current) audioInputRef.current.value = "";
-        }
-    };
-
-    const handleAudioUrl = async () => {
-        const raw = audioUrlDraft.trim();
-        if (!raw) return;
-        if (!looksLikeHttpUrl(raw)) {
-            setError("链接要以 http:// 或 https:// 开头");
-            return;
-        }
-        setError("");
-        setBusy(true);
-        try {
-            const resp = await fetch(raw);
-            if (!resp.ok) throw new Error(`链接返回 ${resp.status}`);
-            const blob = await resp.blob();
-            if (blob.size === 0) throw new Error("链接里没有内容");
-            // 有些服务器一律回 application/octet-stream，那种放行，交给解码去判断
-            if (blob.type && !blob.type.startsWith("audio/") && !blob.type.includes("octet-stream")) {
-                throw new Error("这个链接返回的不是音频");
-            }
-            await applyAudioSource(blob, filenameFromUrl(raw) || "未命名");
-            setAudioUrlDraft("");
-        } catch (e) {
-            const reason = e instanceof Error ? e.message : "网络错误";
-            // 跨域读不到是最常见的一类：站点没给 CORS 头，浏览器直接拦
-            setError(`解析失败：${reason}。多数站点不允许跨域读取音频，可以先把文件下载到本地再上传。`);
-        } finally {
-            setBusy(false);
         }
     };
 
@@ -194,7 +155,7 @@ export default function MusicUploadDialog({ onClose, onAdded }: Props) {
 
     const handleSave = async () => {
         if (!audioBlob) {
-            setError("先选择歌曲文件，或者用链接解析一首歌");
+            setError("先选择要添加的歌曲文件");
             return;
         }
         const fallback = parseFilename(audioName || "未命名");
@@ -260,26 +221,7 @@ export default function MusicUploadDialog({ onClose, onAdded }: Props) {
                         />
                         <div className="music-settings-actions">
                             <button className="music-settings-btn" onClick={() => audioInputRef.current?.click()} disabled={busy}>
-                                选择文件
-                            </button>
-                        </div>
-
-                        <div className="music-settings-actions">
-                            <input
-                                className="music-settings-input"
-                                placeholder="或填音频直链 https://…"
-                                value={audioUrlDraft}
-                                onChange={(e) => setAudioUrlDraft(e.target.value)}
-                                onKeyDown={(e) => { if (e.key === "Enter") void handleAudioUrl(); }}
-                                disabled={busy}
-                            />
-                            <button
-                                className="music-settings-btn"
-                                style={{ flex: "0 0 76px" }}
-                                onClick={() => { void handleAudioUrl(); }}
-                                disabled={busy || !audioUrlDraft.trim()}
-                            >
-                                {busy ? "解析中" : "解析"}
+                                {hasAudio ? "重新选择" : "选择文件"}
                             </button>
                         </div>
                     </div>
