@@ -647,7 +647,6 @@ export function ReadingShareDialog({
                 >
                     <div className="reading-share-loading-spinner" aria-hidden="true" />
                     <div className="reading-share-loading-text">加载中…</div>
-                    <div className="reading-share-loading-hint">轻点取消</div>
                 </div>,
                 document.body,
             )}

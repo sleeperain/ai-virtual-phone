@@ -6270,11 +6270,6 @@
   letter-spacing: 0.02em;
 }
 
-.reading-share-loading-hint {
-  font-size: calc(11px * var(--app-text-scale, 1));
-  opacity: 0.5;
-}
-
 @keyframes readingShareLoadingSpin {
   to { transform: rotate(360deg); }
 }
