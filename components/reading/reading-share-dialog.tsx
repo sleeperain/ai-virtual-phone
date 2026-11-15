@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ContentDialog } from "@/components/ui/modal";
 import { Toggle } from "@/components/ui/form";
 import { downloadFile } from "@/lib/download-utils";
@@ -358,6 +359,17 @@ export function ReadingShareDialog({
     /** 点预览图放大看。直接复用朋友圈/聊天那套全屏图片预览，手势和按钮都一致。 */
     const [zoomUrl, setZoomUrl] = useState<string | null>(null);
     const zoomUrlRef = useRef<string | null>(null);
+    /**
+     * 点开大图的等待态。
+     * 卡片是 1080×N 再放大几倍的高清画布，编码成 PNG 要一会儿（手机上尤其明显）。
+     * 原来这段等待什么都不画：遮罩按钮吃掉了点击，图又还没出来，
+     * 看着就是「点了没反应、页面还点不动」。现在点下去立刻铺遮罩 + 转圈，
+     * 出图后遮罩换成大图；等太久可以直接点一下取消。
+     */
+    const [zoomLoading, setZoomLoading] = useState(false);
+    /** 用户在加载中点了取消：编码完就丢掉结果，不再弹大图 */
+    const zoomCancelledRef = useRef(false);
+
     const closeZoom = () => {
         if (zoomUrlRef.current) {
             URL.revokeObjectURL(zoomUrlRef.current);
@@ -365,21 +377,37 @@ export function ReadingShareDialog({
         }
         setZoomUrl(null);
     };
+    /** 加载中取消：不打断已经把编码任务发出去的 canvas.toBlob（拦不住），
+     *  只是回来后丢掉结果。遮罩立刻收起，手感上就是「点了就关」。 */
+    const cancelZoomLoading = () => {
+        zoomCancelledRef.current = true;
+        setZoomLoading(false);
+    };
     const openZoom = async () => {
         const canvas = canvasRef.current;
         if (!canvas) {
-            // 原来这里直接 return，卡片还没画出来时点放大毫无反应
+            // 卡片还没画出来时点放大：给条提示，别让它毫无反应
             flashHint(rendering ? "摘抄卡片生成中，稍等一下" : "卡片还没生成好，稍后再试");
             return;
         }
+        if (zoomLoading) return;
+        zoomCancelledRef.current = false;
+        setZoomLoading(true);
         try {
             const blob = await readingShareCardToBlob(canvas);
+            if (zoomCancelledRef.current) {
+                zoomCancelledRef.current = false;
+                return;
+            }
             if (zoomUrlRef.current) URL.revokeObjectURL(zoomUrlRef.current);
             const url = URL.createObjectURL(blob);
             zoomUrlRef.current = url;
             setZoomUrl(url);
         } catch {
             // 预览打不开就维持小图，不影响存图
+            flashHint("预览打不开，可以直接保存图片");
+        } finally {
+            setZoomLoading(false);
         }
     };
     // 弹窗关掉时把预览用的 objectURL 放掉，否则一直占着内存
@@ -608,6 +636,21 @@ export function ReadingShareDialog({
                     </div>
                 )}
             </div>
+            {/* 放大前的等待遮罩：点下去立刻有反馈，不让界面像卡死。
+                走 portal 挂到 body，避免被弹窗的 transform / 滚动容器裁掉。 */}
+            {zoomLoading && typeof document !== "undefined" && createPortal(
+                <div
+                    className="reading-share-loading"
+                    onClick={cancelZoomLoading}
+                    role="status"
+                    aria-live="polite"
+                >
+                    <div className="reading-share-loading-spinner" aria-hidden="true" />
+                    <div className="reading-share-loading-text">加载中…</div>
+                    <div className="reading-share-loading-hint">轻点取消</div>
+                </div>,
+                document.body,
+            )}
             {zoomUrl && (
                 <MediaPreviewOverlay
                     imageUrl={zoomUrl}

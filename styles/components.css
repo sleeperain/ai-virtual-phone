@@ -6230,6 +6230,60 @@
   background: rgba(100,170,255,0.12);
   color: rgba(100,170,255,0.9);
 }
+/* ══════════════════════════════════════════
+   阅读 · 摘抄卡片「放大」的等待遮罩
+   点卡片到出大图之间，要把高清画布编码成 PNG，手机上要等一会儿。
+   这段时间原来什么都不显示，点击又被预览区的遮罩按钮吃掉，
+   看着就是「点了没反应、页面还点不动」。现在先铺这层，出图后换成大图。
+   z-index 高于全屏预览(10000)与全局 toast(10001)，加载期间不被压住。
+   ══════════════════════════════════════════ */
+.reading-share-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 10002;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  animation: readingShareLoadingFadeIn 160ms ease-out;
+  /* 整层就是「取消」按钮，点哪儿都能关 */
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.reading-share-loading-spinner {
+  width: 36px;
+  height: 36px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2.5px solid rgba(255, 255, 255, 0.22);
+  border-top-color: rgba(255, 255, 255, 0.95);
+  animation: readingShareLoadingSpin 0.85s linear infinite;
+}
+
+.reading-share-loading-text {
+  font-size: calc(13px * var(--app-text-scale, 1));
+  opacity: 0.88;
+  letter-spacing: 0.02em;
+}
+
+.reading-share-loading-hint {
+  font-size: calc(11px * var(--app-text-scale, 1));
+  opacity: 0.5;
+}
+
+@keyframes readingShareLoadingSpin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes readingShareLoadingFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
 .pv-msg-badges {
   display: flex;
   flex-wrap: wrap;
