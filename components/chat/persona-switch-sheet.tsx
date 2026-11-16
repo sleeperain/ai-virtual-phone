@@ -62,11 +62,15 @@ export function AccountManagePage({ onBack, onSwitched }: AccountManagePageProps
     }, []);
 
     const handlePick = (identity: UserIdentity) => {
-        // 点当前账号：什么都不用做，留在本页
-        if (identity.id === activeId) return;
-        if (!switchActiveIdentity(identity.id)) return;
-        setActiveId(identity.id);
-        onSwitched?.(identity);
+        // 点当前账号：也直接返回——用户点条目就是「我要用这个」的意思，
+        // 留在本页会让人以为没生效。
+        if (identity.id !== activeId) {
+            if (!switchActiveIdentity(identity.id)) return;
+            setActiveId(identity.id);
+            onSwitched?.(identity);
+        }
+        // 切换后立刻回主页：底栏由本组件的卸载清理逻辑恢复
+        onBack();
     };
 
     return (
