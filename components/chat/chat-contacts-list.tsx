@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo, useDeferredValue, useSyncExternalStore } from "react";
 import { loadChatContacts, ChatContact, createOrGetSession, ChatSession, addChatContact, pushChatMessage, loadChatMessages } from "@/lib/chat-storage";
 import { resolveUserIdentity } from "@/lib/settings-storage";
+import { resolveActiveIdentity, isContactVisibleInActivePersona, PERSONA_SWITCHED_EVENT } from "@/lib/persona-scope";
 import { PENDING_REPLY_PREFIX } from "@/lib/friend-request-engine";
 import { loadCharacters } from "@/lib/character-storage";
 import { Character } from "@/lib/character-types";
@@ -57,7 +58,8 @@ export function ChatContactsList({ onCloseApp, onSelectSession, onSelectMascot, 
     const mascotSettings = useSyncExternalStore(subscribeMascotSettings, getMascotSettingsSnapshot, getMascotSettingsSnapshot);
     const [mascotAvatarUrl, setMascotAvatarUrl] = useState(mascotSettings.avatarImage || DEFAULT_MASCOT_AVATAR);
 
-    const identity = useMemo(() => resolveUserIdentity(), []);
+    // 当前账号：切换账号后通讯录列表与「我是谁」这句问候都要跟着变
+    const [identity, setIdentity] = useState(() => resolveActiveIdentity());
     const chars = useMemo(() => loadCharacters(), []);
     const deferredContactFilter = useDeferredValue(contactFilter);
     const bodyRef = useRef<HTMLDivElement>(null);
@@ -105,7 +107,10 @@ export function ChatContactsList({ onCloseApp, onSelectSession, onSelectMascot, 
         const enriched = rawContacts.map(c => ({
             ...c,
             char: chars.find(ch => ch.id === c.characterId)
-        })).filter(c => c.char);
+        }))
+            .filter(c => c.char)
+            // 按当前账号过滤通讯录：角色归哪个账号由「绑定 → 用户身份」决定
+            .filter(c => isContactVisibleInActivePersona(c));
         enriched.sort((a, b) => (a.char?.name || "").localeCompare(b.char?.name || ""));
         setContacts(enriched);
 
@@ -125,6 +130,21 @@ export function ChatContactsList({ onCloseApp, onSelectSession, onSelectMascot, 
         const handler = () => refresh();
         window.addEventListener("friend-requests-updated", handler);
         return () => window.removeEventListener("friend-requests-updated", handler);
+    }, [refresh]);
+
+    // 切换账号 / 改角色绑定：通讯录可见范围变了，顶部「我是谁」也要换
+    useEffect(() => {
+        const onPersonaChanged = () => {
+            setIdentity(resolveActiveIdentity());
+            // scope 缓存已在 persona-scope 里失效，这里重新取一遍列表
+            refresh();
+        };
+        window.addEventListener(PERSONA_SWITCHED_EVENT, onPersonaChanged);
+        window.addEventListener("settings-bindings-updated", onPersonaChanged);
+        return () => {
+            window.removeEventListener(PERSONA_SWITCHED_EVENT, onPersonaChanged);
+            window.removeEventListener("settings-bindings-updated", onPersonaChanged);
+        };
     }, [refresh]);
 
     /** Group contacts by pinyin initial */
@@ -262,7 +282,9 @@ export function ChatContactsList({ onCloseApp, onSelectSession, onSelectMascot, 
                 {/* Contacts list grouped by pinyin initial */}
                 {contacts.length === 0 ? (
                     <div className="ui-empty">
-                        <span className="menu-desc">暂无联系人，去消息页右上角添加吧</span>
+                        <span className="menu-desc">
+                            {identity?.name ? `「${identity.name}」下暂无联系人，去消息页右上角添加吧` : "暂无联系人，去消息页右上角添加吧"}
+                        </span>
                     </div>
                 ) : (
                     <div className="flex flex-col gap-1">

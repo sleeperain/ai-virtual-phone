@@ -1231,6 +1231,9 @@ export function loadUserIdentities(): UserIdentity[] {
 export function saveUserIdentities(identities: UserIdentity[]): void {
     if (typeof window === "undefined") return;
     kvSet(USER_IDENTITIES_KEY, JSON.stringify(identities));
+    // 面具（用户身份）增删改名/删除会影响「当前账号」的解析和可见角色范围，
+    // 广播一次让列表与 scope 缓存跟着刷新（lib/persona-scope.ts 监听）
+    window.dispatchEvent(new CustomEvent("settings-identities-updated"));
 }
 
 /**

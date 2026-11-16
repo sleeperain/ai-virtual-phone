@@ -6,6 +6,7 @@ import { loadChatSessions, loadChatContacts, ChatSession, createOrGetSession, cr
 import { loadCharacters } from "@/lib/character-storage";
 import { Character } from "@/lib/character-types";
 import { resolveUserIdentity } from "@/lib/settings-storage";
+import { resolveActiveIdentity, isSessionVisibleInActivePersona, PERSONA_SWITCHED_EVENT, getActivePersonaName, filterCharactersForActivePersona } from "@/lib/persona-scope";
 import type { UserIdentity } from "@/components/settings/user-identity";
 import { PENDING_REPLY_PREFIX } from "@/lib/friend-request-engine";
 import { clearRequestsForCharacter, dispatchFriendRequestUpdated } from "@/lib/friend-request-storage";
@@ -123,7 +124,20 @@ export function ChatMessageList({ onCloseApp, activeSession, onSelectSession, on
     const [mascotAvatarUrl, setMascotAvatarUrl] = useState(mascotSettings.avatarImage || DEFAULT_MASCOT_AVATAR);
 
     useEffect(() => {
-        setIdentity(resolveUserIdentity());
+        // 顶部头像/昵称跟随「当前账号」；切换账号后一起变
+        setIdentity(resolveActiveIdentity());
+        const onPersonaSwitched = () => {
+            setIdentity(resolveActiveIdentity());
+            // 换账号等于换了一批可见角色，列表要重新取一次
+            setSessions(loadChatSessions());
+        };
+        window.addEventListener(PERSONA_SWITCHED_EVENT, onPersonaSwitched);
+        // 改角色绑定（这个角色归谁）同样会改变可见范围
+        window.addEventListener("settings-bindings-updated", onPersonaSwitched);
+        return () => {
+            window.removeEventListener(PERSONA_SWITCHED_EVENT, onPersonaSwitched);
+            window.removeEventListener("settings-bindings-updated", onPersonaSwitched);
+        };
     }, []);
 
     useEffect(() => {
@@ -290,6 +304,9 @@ export function ChatMessageList({ onCloseApp, activeSession, onSelectSession, on
                             .filter(s => {
                                 if (!(s.isGroup || contactIds.has(s.contactId))) return false;
                                 if (!hasSessionListContent(s.id)) return false;
+                                // 按当前账号过滤：角色归属由「绑定 → 用户身份」决定
+                                //（群聊只要有一个成员属于当前账号就显示）
+                                if (!isSessionVisibleInActivePersona(s)) return false;
                                 if (listTab === "private" && s.isGroup) return false;
                                 if (listTab === "group" && !s.isGroup) return false;
                                 if (!keyword) return true;
@@ -312,7 +329,7 @@ export function ChatMessageList({ onCloseApp, activeSession, onSelectSession, on
                             if (!showMascot && regularItems.length === 0) {
                                 return (
                                     <div className="px-5 py-10 text-center text-[var(--c-icon)] ts-14">
-                                        暂无聊天记录，点击右上角「+」发起聊天
+                                        「{getActivePersonaName()}」下暂无聊天记录，点击右上角「+」发起聊天
                                     </div>
                                 );
                             }
@@ -384,7 +401,9 @@ export function ChatMessageList({ onCloseApp, activeSession, onSelectSession, on
                             {/* 备选：已有角色卡但还不在联系人里，点击直接填入号码 */}
                             {(() => {
                                 const contactIds = new Set(loadChatContacts().map(c => c.characterId));
-                                const candidates = loadCharacters().filter(c => !contactIds.has(c.id));
+                                // 候选也按当前账号过滤：别的账号的「我」不该出现在这里
+                                const candidates = filterCharactersForActivePersona(loadCharacters())
+                                    .filter(c => !contactIds.has(c.id));
                                 if (candidates.length === 0 && mascotSettings.chatEnabled) return null;
                                 return (
                                     <div className="menu-group" style={{ marginTop: 12 }}>

@@ -20,6 +20,8 @@ import { Toggle } from "@/components/ui/form";
 import { StickerManager } from "./sticker-manager";
 import { ChatPluginManager } from "./chat-plugin-manager";
 import { ChatPluginPageBoundary } from "./chat-plugin-page-boundary";
+import { PersonaSwitchSheet } from "./persona-switch-sheet";
+import { resolveActiveIdentity, PERSONA_SWITCHED_EVENT } from "@/lib/persona-scope";
 import { WalletPanel } from "./wallet-panel";
 import { loadMomentsConfig, saveMomentsConfig, DEFAULT_MOMENTS_CONFIG, type MomentsInteractionConfig, getAllPosts } from "@/lib/moments-storage";
 import { loadChatContacts } from "@/lib/chat-storage";
@@ -158,6 +160,8 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
     const [showCSSEditor, setShowCSSEditor] = useState(false);
     const [showMomentsSettings, setShowMomentsSettings] = useState(false);
     const [showWalletPanel, setShowWalletPanel] = useState(false);
+    // 切换账号（用户面具）弹窗：从顶部头像点出来
+    const [showPersonaSwitch, setShowPersonaSwitch] = useState(false);
     const [identity, setIdentity] = useState<UserIdentity | null>(null);
     const [notifEnabled, setNotifEnabled] = useState(false);
     const [notifHint, setNotifHint] = useState<string | null>(null);
@@ -175,7 +179,14 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
     });
 
     useEffect(() => {
-        setIdentity(resolveUserIdentity());
+        // 主页显示的是「当前生效的面具」——切换账号后这里要跟着变
+        setIdentity(resolveActiveIdentity());
+        const onPersonaSwitched = () => setIdentity(resolveActiveIdentity());
+        window.addEventListener(PERSONA_SWITCHED_EVENT, onPersonaSwitched);
+        return () => window.removeEventListener(PERSONA_SWITCHED_EVENT, onPersonaSwitched);
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    useEffect(() => {
         const settings = loadChatAppSettings();
         const browserGranted = isBrowserNotificationGranted();
         setNotifEnabled(settings.browserNotificationsEnabled === true && browserGranted);
@@ -326,16 +337,36 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
                     
                     {/* User Info & Stats Block */}
                     <div className="flex items-center gap-5 px-6 pt-2 pb-4">
-                        {/* Avatar */}
+                        {/* Avatar：点它切换账号（用户面具）。
+                            只换「当前用哪个面具」，角色归属仍由设置里的绑定决定。 */}
                         <div className="relative shrink-0">
-                            <div className="w-[84px] h-[84px] rounded-full overflow-hidden bg-[var(--c-card)] border-2 border-white/50 shadow-sm flex items-center justify-center relative"
-                                 style={{ boxShadow: "0 4px 20px rgba(0,0,0,0.06)" }}>
+                            <button
+                                type="button"
+                                onClick={() => setShowPersonaSwitch(true)}
+                                aria-label="切换账号"
+                                title="切换账号"
+                                className="w-[84px] h-[84px] rounded-full overflow-hidden bg-[var(--c-card)] border-2 border-white/50 shadow-sm flex items-center justify-center relative"
+                                style={{ boxShadow: "0 4px 20px rgba(0,0,0,0.06)", padding: 0, cursor: "pointer" }}
+                            >
                                 {identity?.avatarUrl ? (
                                     <img src={identity.avatarUrl} alt="User Avatar" className="w-full h-full object-cover" />
                                 ) : (
                                     <User size={38} color="var(--c-icon)" />
                                 )}
-                            </div>
+                            </button>
+                            {/* 角标：告诉用户这里点得动 */}
+                            <span
+                                className="absolute right-0 bottom-0 w-[22px] h-[22px] rounded-full flex items-center justify-center"
+                                style={{
+                                    background: "var(--c-card)",
+                                    border: "1px solid color-mix(in srgb, var(--c-icon) 25%, transparent)",
+                                    color: "var(--c-icon)",
+                                    pointerEvents: "none",
+                                }}
+                                aria-hidden
+                            >
+                                <ChevronRight size={13} strokeWidth={2.2} />
+                            </span>
                         </div>
 
                         {/* Info & Stats */}
@@ -481,6 +512,11 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
                         </button>
                     </div>
                 </div>
+
+                {/* 切换账号：点顶部头像打开，列表只有头像和昵称 */}
+                {showPersonaSwitch && (
+                    <PersonaSwitchSheet onClose={() => setShowPersonaSwitch(false)} />
+                )}
             </PageShell>
         </>
     );
@@ -1176,6 +1212,7 @@ function InlineMomentsSettings({ onBack }: { onBack: () => void }) {
                     </div>
                 </div>
             )}
+
         </PageShell>
     );
 }
