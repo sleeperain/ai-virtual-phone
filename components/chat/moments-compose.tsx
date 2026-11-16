@@ -5,7 +5,7 @@ import { loadCharacters } from "@/lib/character-storage";
 import { loadChatContacts } from "@/lib/chat-storage";
 import { addMomentPost } from "@/lib/moments-storage";
 import { onUserPost } from "@/lib/moments-engine";
-import { resolveUserIdentity } from "@/lib/settings-storage";
+import { resolveActiveIdentityId } from "@/lib/persona-scope";
 import { saveChatImageToIndexedDB, getChatImageFromIndexedDB } from "@/lib/chat-asset-storage";
 import { ChatFallbackAvatar } from "./chat-fallback-avatar";
 
@@ -169,6 +169,8 @@ export function MomentsCompose({ onClose, onPublished }: Props) {
         const post = addMomentPost({
             authorType: "user",
             authorId: "user",
+            // 记下是哪个账号发的：切换账号后，别的账号看不到这条
+            authorIdentityId: resolveActiveIdentityId() || undefined,
             content,
             photoUrl: photoAssetId ? `asset://${photoAssetId}` : undefined,
             photoDescription: photoDesc.trim() || undefined,

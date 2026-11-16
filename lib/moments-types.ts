@@ -5,6 +5,13 @@ export type MomentPost = {
     id: string;                     // "moment_timestamp_random"
     authorType: "user" | "character";
     authorId: string;               // characterId or "user"
+    /**
+     * 用户自己发的帖子是哪个「用户面具（账号）」发的。
+     * 只有 authorType === "user" 时有意义；角色帖子为空。
+     * 早期数据没有这个字段，读取时统一按第一个账号处理
+     * （见 lib/persona-scope.ts 的 resolveUserPostIdentityId）。
+     */
+    authorIdentityId?: string;
     content: string;
     photoUrl?: string;              // user-uploaded base64 image
     photoDescription?: string;      // AI-generated photo description (for placeholder rendering)

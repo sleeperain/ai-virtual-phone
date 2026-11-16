@@ -35,10 +35,12 @@
   background: rgba(128, 128, 128, 0.09);
 }
 
-/* 当前正在用的账号：淡绿底 + 描边，和设置里的选中态一致 */
+/* 当前正在用的账号：中性灰底 + 描边。
+   故意不用绿色：切换账号不是「成功/可用」的状态，绿色在这里会显得像在提示
+   「已启用/已保存」，和实际语义（只是当前选中）不符。 */
 .persona-switch-row.is-active {
-  background: color-mix(in srgb, var(--c-success) 12%, transparent);
-  border-color: color-mix(in srgb, var(--c-success) 38%, transparent);
+  background: rgba(128, 128, 128, 0.12);
+  border-color: rgba(128, 128, 128, 0.28);
 }
 
 .persona-switch-avatar {
@@ -74,10 +76,16 @@
   white-space: nowrap;
 }
 
-.persona-switch-check {
+/* 「当前账号」标注：灰底灰字的轻量小标签，不用图标、不用彩色 */
+.persona-switch-badge {
   flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--c-success);
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(128, 128, 128, 0.16);
+  color: var(--c-text);
+  font-size: calc(10px * var(--app-text-scale, 1));
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  opacity: 0.85;
 }

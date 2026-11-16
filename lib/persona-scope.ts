@@ -198,3 +198,25 @@ export function filterCharactersForActivePersona<T extends { id?: string }>(char
 export function getActivePersonaName(): string {
     return resolveActiveIdentity()?.name || "当前账号";
 }
+
+// ── 用户自己发的朋友圈归属 ───────────────────────────────
+//
+// 角色帖归属角色（走上面的绑定判定），用户帖归属「发它的那个账号」。
+// 发帖时会把自己的面具 id 记在 post.authorIdentityId 上。
+// 早期数据没有这个字段：统一算作**第一个账号**——启用切换账号之前，
+// 所有人都相当于只有这一个「我」，这样归入最不容易出意外。
+
+/** 一条用户帖属于哪个账号（没打标的旧帖归第一个账号） */
+export function resolveUserPostIdentityId(authorIdentityId?: string): string {
+    const tagged = String(authorIdentityId ?? "").trim();
+    if (tagged) return tagged;
+    return loadIdentities()[0]?.id || "";
+}
+
+/** 用户帖是否属于当前账号 */
+export function isUserPostVisibleInActivePersona(post: { authorIdentityId?: string }): boolean {
+    const active = resolveActiveIdentityId();
+    // 一个面具都没有时不过滤
+    if (!active) return true;
+    return resolveUserPostIdentityId(post.authorIdentityId) === active;
+}

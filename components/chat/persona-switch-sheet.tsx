@@ -14,7 +14,7 @@
 // 不在切换的地方重复配置，避免同一件事有两个入口。
 
 import { useEffect, useState } from "react";
-import { Check, User } from "lucide-react";
+import { User } from "lucide-react";
 import { BottomSheet } from "@/components/ui/modal";
 import type { UserIdentity } from "@/components/settings/user-identity";
 import {
@@ -100,10 +100,9 @@ export function PersonaSwitchSheet({ onClose, onSwitched }: PersonaSwitchSheetPr
                                 <span className="persona-switch-name">
                                     {identity.name || "未命名账号"}
                                 </span>
+                                {/* 用文字标注代替打勾：一眼看出这是「正在用的那个」 */}
                                 {active && (
-                                    <span className="persona-switch-check" aria-hidden>
-                                        <Check size={18} strokeWidth={2.2} />
-                                    </span>
+                                    <span className="persona-switch-badge">当前账号</span>
                                 )}
                             </button>
                         );

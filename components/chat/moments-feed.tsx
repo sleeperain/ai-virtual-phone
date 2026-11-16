@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useLayoutEffect, useRef } from "react";
 import { getAllPosts, deleteMomentPost, getUnreadMomentsNotifications, saveMomentsLastSeen, addMomentComment } from "@/lib/moments-storage";
 import { loadChatContacts } from "@/lib/chat-storage";
-import { isCharacterInActivePersona, resolveActiveIdentity, PERSONA_SWITCHED_EVENT } from "@/lib/persona-scope";
+import { isCharacterInActivePersona, isUserPostVisibleInActivePersona, resolveActiveIdentity, PERSONA_SWITCHED_EVENT } from "@/lib/persona-scope";
 import { saveChatImageToIndexedDB, getChatImageFromIndexedDB } from "@/lib/chat-asset-storage";
 import type { MomentComment, MomentPost } from "@/lib/moments-types";
 import { MomentPostCard } from "./moment-post-card";
@@ -102,10 +102,11 @@ export function MomentsFeed({ onCloseApp }: MomentsFeedProps) {
     const refreshPosts = useCallback(() => {
         const contactIds = new Set(loadChatContacts().map(c => c.characterId));
         setPosts(getAllPosts().filter(p =>
-            // 自己发的照常显示；角色的动态按当前账号过滤——
-            // 和消息/联系人同一套归属判定（角色绑定里的 userIdentityId）
+            // 自己发的：按「是哪个账号发的」过滤，别的账号发的自己看不见
+            // 角色的：必须是联系人，且角色属于当前账号
+            //（和消息/联系人同一套归属判定，见 lib/persona-scope.ts）
             p.authorType === "user"
-                ? true
+                ? isUserPostVisibleInActivePersona(p)
                 : contactIds.has(p.authorId) && isCharacterInActivePersona(p.authorId),
         ));
         setUnreadNotifs(getUnreadMomentsNotifications());
