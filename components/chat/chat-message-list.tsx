@@ -5,6 +5,7 @@ import { ChevronLeft } from "lucide-react";
 import { loadChatSessions, loadChatContacts, ChatSession, createOrGetSession, createGroupSession, pushChatMessage, addChatContact, loadChatMessages, getLastVisibleSessionMessage, getChatMessagePreview } from "@/lib/chat-storage";
 import { loadCharacters } from "@/lib/character-storage";
 import { Character } from "@/lib/character-types";
+import { resolveUserIdentity } from "@/lib/settings-storage";
 import { resolveActiveIdentity, isSessionVisibleInActivePersona, PERSONA_SWITCHED_EVENT, getActivePersonaName, filterCharactersForActivePersona } from "@/lib/persona-scope";
 import type { UserIdentity } from "@/components/settings/user-identity";
 import { PENDING_REPLY_PREFIX } from "@/lib/friend-request-engine";

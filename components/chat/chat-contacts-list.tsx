@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useRef, useMemo, useDeferredValue, useSyncExternalStore } from "react";
 import { loadChatContacts, ChatContact, createOrGetSession, ChatSession, addChatContact, pushChatMessage, loadChatMessages } from "@/lib/chat-storage";
+import { resolveUserIdentity } from "@/lib/settings-storage";
 import { resolveActiveIdentity, isContactVisibleInActivePersona, PERSONA_SWITCHED_EVENT } from "@/lib/persona-scope";
 import { PENDING_REPLY_PREFIX } from "@/lib/friend-request-engine";
 import { loadCharacters } from "@/lib/character-storage";
