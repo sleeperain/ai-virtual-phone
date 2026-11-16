@@ -1,0 +1,83 @@
+/* ══════════════════════════════════════════
+   切换账号（用户面具）· components/chat/persona-switch-sheet.tsx
+   外层复用 BottomSheet 的 .modal-sheet / .modal-header / .modal-body，
+   这里只负责列表本身。字体走 --app-text-scale 跟随设置里的字号缩放。
+   ══════════════════════════════════════════ */
+
+.persona-switch-list {
+  display: flex;
+  flex-direction: column;
+  /* 条目之间留出明确的间隔：太挤会让人误以为是一个整体的大列表 */
+  gap: 10px;
+  padding: 4px 2px 12px;
+}
+
+/* 一行 = 头像 + 昵称。高度和内距都比普通菜单行更松，
+   因为这里条目很少（通常 2~4 个），留白换呼吸感更值。 */
+.persona-switch-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  /* min-height 保证只有昵称一行时条目也不会塌成细条 */
+  min-height: 64px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid transparent;
+  background: rgba(128, 128, 128, 0.05);
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.persona-switch-row:hover {
+  background: rgba(128, 128, 128, 0.09);
+}
+
+/* 当前正在用的账号：淡绿底 + 描边，和设置里的选中态一致 */
+.persona-switch-row.is-active {
+  background: color-mix(in srgb, var(--c-success) 12%, transparent);
+  border-color: color-mix(in srgb, var(--c-success) 38%, transparent);
+}
+
+.persona-switch-avatar {
+  flex-shrink: 0;
+  width: 46px;
+  height: 46px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--c-input);
+  color: var(--c-icon);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.persona-switch-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.persona-switch-name {
+  flex: 1;
+  min-width: 0;
+  font-size: calc(15px * var(--app-text-scale, 1));
+  font-weight: 600;
+  color: var(--c-text-title);
+  line-height: 1.35;
+  /* 名字太长就省略，不让条目高度跟着变 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.persona-switch-check {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--c-success);
+}

@@ -4,12 +4,18 @@
 // 切换账号（用户面具）
 //
 // 从「主页」那个头像点出来的弹窗：列当前所有面具，点头像/昵称即切换。
-// 这里刻意只放头像 + 昵称，不列角色、不做设置——角色归哪个面具
-// 由「设置 → 绑定 → 角色 → 用户身份」决定（见 lib/persona-scope.ts 的说明），
-// 不在切换的地方重复配置，避免出现两个地方都能改同一件事。
+//
+// 复用 components/ui/modal 的 BottomSheet：和设置里的身份编辑、各处底部抽屉
+// 是同一套 .modal-overlay-bottom + .modal-sheet + .modal-header，不再自己手写
+// 遮罩和标题栏——之前那版是自己拼的，观感与全站其它弹窗不一致。
+//
+// 只放头像 + 昵称，不列角色、不做设置：角色归哪个面具由
+// 「设置 → 绑定 → 角色 → 用户身份」决定（见 lib/persona-scope.ts），
+// 不在切换的地方重复配置，避免同一件事有两个入口。
 
-import { useEffect, useMemo, useState } from "react";
-import { Check, User, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Check, User } from "lucide-react";
+import { BottomSheet } from "@/components/ui/modal";
 import type { UserIdentity } from "@/components/settings/user-identity";
 import {
     loadIdentities,
@@ -36,10 +42,12 @@ export function PersonaSwitchSheet({ onClose, onSwitched }: PersonaSwitchSheetPr
         };
         sync();
         window.addEventListener(PERSONA_SWITCHED_EVENT, sync);
-        return () => window.removeEventListener(PERSONA_SWITCHED_EVENT, sync);
+        window.addEventListener("settings-identities-updated", sync);
+        return () => {
+            window.removeEventListener(PERSONA_SWITCHED_EVENT, sync);
+            window.removeEventListener("settings-identities-updated", sync);
+        };
     }, []);
-
-    const items = useMemo(() => identities, [identities]);
 
     const handlePick = (identity: UserIdentity) => {
         if (identity.id === activeId) {
@@ -53,71 +61,55 @@ export function PersonaSwitchSheet({ onClose, onSwitched }: PersonaSwitchSheetPr
     };
 
     return (
-        <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={onClose}>
-            <div
-                className="modal-sheet"
-                data-ui="modal-sheet"
-                onClick={e => e.stopPropagation()}
-            >
-                <div className="modal-header" data-ui="modal-header">
-                    <span className="modal-header-title">切换账号</span>
-                    <button
-                        type="button"
-                        onClick={onClose}
-                        className="modal-header-btn modal-header-btn-muted"
-                        aria-label="关闭"
-                    >
-                        <X size={18} />
-                    </button>
+        <BottomSheet title="切换账号" onClose={onClose}>
+            {identities.length === 0 ? (
+                <div className="ui-empty">
+                    <div className="ui-icon-circle">
+                        <User size={24} />
+                    </div>
+                    <span className="menu-label font-semibold">还没有账号</span>
+                    <span className="menu-desc max-w-[240px]">
+                        先到「设置 → 用户身份」新建一个身份卡片
+                    </span>
                 </div>
-
-                <div className="modal-body hide-scrollbar flex flex-col gap-1.5 pb-10" data-ui="modal-body">
-                    {items.length === 0 ? (
-                        <div className="ts-13 text-[var(--c-icon)] text-center py-8">
-                            还没有账号。请先到「设置 → 用户身份」新建一个。
-                        </div>
-                    ) : (
-                        items.map(identity => {
-                            const active = identity.id === activeId;
-                            return (
-                                <button
-                                    key={identity.id}
-                                    type="button"
-                                    onClick={() => handlePick(identity)}
-                                    className="flex items-center gap-3 w-full px-3 py-2.5 rounded-2xl text-left transition-colors"
-                                    style={{
-                                        background: active
-                                            ? "color-mix(in srgb, var(--c-success) 12%, transparent)"
-                                            : "transparent",
-                                        border: `1px solid ${active ? "color-mix(in srgb, var(--c-success) 38%, transparent)" : "transparent"}`,
-                                    }}
-                                    aria-pressed={active}
-                                >
-                                    <div className="w-[42px] h-[42px] rounded-full overflow-hidden bg-[var(--c-input)] flex items-center justify-center shrink-0">
-                                        {identity.avatarUrl ? (
-                                            /* eslint-disable-next-line @next/next/no-img-element */
-                                            <img
-                                                src={identity.avatarUrl}
-                                                alt=""
-                                                className="w-full h-full object-cover"
-                                                referrerPolicy="no-referrer"
-                                            />
-                                        ) : (
-                                            <User size={20} className="text-[var(--c-icon)]" />
-                                        )}
-                                    </div>
-                                    <span className="flex-1 min-w-0 ts-15 font-semibold text-[var(--c-text-title)] truncate">
-                                        {identity.name || "未命名账号"}
-                                    </span>
-                                    {active && (
-                                        <Check size={18} className="shrink-0" style={{ color: "var(--c-success)" }} />
+            ) : (
+                <div className="persona-switch-list">
+                    {identities.map(identity => {
+                        const active = identity.id === activeId;
+                        return (
+                            <button
+                                key={identity.id}
+                                type="button"
+                                onClick={() => handlePick(identity)}
+                                className={`persona-switch-row${active ? " is-active" : ""}`}
+                                aria-pressed={active}
+                            >
+                                <span className="persona-switch-avatar">
+                                    {identity.avatarUrl ? (
+                                        /* eslint-disable-next-line @next/next/no-img-element */
+                                        <img
+                                            src={identity.avatarUrl}
+                                            alt=""
+                                            referrerPolicy="no-referrer"
+                                        />
+                                    ) : (
+                                        <User size={22} />
                                     )}
-                                </button>
-                            );
-                        })
-                    )}
+                                </span>
+                                {/* 只有头像和昵称：条目之间留白拉开，不再挤成一行 */}
+                                <span className="persona-switch-name">
+                                    {identity.name || "未命名账号"}
+                                </span>
+                                {active && (
+                                    <span className="persona-switch-check" aria-hidden>
+                                        <Check size={18} strokeWidth={2.2} />
+                                    </span>
+                                )}
+                            </button>
+                        );
+                    })}
                 </div>
-            </div>
-        </div>
+            )}
+        </BottomSheet>
     );
 }

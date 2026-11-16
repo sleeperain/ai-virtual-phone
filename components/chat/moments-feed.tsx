@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useLayoutEffect, useRef } from "react";
 import { getAllPosts, deleteMomentPost, getUnreadMomentsNotifications, saveMomentsLastSeen, addMomentComment } from "@/lib/moments-storage";
 import { loadChatContacts } from "@/lib/chat-storage";
-import { resolveUserIdentity } from "@/lib/settings-storage";
+import { isCharacterInActivePersona, resolveActiveIdentity, PERSONA_SWITCHED_EVENT } from "@/lib/persona-scope";
 import { saveChatImageToIndexedDB, getChatImageFromIndexedDB } from "@/lib/chat-asset-storage";
 import type { MomentComment, MomentPost } from "@/lib/moments-types";
 import { MomentPostCard } from "./moment-post-card";
@@ -50,7 +50,8 @@ export function MomentsFeed({ onCloseApp }: MomentsFeedProps) {
     const [coverUrl, setCoverUrl] = useState<string | null>(null);
     const coverInputRef = useRef<HTMLInputElement>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
-    const userIdentity = resolveUserIdentity(undefined, "chat");
+    // 朋友圈顶部的头像/昵称跟随「当前账号」，切换账号后一起变
+    const [userIdentity, setUserIdentity] = useState(() => resolveActiveIdentity());
     const [signature, setSignature] = useState(() => {
         if (typeof window !== "undefined") {
             return kvGet("moments_signature") || "make every day count (●ˇ∀ˇ●)";
@@ -100,9 +101,31 @@ export function MomentsFeed({ onCloseApp }: MomentsFeedProps) {
 
     const refreshPosts = useCallback(() => {
         const contactIds = new Set(loadChatContacts().map(c => c.characterId));
-        setPosts(getAllPosts().filter(p => p.authorType === "user" || contactIds.has(p.authorId)));
+        setPosts(getAllPosts().filter(p =>
+            // 自己发的照常显示；角色的动态按当前账号过滤——
+            // 和消息/联系人同一套归属判定（角色绑定里的 userIdentityId）
+            p.authorType === "user"
+                ? true
+                : contactIds.has(p.authorId) && isCharacterInActivePersona(p.authorId),
+        ));
         setUnreadNotifs(getUnreadMomentsNotifications());
     }, []);
+
+    // 切换账号 / 改角色绑定：朋友圈可见的动态变了，顶部「我是谁」也要换。
+    // 列表变了要回到第一页，否则当前滚动位置可能落空。
+    useEffect(() => {
+        const onPersonaChanged = () => {
+            setUserIdentity(resolveActiveIdentity());
+            setVisiblePostCount(MOMENTS_INITIAL_POST_COUNT);
+            refreshPosts();
+        };
+        window.addEventListener(PERSONA_SWITCHED_EVENT, onPersonaChanged);
+        window.addEventListener("settings-bindings-updated", onPersonaChanged);
+        return () => {
+            window.removeEventListener(PERSONA_SWITCHED_EVENT, onPersonaChanged);
+            window.removeEventListener("settings-bindings-updated", onPersonaChanged);
+        };
+    }, [refreshPosts]);
 
     const captureScrollAnchor = useCallback((): MomentScrollAnchorSnapshot | null => {
         const el = getScrollElement();
@@ -543,7 +566,8 @@ export function MomentsFeed({ onCloseApp }: MomentsFeedProps) {
                 {/* Posts list */}
                 {posts.length === 0 ? (
                     <div className="feed-empty-state py-10 text-center text-[var(--c-icon)] ts-14">
-                        还没有动态，发一条吧
+                        {/* 说明是「这个账号下」没有动态，而不是动态丢了 */}
+                        {userIdentity?.name ? `「${userIdentity.name}」下还没有动态，发一条吧` : "还没有动态，发一条吧"}
                     </div>
                 ) : (
                     visiblePosts.map(post => (
