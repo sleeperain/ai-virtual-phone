@@ -1237,19 +1237,104 @@ export function saveUserIdentities(identities: UserIdentity[]): void {
 }
 
 /**
+ * 当前正在使用的账号（用户面具）id。
+ * 切换账号只写这一个键，不改任何角色绑定——角色归谁仍由绑定决定。
+ *
+ * 放在本模块而不是 persona-scope，是因为 resolveUserIdentity 需要读它，
+ * 而 persona-scope 反过来已经 import 了本模块：写在那边会形成循环依赖。
+ */
+export const ACTIVE_USER_IDENTITY_KEY = "ai_phone_active_identity_v1";
+registerKvMigration(ACTIVE_USER_IDENTITY_KEY);
+
+export function resolveActiveUserIdentityId(): string {
+    if (typeof window === "undefined") return "";
+    const identities = loadUserIdentities();
+    if (identities.length === 0) return "";
+    let stored = "";
+    try {
+        stored = String(kvGet(ACTIVE_USER_IDENTITY_KEY) ?? "").trim();
+    } catch {
+        stored = "";
+    }
+    if (stored && identities.some(i => i.id === stored)) return stored;
+    // 没主动切过（或切到的账号后来被删了）：回落到全局默认身份
+    try {
+        const globalId = loadBindingConfig().globalDefaults?.userIdentityId || "";
+        if (globalId && identities.some(i => i.id === globalId)) return globalId;
+    } catch {
+        /* 绑定读不出来就继续兜底 */
+    }
+    return identities[0].id;
+}
+
+/** 写入「当前账号」。id 不存在时不写，返回是否成功。 */
+export function saveActiveUserIdentityId(identityId: string): boolean {
+    if (typeof window === "undefined") return false;
+    const id = String(identityId || "").trim();
+    if (!id) return false;
+    if (!loadUserIdentities().some(i => i.id === id)) return false;
+    kvSet(ACTIVE_USER_IDENTITY_KEY, id);
+    return true;
+}
+
+/**
+ * 「默认账号」：没有单独绑定身份的角色、以及早期没打标的老朋友圈，
+ * 都归到它名下。
+ *
+ * 注意不能用 identities[0]：新建账号是往列表**最前面**插的（见设置页
+ * 「新增身份」），列表第一个往往是最新账号，把老数据算给它就会出现
+ * 「切到新账号却看到旧账号的动态」。
+ * 优先用全局绑定里用户自己选的那个身份，否则取列表最后一个（最初的账号）。
+ */
+export function resolveDefaultUserIdentityId(): string {
+    const identities = loadUserIdentities();
+    if (identities.length === 0) return "";
+    try {
+        const globalId = loadBindingConfig().globalDefaults?.userIdentityId || "";
+        if (globalId && identities.some(i => i.id === globalId)) return globalId;
+    } catch {
+        /* ignore */
+    }
+    return identities[identities.length - 1].id;
+}
+
+/**
  * Resolve user identity through the binding cascade:
  *   global defaults → character defaults → app overrides.
- * Falls back to first identity if binding has no userIdentityId set.
+ *
+ * 没单独绑定的（包括用户自己的朋友圈、未绑定的角色）回落到**当前账号**，
+ * 不再固定返回列表第一个——否则切换账号后名字和头像不会跟着变。
  */
 export function resolveUserIdentity(characterId?: string, appId?: string): UserIdentity | null {
     const identities = loadUserIdentities();
     if (identities.length === 0) return null;
-    const config = loadBindingConfig();
-    const resolved = resolveBinding(config, characterId, appId);
-    if (resolved.userIdentityId) {
-        return identities.find(i => i.id === resolved.userIdentityId) || identities[0];
+
+    // 1) 角色（或应用）**自己设过**的身份优先。
+    //    这里不能直接用 resolveBinding() 的结果：它会把全局默认身份一起继承下来，
+    //    于是全局默认会永久压住「当前账号」，切换账号后名字和头像都不跟着变。
+    //    所以要区分「显式绑定的」和「继承来的」。
+    if (characterId || appId) {
+        try {
+            const config = loadBindingConfig();
+            const charBinding = characterId
+                ? config.characterBindings.find(b => b.characterId === characterId)
+                : undefined;
+            const appOverrideId = appId
+                ? (charBinding?.appOverrides?.[appId]?.userIdentityId
+                    || config.appDefaults?.[appId]?.userIdentityId
+                    || "")
+                : "";
+            const explicitId = charBinding?.defaults?.userIdentityId || appOverrideId || "";
+            const bound = explicitId ? identities.find(i => i.id === explicitId) : null;
+            if (bound) return bound;
+        } catch {
+            /* 绑定读不出来就按当前账号 */
+        }
     }
-    return identities[0];
+
+    // 2) 其余情况一律用「当前账号」
+    const activeId = resolveActiveUserIdentityId();
+    return identities.find(i => i.id === activeId) || identities[0];
 }
 
 // --- Migration from legacy CharacterSettingsOverride ---

@@ -8,22 +8,28 @@
 // 列表面板里它决定「这个角色归在哪个面具下」。
 // 所以不存在「绑定页设了 A、面具页又设了 B」这种两边打架的可能。
 //
-// 归属判定沿用绑定级联的语义：
-//   角色单独绑了 → 用绑的；没绑 → 继承全局默认身份；全局也没设 → 列表第一个面具。
-// 这正好等于 resolveUserIdentity() 实际喂给 AI 的那个身份，
-// 于是「界面归在哪个面具下」与「聊天时用的是哪个我」永远一致。
+// 归属判定只看**角色自己设过的**绑定：
+//   角色单独绑了面具 → 归那个面具；
+//   没绑 → 归「默认账号」（见 resolveDefaultUserIdentityId）。
 //
-// 兼容性：老用户只有一个面具、所有角色都走全局默认 → 任何面具下的可见集合
-// 都是「全部角色」，切换前列表和以前完全一样，不会突然一片空白。
+// 为什么不能用 resolveBinding() 的完整结果：它会把全局默认身份继承下来，
+// 于是「没绑过」会被当成「绑了全局那个」，新账号切过去仍然能看到老角色，
+// 分区等于没做。
+//
+// 兼容性：只有最后一种账号时，所有角色都归它 → 和加分区之前完全一样，
+// 不会突然一片空白；老的面具、老的朋友圈也都不会被算到新账号头上。
 
-import { kvGet, kvSet, registerKvMigration } from "./kv-db";
-import { loadBindingConfig, loadUserIdentities, resolveBinding } from "./settings-storage";
+import {
+    loadBindingConfig,
+    loadUserIdentities,
+    resolveBinding,
+    resolveActiveUserIdentityId,
+    resolveDefaultUserIdentityId,
+    saveActiveUserIdentityId,
+} from "./settings-storage";
 import { loadCharacters } from "./character-storage";
 import type { BindingConfig } from "./settings-types";
 import type { UserIdentity } from "@/components/settings/user-identity";
-
-const ACTIVE_IDENTITY_KEY = "ai_phone_active_identity_v1";
-registerKvMigration(ACTIVE_IDENTITY_KEY);
 
 /** 当前面具变了：列表、头像、名字要跟着刷新 */
 export const PERSONA_SWITCHED_EVENT = "persona-switched";
@@ -43,22 +49,8 @@ export function loadIdentities(): UserIdentity[] {
  * 再兜底到第一个面具——和 resolveUserIdentity() 的回退顺序一致。
  */
 export function resolveActiveIdentityId(): string {
-    const identities = loadIdentities();
-    if (identities.length === 0) return "";
-    let stored = "";
-    try {
-        stored = String(kvGet(ACTIVE_IDENTITY_KEY) ?? "").trim();
-    } catch {
-        stored = "";
-    }
-    if (stored && identities.some(i => i.id === stored)) return stored;
-    try {
-        const globalId = loadBindingConfig().globalDefaults?.userIdentityId || "";
-        if (globalId && identities.some(i => i.id === globalId)) return globalId;
-    } catch {
-        /* 绑定读不出来就继续兜底 */
-    }
-    return identities[0].id;
+    // 存储与回退顺序都在 settings-storage 里（resolveUserIdentity 也要用同一套）
+    return resolveActiveUserIdentityId();
 }
 
 /** 当前面具的完整信息（头像 / 昵称从这里取） */
@@ -76,12 +68,7 @@ export function resolveActiveIdentity(): UserIdentity | null {
 export function switchActiveIdentity(identityId: string): boolean {
     const id = String(identityId || "").trim();
     if (!id) return false;
-    if (!loadIdentities().some(i => i.id === id)) return false;
-    try {
-        kvSet(ACTIVE_IDENTITY_KEY, id);
-    } catch {
-        return false;
-    }
+    if (!saveActiveUserIdentityId(id)) return false;
     scopeCache = null;
     if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent(PERSONA_SWITCHED_EVENT, { detail: { identityId: id } }));
@@ -96,9 +83,9 @@ export function resolveCharacterIdentityId(characterId: string): string {
         const resolved = resolveBinding(loadBindingConfig(), characterId, undefined);
         if (resolved.userIdentityId) return resolved.userIdentityId;
     } catch {
-        /* 绑定异常时按默认面具处理 */
+        /* 绑定异常时按默认账号处理 */
     }
-    return resolveActiveIdentityId();
+    return resolveDefaultUserIdentityId() || resolveActiveIdentityId();
 }
 
 /**
@@ -136,16 +123,22 @@ function buildScope(): { identityId: string; characterIds: Set<string> } | null 
     } catch {
         characters = [];
     }
+    // 没单独绑定身份的角色归「默认账号」，**不是**归当前账号：
+    // 归当前账号的话这个角色在每个账号下都算「自己人」，等于永远分不开。
+    //
+    // 这里只能读角色自己设过的绑定：resolveBinding() 会把全局默认身份继承下来，
+    // 拿它的结果当判据会变成「所有角色都显式绑了全局那个身份」。
+    const defaultIdentityId = resolveDefaultUserIdentityId();
     for (const char of characters) {
         const id = String(char?.id ?? "");
         if (!id) continue;
-        let personaId = "";
+        let explicitId = "";
         try {
-            personaId = config ? (resolveBinding(config, id, undefined).userIdentityId || "") : "";
+            explicitId = config?.characterBindings.find(b => b.characterId === id)?.defaults?.userIdentityId || "";
         } catch {
-            personaId = "";
+            explicitId = "";
         }
-        if (!personaId) personaId = identityId;
+        const personaId = explicitId || defaultIdentityId || identityId;
         if (personaId === identityId) characterIds.add(id);
     }
 
@@ -203,14 +196,18 @@ export function getActivePersonaName(): string {
 //
 // 角色帖归属角色（走上面的绑定判定），用户帖归属「发它的那个账号」。
 // 发帖时会把自己的面具 id 记在 post.authorIdentityId 上。
-// 早期数据没有这个字段：统一算作**第一个账号**——启用切换账号之前，
-// 所有人都相当于只有这一个「我」，这样归入最不容易出意外。
+// 早期数据没有这个字段：统一算作**默认账号**（最初的账号）——
+// 启用切换账号之前，所有人都相当于只有这一个「我」。
 
-/** 一条用户帖属于哪个账号（没打标的旧帖归第一个账号） */
+/**
+ * 一条用户帖属于哪个账号。
+ * 没打标的旧帖归「默认账号」（最初的账号）——不能取列表第一个：
+ * 新建账号是往列表最前面插的，那样旧帖会被算到新账号头上。
+ */
 export function resolveUserPostIdentityId(authorIdentityId?: string): string {
     const tagged = String(authorIdentityId ?? "").trim();
     if (tagged) return tagged;
-    return loadIdentities()[0]?.id || "";
+    return resolveDefaultUserIdentityId();
 }
 
 /** 用户帖是否属于当前账号 */
