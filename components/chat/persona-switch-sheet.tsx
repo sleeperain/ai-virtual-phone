@@ -3,13 +3,19 @@
 // components/chat/persona-switch-sheet.tsx
 // 账号管理（切换用户面具）
 //
-// 从「主页」那个头像点进来的**独立页面**，不是弹窗。
-// 复用 components/ui/page-shell 的 PageShell：和设置页、钱包页一样是整页导航，
-// 有左上角返回箭头、参与全局返回栈（返回手势 / 浏览器后退都能退）。
+// 从「主页」那个头像点进来的**独立页面**，不是弹窗、也不是叠在主页里的浮层。
+// 渲染方式和钱包页 / 表情包管理完全一致：由 UserProfilePanel 早返回整页替换，
+// 复用 PageShell，拥有自己的返回箭头并参与全局返回栈。
 //
-// 只放头像 + 昵称，不列角色、不做设置：角色归哪个账号由
-// 「设置 → 绑定 → 角色 → 用户身份」决定（见 lib/persona-scope.ts），
-// 不在切换的地方重复配置，避免同一件事有两个入口。
+// 踩过的坑：一开始把这个页面放在主页的 <PageShell> 内部当浮层，结果
+// 主页那套 `.user-profile-page-root .page-body { position:absolute; top:calc(...) }`
+// 的自定义 CSS 会连带命中内层 PageShell 的 .page-body —— 内层内容被挪到外层
+// 标题栏下方、背景又被强制透明，看起来就是「整页空白」。
+// 早返回替换主页就没有这个问题。
+//
+// 底栏（chat-tab-bar）由本组件自己负责：挂载时收起、卸载时恢复。
+// 不依赖 onBack 一定会被调用——无论是点返回箭头、手势后退还是别处把状态置回去，
+// 只要组件卸载就一定把底栏还回来，不会卡在「底栏不见了」。
 
 import { useEffect, useState } from "react";
 import { User } from "lucide-react";
@@ -31,6 +37,14 @@ type AccountManagePageProps = {
 export function AccountManagePage({ onBack, onSwitched }: AccountManagePageProps) {
     const [identities, setIdentities] = useState<UserIdentity[]>(() => loadIdentities());
     const [activeId, setActiveId] = useState<string>(() => resolveActiveIdentityId());
+
+    // 整页打开时收起底部 tab 栏；卸载时无论走哪条路径都恢复
+    useEffect(() => {
+        window.dispatchEvent(new CustomEvent("chat-hide-tabbar", { detail: true }));
+        return () => {
+            window.dispatchEvent(new CustomEvent("chat-hide-tabbar", { detail: false }));
+        };
+    }, []);
 
     // 别处改过账号（设置页新增/改名/删除）后回到本页要对得上
     useEffect(() => {
@@ -56,12 +70,7 @@ export function AccountManagePage({ onBack, onSwitched }: AccountManagePageProps
     };
 
     return (
-        <PageShell
-            title="账号管理"
-            onBack={onBack}
-            // 整页覆盖在主页之上：主页可能有自己的渐变底和隐藏的标题栏
-            className="account-manage-page absolute inset-0 z-[100]"
-        >
+        <PageShell title="账号管理" onBack={onBack} className="account-manage-page">
             {identities.length === 0 ? (
                 <div className="ui-empty">
                     <div className="ui-icon-circle">

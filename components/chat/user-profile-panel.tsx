@@ -291,6 +291,11 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
     if (showWalletPanel) {
         return <WalletPanel onBack={() => { window.dispatchEvent(new CustomEvent("chat-hide-tabbar", { detail: false })); setShowWalletPanel(false); }} />;
     }
+    // 账号管理：和其它子页一样整页替换主页（不要嵌在下面那个 PageShell 里，
+    // 否则会被主页的自定义 CSS 干扰成空白页）。底栏收起/恢复由页面自身负责。
+    if (showPersonaSwitch) {
+        return <AccountManagePage onBack={() => setShowPersonaSwitch(false)} />;
+    }
 
     return (
         <>
@@ -341,11 +346,7 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
                         <div className="relative shrink-0">
                             <button
                                 type="button"
-                                onClick={() => {
-                                    // 和其它子页一致：整页打开时收起底部 tab 栏
-                                    window.dispatchEvent(new CustomEvent("chat-hide-tabbar", { detail: true }));
-                                    setShowPersonaSwitch(true);
-                                }}
+                                onClick={() => setShowPersonaSwitch(true)}
                                 aria-label="切换账号"
                                 title="切换账号"
                                 className="w-[84px] h-[84px] rounded-full overflow-hidden bg-[var(--c-card)] border-2 border-white/50 shadow-sm flex items-center justify-center relative"
@@ -516,15 +517,7 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
                     </div>
                 </div>
 
-                {/* 账号管理：点顶部头像进入独立页面（不是弹窗） */}
-                {showPersonaSwitch && (
-                    <AccountManagePage
-                        onBack={() => {
-                            window.dispatchEvent(new CustomEvent("chat-hide-tabbar", { detail: false }));
-                            setShowPersonaSwitch(false);
-                        }}
-                    />
-                )}
+
             </PageShell>
         </>
     );

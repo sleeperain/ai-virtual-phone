@@ -5,6 +5,17 @@
    带底色的卡片在这里看起来像「一堆按钮」，而账号列表本质是一个平铺清单。
    ══════════════════════════════════════════ */
 
+/* 整页背景：替换掉主页时要有自己的不透明底，
+   否则会透出下面 chat-main-content 的内容（和钱包页同一套做法）。 */
+.account-manage-page {
+  background: var(--c-page-body-bg) !important;
+}
+
+.account-manage-page .page-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .account-manage-list {
   display: flex;
   flex-direction: column;
