@@ -38,6 +38,39 @@
   position: relative;
 }
 
+/* 物品详情 / 新建作为背包主框里的一「页」（embedded 模式）：
+   绝对定位盖满整块背包框，底色和弹窗一致，于是看起来就是同一部手机里换了页面，
+   而不是又弹出一层窗。放在 .backpack-modal-box（position:relative）里。
+   z-index 压在列表之上、低于 .bp-sub-overlay(10000)，选人浮层依旧盖得住它。 */
+.backpack-editor-inner {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  background: var(--c-page-body-bg, #ffffff);
+  animation: bp-page-in 0.16s ease-out;
+}
+
+/* 只有一次轻微上浮 + 淡入。刻意不缩放：遮罩本身已经带缩放，
+   这里再缩一次就是之前「动效奇怪」的来源。 */
+@keyframes bp-page-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .backpack-editor-inner {
+    animation: none;
+  }
+}
+
 /* 物品详情 / 新建（backpack-item-editor）：外观照搬插件，尺寸跟主弹窗统一 */
 .backpack-editor-box {
   position: relative;

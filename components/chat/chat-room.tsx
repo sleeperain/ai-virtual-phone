@@ -1106,9 +1106,12 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     const [theaterMode, setTheaterMode] = useState(() => kvGet(CHAT_THEATER_MODE_PREFIX + session.id) === "1");
     const [showBackpack, setShowBackpack] = useState(false);
     /**
-     * 背包「送给…」：物品转到对方背包，并在**对方自己的私聊会话**里留一张礼物卡片。
-     * 卡片不落在当前打开的会话——在群里送给某个成员时，那等于把私聊礼物留在群里；
-     * 收礼人还没聊天室时由 deliverBackpackItemToCharacter 建一个。
+     * 背包「送给…」：物品转到对方背包，再留一张礼物卡片。
+     * 卡片落点分两种：
+     *   · 私聊里送出 → 落点仍是收礼人的私聊会话（他本来就在跟这个人聊天）；
+     *   · 群聊里送出 → 卡片直接发在当前群里（卡片自带「收礼人」说明送给谁），
+     *     不再绕到私聊，免得发完在群里看不到任何反馈。
+     * 收礼人还没聊天室时由 deliverBackpackItemToCharacter 建一个（仅私聊落点会用到）。
      * 这里不弹 toast —— 调用发生在背包弹窗内，聊天室 toast 层级低于弹窗会被遮住，
      * 提示由背包自己用 app 级 toast 发出。
      */
@@ -1122,6 +1125,8 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 item: request.item,
                 targetCharacterId: request.targetCharacterId,
                 targetName: request.targetName,
+                // 群聊里送礼：卡片落在本群（会话存在性由 delivery 层兜底校验）
+                postToSessionId: request.postToSessionId,
             });
             if (!result.ok) return { ok: false, error: result.error || "送出失败，请重试" };
 
@@ -6736,6 +6741,8 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 <BackpackModal
                     sessionId={session.id}
                     currentCharacterId={session.isGroup ? undefined : session.contactId}
+                    // 群聊：送礼列表只在这个群的成员里选（没建档的成员会被过滤掉）
+                    deliverCandidateIds={session.isGroup ? (session.participantIds ?? []) : undefined}
                     onDeliver={(request) => deliverBackpackItem(request)}
                     onClose={() => setShowBackpack(false)}
                 />

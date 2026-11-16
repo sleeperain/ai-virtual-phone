@@ -25,6 +25,12 @@ type BackpackItemEditorProps = {
     targetId: string;
     targetName: string;
     isUserTarget: boolean;
+    /**
+     * 作为背包主框里的一「页」渲染：不自己出遮罩、不自己定宽高，
+     * 由外层 .backpack-modal-box 决定尺寸。onClose 语义也随之变成「返回背包列表」。
+     * 不传 = 老行为（独立弹窗，带自己的 .modal-overlay）。
+     */
+    embedded?: boolean;
     onClose: () => void;
     onSaved: () => void;
     onTransfer: (item: BackpackItem) => void;
@@ -45,6 +51,11 @@ const IconClose = () => (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <line x1="18" y1="6" x2="6" y2="18" />
         <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+);
+const IconChevronLeft = () => (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="15 18 9 12 15 6" />
     </svg>
 );
 const IconCamera = () => (
@@ -131,6 +142,7 @@ export function BackpackItemEditor({
     targetId,
     targetName,
     isUserTarget,
+    embedded = false,
     onClose,
     onSaved,
     onTransfer,
@@ -250,39 +262,68 @@ export function BackpackItemEditor({
         </span>
     );
 
-    return (
-        <div className="modal-overlay" data-ui="modal" onClick={onClose}>
-            {/* 尺寸交给 .backpack-editor-box：宽固定、高固定为整屏 2/3，和主弹窗一致 */}
-            <div
-                onClick={e => e.stopPropagation()}
-                className="backpack-editor-box"
-            >
-                {/* 标题栏 */}
+    const content = (
+        <>
+                {/* 标题栏：embedded 时左边是「返回背包」——这里是一页而不是弹窗，
+                    用返回箭头才符合「从列表点进来」的语义 */}
                 <div style={{
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "space-between",
+                    gap: 8,
                     padding: "14px 18px",
                     borderBottom: "1px solid rgba(128,128,128,0.12)",
                 }}>
-                    <span style={{ fontWeight: 600, fontSize: TS(14), color: "var(--c-text)" }}>
-                        {isNew ? "添加物品到背包" : "物品详情与修改"}
-                    </span>
-                    <button
-                        type="button"
-                        onClick={onClose}
-                        style={{
-                            border: "none",
-                            background: "transparent",
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                        {embedded && (
+                            <button
+                                type="button"
+                                onClick={onClose}
+                                title="返回背包"
+                                aria-label="返回背包"
+                                style={{
+                                    border: "none",
+                                    background: "transparent",
+                                    color: "var(--c-text)",
+                                    padding: 2,
+                                    marginLeft: -4,
+                                    cursor: "pointer",
+                                    display: "flex",
+                                    opacity: 0.75,
+                                    flexShrink: 0,
+                                }}
+                            >
+                                <IconChevronLeft />
+                            </button>
+                        )}
+                        <span style={{
+                            fontWeight: 600,
+                            fontSize: TS(14),
                             color: "var(--c-text)",
-                            padding: 2,
-                            cursor: "pointer",
-                            display: "flex",
-                            opacity: 0.75,
-                        }}
-                    >
-                        <IconClose />
-                    </button>
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                        }}>
+                            {isNew ? "添加物品到背包" : "物品详情与修改"}
+                        </span>
+                    </div>
+                    {!embedded && (
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            style={{
+                                border: "none",
+                                background: "transparent",
+                                color: "var(--c-text)",
+                                padding: 2,
+                                cursor: "pointer",
+                                display: "flex",
+                                opacity: 0.75,
+                            }}
+                        >
+                            <IconClose />
+                        </button>
+                    )}
                 </div>
 
                 {/* 内容：占满标题栏与底部按钮之间的高度，超出自己滚 */}
@@ -747,6 +788,20 @@ export function BackpackItemEditor({
                         </div>
                     </div>
                 )}
+        </>
+    );
+
+    // embedded：作为背包主框里的一页出现，宽高交给外层 .backpack-modal-box。
+    // 于是「点进详情」只是同一块框换了内容，不再叠一层遮罩 + 一次缩放动效。
+    if (embedded) {
+        return <div className="backpack-editor-inner">{content}</div>;
+    }
+
+    return (
+        <div className="modal-overlay" data-ui="modal" onClick={onClose}>
+            {/* 尺寸交给 .backpack-editor-box：宽固定、高固定为整屏 2/3，和主弹窗一致 */}
+            <div onClick={e => e.stopPropagation()} className="backpack-editor-box">
+                {content}
             </div>
         </div>
     );

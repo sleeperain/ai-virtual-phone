@@ -23,7 +23,14 @@ export type DeliverBackpackItemInput = {
     /** 收礼角色名，写进卡片 */
     targetName?: string;
     /**
-     * @deprecated 卡片固定发到收礼角色自己的私聊会话，这个字段不再参与定位。
+     * 卡片落点覆盖：传了就发到这个会话，而不是收礼人的私聊。
+     * 群聊里打开背包送礼时传当前群会话 id —— 卡片落在群里，
+     * 并由卡片上的「收礼人」字段说明这份礼物是给群里谁的。
+     * 不传 / 会话不存在 = 沿用默认落点（收礼人自己的私聊）。
+     */
+    postToSessionId?: string;
+    /**
+     * @deprecated 卡片默认发到收礼角色自己的私聊会话，这个字段不再参与定位。
      * 保留只为兼容旧调用方，传了也会被忽略。
      */
     sessionId?: string;
@@ -71,13 +78,23 @@ export function deliverBackpackItemToCharacter(input: DeliverBackpackItemInput):
 
     let sessionId = "";
     let sessionCreated = false;
-    try {
-        const target = resolveCharacterSession(targetCharacterId);
-        sessionId = target.sessionId;
-        sessionCreated = target.created;
-    } catch (e) {
-        console.warn("[backpack] 找不到收礼角色的聊天室", e);
-        return { ok: true, error: "礼物已送到，但没能找到他的聊天室，卡片没有发出" };
+    // 群聊里送礼：卡片落在当前群，不再另开/借用收礼人的私聊。
+    // 会话 id 找不到（刚被删掉之类）就静默退回默认落点，不让送礼失败。
+    const postToSessionId = String(input.postToSessionId ?? "").trim();
+    const postToSession = postToSessionId
+        ? loadChatSessions().find(s => s.id === postToSessionId)
+        : undefined;
+    if (postToSession) {
+        sessionId = postToSession.id;
+    } else {
+        try {
+            const target = resolveCharacterSession(targetCharacterId);
+            sessionId = target.sessionId;
+            sessionCreated = target.created;
+        } catch (e) {
+            console.warn("[backpack] 找不到收礼角色的聊天室", e);
+            return { ok: true, error: "礼物已送到，但没能找到他的聊天室，卡片没有发出" };
+        }
     }
 
     try {
@@ -97,6 +114,9 @@ export function deliverBackpackItemToCharacter(input: DeliverBackpackItemInput):
                 giftDeliveredAt: item.shopping?.deliveredAt,
                 giftSentAt: sentLabel,
                 giftReceiverName: targetName,
+                // 卡片落在群里时，必须自带「收礼人」——群里不止一个人，
+                // 光有礼物名看不出是送给谁。私聊落点不用（对方就是收礼人本身）。
+                ...(postToSession ? { recipientName: targetName } : {}),
             },
         });
         return { ok: true, messageId: message.id, sessionId, sessionCreated };

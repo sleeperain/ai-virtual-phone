@@ -29,12 +29,25 @@ export type BackpackDeliverRequest = {
     item: BackpackItem;
     targetCharacterId: string;
     targetName: string;
+    /**
+     * 卡片落点覆盖：群聊里打开背包时传当前群会话 id，
+     * 礼物卡片就发在这个群里（卡片上写明送给谁），而不是发到收礼人的私聊。
+     * 不传 = 沿用默认落点（收礼人自己的私聊会话）。
+     */
+    postToSessionId?: string;
 };
 
 type BackpackModalProps = {
     sessionId?: string;
     /** 私聊时为当前聊天角色 id；群聊为 undefined（群里需要选具体送给谁） */
     currentCharacterId?: string;
+    /**
+     * 群聊里打开背包时传当前群成员的角色 id：群聊里「送给…」只列群内的角色，
+     * 不再把通讯录里所有角色都摆出来。私聊不传 = 不限制。
+     * 注意：传空数组表示「群里没有可送的人」（围观群/成员都还没建档），列表会显示空提示；
+     * 只有 undefined 才是不限制。
+     */
+    deliverCandidateIds?: string[];
     onClose: () => void;
     /** 送出物品并发送礼物卡片；失败时带上原因供背包提示 */
     onDeliver?: (request: BackpackDeliverRequest) => {
@@ -145,6 +158,7 @@ const TS = (px: number) => `calc(${px}px * var(--app-text-scale, 1))`;
 export function BackpackModal({
     sessionId,
     currentCharacterId,
+    deliverCandidateIds,
     onClose,
     onDeliver,
 }: BackpackModalProps) {
@@ -274,9 +288,30 @@ export function BackpackModal({
         ? `没有找到与「${query.trim()}」相关的物品`
         : "背包空空如也，点击左上菜单「添加物品」或「重新扫描」";
 
+    /**
+     * 详情 / 新建走「整页推入」而不是「叠弹窗」：
+     * 编辑器作为同一块背包框里的一页，盖在列表上方（.backpack-editor-inner），
+     * 全世界只有一层 .modal-overlay、一层灰底、一次淡入。
+     * 之前是再套一层 .modal-overlay，两层遮罩各带一次缩放动效，
+     * 叠在一起就是那股说不清哪里不对的抖动 + 双重压暗。
+     * 列表页不卸载，所以返回时搜索词、滚动位置、批量勾选都还在原样。
+     */
     return (
-        <div className="modal-overlay" data-ui="modal" onClick={onClose}>
+        <div
+            className="modal-overlay"
+            data-ui="modal"
+            onClick={() => {
+                // 详情页开着时，点遮罩等于「返回背包列表」（和以前点外面收起详情一致），
+                // 列表页上点遮罩才是关掉整个背包。
+                if (editorState) {
+                    setEditorState(null);
+                    return;
+                }
+                onClose();
+            }}
+        >
             <div className="backpack-modal-box" onClick={e => e.stopPropagation()}>
+                <>
                 {/* 顶栏：结构与插件一致 */}
                 <div style={{
                     display: "grid",
@@ -593,8 +628,14 @@ export function BackpackModal({
                     </div>
                 </div>
 
+                {/* 详情 / 新建不是再叠一层弹窗，而是在同一个背包框里「整页推入」：
+                    只有一次轻微上浮淡入，背后不再压第二层灰底。
+                    列表页留在 DOM 里不卸载，所以返回时搜索词、滚动位置、批量勾选都在原样。 */}
                 {editorState && (
                     <BackpackItemEditor
+                        // 换物品时重挂，避免上一件的编辑草稿串到另一件上
+                        key={editorState.item?.id ?? "__new__"}
+                        embedded
                         item={editorState.item}
                         isNew={editorState.item === null}
                         targetId={targetId}
@@ -603,20 +644,24 @@ export function BackpackModal({
                         onClose={() => setEditorState(null)}
                         onSaved={() => setEditorState(null)}
                         onTransfer={item => {
-                            // 先收起详情弹窗再开目标列表：详情是 fixed 全屏遮罩，
-                            // 两层叠着即使列表在上层，操作完详情也已经过期了。
-                            setEditorState(null);
+                            // 编辑器已是本框内的一页（不是独立遮罩），
+                            // 「送给…/放入到…」的 .bp-sub-overlay 直接盖在这页上即可
                             if (item.recipient === "user") startDeliver(item);
                             else setTransferItem(item);
                         }}
                     />
                 )}
+                </>
 
                 {transferItem && (
                     <BackpackTransferPicker
                         item={transferItem}
                         onClose={() => setTransferItem(null)}
-                        onDone={() => setTransferItem(null)}
+                        onDone={() => {
+                            setTransferItem(null);
+                            // 「放入到…」成功 = 物品换了归属，详情页那件已经过期，回列表
+                            setEditorState(null);
+                        }}
                     />
                 )}
 
@@ -624,6 +669,10 @@ export function BackpackModal({
                     <BackpackTransferPicker
                         item={deliverItem}
                         mode="deliver"
+                        // 群聊：只在群成员里选（deliverCandidateIds 由聊天室按当前群传入）
+                        candidateIds={deliverCandidateIds}
+                        // 群聊：卡片直接发在本群，并注明送给谁
+                        cardToSessionId={deliverCandidateIds ? sessionId : undefined}
                         onClose={() => setDeliverItem(null)}
                         onDone={target => {
                             const sending = deliverItem;
@@ -636,6 +685,9 @@ export function BackpackModal({
                                     item: sending,
                                     targetCharacterId: target.id,
                                     targetName: target.rawName,
+                                    // 群聊里打开背包：这张卡片发在群里（带「送给 X」），
+                                    // 不落到收礼人的私聊。私聊场景保持原落点。
+                                    postToSessionId: deliverCandidateIds ? sessionId : undefined,
                                 });
                                 if (!result) {
                                     toast("送出失败，请重试");
@@ -650,8 +702,11 @@ export function BackpackModal({
                                     toast(result.error);
                                     return;
                                 }
+                                // 送出去了：物品已换归属，详情页里的那件已经过期，退回列表
+                                setEditorState(null);
+                                const cardRoom = deliverCandidateIds ? "本群" : "他的聊天室";
                                 toast(result.sessionCreated
-                                    ? `已送给 ${target.rawName}，礼物卡片在他的聊天室`
+                                    ? `已送给 ${target.rawName}，礼物卡片在${cardRoom}`
                                     : `已送给 ${target.rawName}`);
                             } catch (e) {
                                 console.warn("[backpack] 送出失败", e);
