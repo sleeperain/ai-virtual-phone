@@ -6,6 +6,7 @@ import { loadCharacters } from "./character-storage";
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 import { DEFAULT_MOMENTS_BILINGUAL_PROMPT } from "./bilingual-prompt-defaults";
 import { canCharacterSeeMomentPost, getVisibleMomentCommentsForCharacter } from "./character-world-storage";
+import { isCharacterInActivePersona, isUserPostVisibleInActivePersona } from "./persona-scope";
 import {
     initMomentsDb,
     dbPutPost,
@@ -402,10 +403,20 @@ export function saveMomentsLastSeen(): void {
     kvSet(MOMENTS_LAST_SEEN_KEY, String(Date.now()));
 }
 
-/** Get all comments/replies targeting the user that are newer than lastSeen. */
+/**
+ * Get all comments/replies targeting the user that are newer than lastSeen.
+ *
+ * 只看「当前账号」能看到的那些帖子的互动：切到另一个账号后，
+ * 别的账号的帖子收到的点赞/评论不该弹提示——列表里都看不到它。
+ * 判定复用 lib/persona-scope.ts，和朋友圈列表本身同一套规则。
+ */
 export function getUnreadMomentsNotifications(): { authorName: string; content: string; type: "comment" | "reply" | "like"; createdAt: string }[] {
     const lastSeen = loadMomentsLastSeen();
-    const posts = loadMomentPosts();
+    const posts = loadMomentPosts().filter(p =>
+        p.authorType === "user"
+            ? isUserPostVisibleInActivePersona(p)
+            : isCharacterInActivePersona(p.authorId),
+    );
     const userPostIds = new Set(posts.filter(p => p.authorType === "user").map(p => p.id));
     const results: { authorName: string; content: string; type: "comment" | "reply" | "like"; createdAt: string }[] = [];
 

@@ -5,7 +5,7 @@ import { loadCharacters } from "@/lib/character-storage";
 import { loadChatContacts } from "@/lib/chat-storage";
 import { addMomentPost } from "@/lib/moments-storage";
 import { onUserPost } from "@/lib/moments-engine";
-import { resolveActiveIdentityId } from "@/lib/persona-scope";
+import { resolveActiveIdentityId, isCharacterInActivePersona } from "@/lib/persona-scope";
 import { saveChatImageToIndexedDB, getChatImageFromIndexedDB } from "@/lib/chat-asset-storage";
 import { ChatFallbackAvatar } from "./chat-fallback-avatar";
 
@@ -34,7 +34,8 @@ export function MomentsCompose({ onClose, onPublished }: Props) {
         const map: Record<string, boolean> = {};
         contacts.forEach(c => {
             const char = chars.find(ch => ch.id === c.characterId);
-            if (char) map[c.characterId] = true;
+            // 只默认勾选当前账号下的角色：别的账号的人不该出现在可见范围里
+            if (char && isCharacterInActivePersona(char.id)) map[c.characterId] = true;
         });
         return map;
     });
@@ -47,7 +48,9 @@ export function MomentsCompose({ onClose, onPublished }: Props) {
 
     const enrichedContacts = contacts
         .map(c => ({ ...c, char: chars.find(ch => ch.id === c.characterId) }))
-        .filter(c => c.char);
+        .filter(c => c.char)
+        // 「谁能看 / @谁」两个面板都按当前账号过滤，和朋友圈本身的可见范围一致
+        .filter(c => isCharacterInActivePersona(c.characterId));
 
     const visibleCount = Object.values(visibility).filter(Boolean).length;
     const isAllSelected = enrichedContacts.length > 0 && enrichedContacts.every(c => visibility[c.characterId]);
