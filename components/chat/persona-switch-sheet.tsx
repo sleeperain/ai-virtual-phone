@@ -1,21 +1,19 @@
 "use client";
 
 // components/chat/persona-switch-sheet.tsx
-// 切换账号（用户面具）
+// 账号管理（切换用户面具）
 //
-// 从「主页」那个头像点出来的弹窗：列当前所有面具，点头像/昵称即切换。
+// 从「主页」那个头像点进来的**独立页面**，不是弹窗。
+// 复用 components/ui/page-shell 的 PageShell：和设置页、钱包页一样是整页导航，
+// 有左上角返回箭头、参与全局返回栈（返回手势 / 浏览器后退都能退）。
 //
-// 复用 components/ui/modal 的 BottomSheet：和设置里的身份编辑、各处底部抽屉
-// 是同一套 .modal-overlay-bottom + .modal-sheet + .modal-header，不再自己手写
-// 遮罩和标题栏——之前那版是自己拼的，观感与全站其它弹窗不一致。
-//
-// 只放头像 + 昵称，不列角色、不做设置：角色归哪个面具由
+// 只放头像 + 昵称，不列角色、不做设置：角色归哪个账号由
 // 「设置 → 绑定 → 角色 → 用户身份」决定（见 lib/persona-scope.ts），
 // 不在切换的地方重复配置，避免同一件事有两个入口。
 
 import { useEffect, useState } from "react";
 import { User } from "lucide-react";
-import { BottomSheet } from "@/components/ui/modal";
+import { PageShell } from "@/components/ui/page-shell";
 import type { UserIdentity } from "@/components/settings/user-identity";
 import {
     loadIdentities,
@@ -24,17 +22,17 @@ import {
     PERSONA_SWITCHED_EVENT,
 } from "@/lib/persona-scope";
 
-type PersonaSwitchSheetProps = {
-    onClose: () => void;
+type AccountManagePageProps = {
+    onBack: () => void;
     /** 切换成功后回调（带新的面具） */
     onSwitched?: (identity: UserIdentity) => void;
 };
 
-export function PersonaSwitchSheet({ onClose, onSwitched }: PersonaSwitchSheetProps) {
+export function AccountManagePage({ onBack, onSwitched }: AccountManagePageProps) {
     const [identities, setIdentities] = useState<UserIdentity[]>(() => loadIdentities());
     const [activeId, setActiveId] = useState<string>(() => resolveActiveIdentityId());
 
-    // 别处改过面具（设置页新增/改名/删除）后重新打开要对得上
+    // 别处改过账号（设置页新增/改名/删除）后回到本页要对得上
     useEffect(() => {
         const sync = () => {
             setIdentities(loadIdentities());
@@ -50,18 +48,20 @@ export function PersonaSwitchSheet({ onClose, onSwitched }: PersonaSwitchSheetPr
     }, []);
 
     const handlePick = (identity: UserIdentity) => {
-        if (identity.id === activeId) {
-            onClose();
-            return;
-        }
+        // 点当前账号：什么都不用做，留在本页
+        if (identity.id === activeId) return;
         if (!switchActiveIdentity(identity.id)) return;
         setActiveId(identity.id);
         onSwitched?.(identity);
-        onClose();
     };
 
     return (
-        <BottomSheet title="切换账号" onClose={onClose}>
+        <PageShell
+            title="账号管理"
+            onBack={onBack}
+            // 整页覆盖在主页之上：主页可能有自己的渐变底和隐藏的标题栏
+            className="account-manage-page absolute inset-0 z-[100]"
+        >
             {identities.length === 0 ? (
                 <div className="ui-empty">
                     <div className="ui-icon-circle">
@@ -73,42 +73,47 @@ export function PersonaSwitchSheet({ onClose, onSwitched }: PersonaSwitchSheetPr
                     </span>
                 </div>
             ) : (
-                <div className="persona-switch-list">
-                    {identities.map(identity => {
-                        const active = identity.id === activeId;
-                        return (
-                            <button
-                                key={identity.id}
-                                type="button"
-                                onClick={() => handlePick(identity)}
-                                className={`persona-switch-row${active ? " is-active" : ""}`}
-                                aria-pressed={active}
-                            >
-                                <span className="persona-switch-avatar">
-                                    {identity.avatarUrl ? (
-                                        /* eslint-disable-next-line @next/next/no-img-element */
-                                        <img
-                                            src={identity.avatarUrl}
-                                            alt=""
-                                            referrerPolicy="no-referrer"
-                                        />
-                                    ) : (
-                                        <User size={22} />
+                <>
+                    <div className="account-manage-list">
+                        {identities.map(identity => {
+                            const active = identity.id === activeId;
+                            return (
+                                <button
+                                    key={identity.id}
+                                    type="button"
+                                    onClick={() => handlePick(identity)}
+                                    className={`account-manage-row${active ? " is-active" : ""}`}
+                                    aria-pressed={active}
+                                    aria-label={active ? `${identity.name}（当前账号）` : `切换到 ${identity.name}`}
+                                >
+                                    <span className="account-manage-avatar">
+                                        {identity.avatarUrl ? (
+                                            /* eslint-disable-next-line @next/next/no-img-element */
+                                            <img
+                                                src={identity.avatarUrl}
+                                                alt=""
+                                                referrerPolicy="no-referrer"
+                                            />
+                                        ) : (
+                                            <User size={20} />
+                                        )}
+                                    </span>
+                                    {/* 只有头像和昵称 */}
+                                    <span className="account-manage-name">
+                                        {identity.name || "未命名账号"}
+                                    </span>
+                                    {active && (
+                                        <span className="account-manage-badge">当前账号</span>
                                     )}
-                                </span>
-                                {/* 只有头像和昵称：条目之间留白拉开，不再挤成一行 */}
-                                <span className="persona-switch-name">
-                                    {identity.name || "未命名账号"}
-                                </span>
-                                {/* 用文字标注代替打勾：一眼看出这是「正在用的那个」 */}
-                                {active && (
-                                    <span className="persona-switch-badge">当前账号</span>
-                                )}
-                            </button>
-                        );
-                    })}
-                </div>
+                                </button>
+                            );
+                        })}
+                    </div>
+                    <p className="menu-group-desc account-manage-hint">
+                        点一下即可切换。每个账号只看到归属于它的角色；角色归谁在「设置 → 绑定 → 角色 → 用户身份」里设置。
+                    </p>
+                </>
             )}
-        </BottomSheet>
+        </PageShell>
     );
 }

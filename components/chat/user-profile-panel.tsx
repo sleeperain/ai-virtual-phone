@@ -19,7 +19,7 @@ import { Toggle } from "@/components/ui/form";
 import { StickerManager } from "./sticker-manager";
 import { ChatPluginManager } from "./chat-plugin-manager";
 import { ChatPluginPageBoundary } from "./chat-plugin-page-boundary";
-import { PersonaSwitchSheet } from "./persona-switch-sheet";
+import { AccountManagePage } from "./persona-switch-sheet";
 import { resolveActiveIdentity, PERSONA_SWITCHED_EVENT } from "@/lib/persona-scope";
 import { WalletPanel } from "./wallet-panel";
 import { loadMomentsConfig, saveMomentsConfig, DEFAULT_MOMENTS_CONFIG, type MomentsInteractionConfig, getAllPosts } from "@/lib/moments-storage";
@@ -341,7 +341,11 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
                         <div className="relative shrink-0">
                             <button
                                 type="button"
-                                onClick={() => setShowPersonaSwitch(true)}
+                                onClick={() => {
+                                    // 和其它子页一致：整页打开时收起底部 tab 栏
+                                    window.dispatchEvent(new CustomEvent("chat-hide-tabbar", { detail: true }));
+                                    setShowPersonaSwitch(true);
+                                }}
                                 aria-label="切换账号"
                                 title="切换账号"
                                 className="w-[84px] h-[84px] rounded-full overflow-hidden bg-[var(--c-card)] border-2 border-white/50 shadow-sm flex items-center justify-center relative"
@@ -512,9 +516,14 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
                     </div>
                 </div>
 
-                {/* 切换账号：点顶部头像打开，列表只有头像和昵称 */}
+                {/* 账号管理：点顶部头像进入独立页面（不是弹窗） */}
                 {showPersonaSwitch && (
-                    <PersonaSwitchSheet onClose={() => setShowPersonaSwitch(false)} />
+                    <AccountManagePage
+                        onBack={() => {
+                            window.dispatchEvent(new CustomEvent("chat-hide-tabbar", { detail: false }));
+                            setShowPersonaSwitch(false);
+                        }}
+                    />
                 )}
             </PageShell>
         </>
