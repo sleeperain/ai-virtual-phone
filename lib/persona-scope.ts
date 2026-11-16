@@ -19,6 +19,7 @@
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 import { loadBindingConfig, loadUserIdentities, resolveBinding } from "./settings-storage";
 import { loadCharacters } from "./character-storage";
+import type { BindingConfig } from "./settings-types";
 import type { UserIdentity } from "@/components/settings/user-identity";
 
 const ACTIVE_IDENTITY_KEY = "ai_phone_active_identity_v1";
@@ -122,7 +123,8 @@ function buildScope(): { identityId: string; characterIds: Set<string> } | null 
     if (scopeCache && scopeCache.identityId === identityId) return scopeCache;
 
     const characterIds = new Set<string>();
-    let config;
+    // 显式标注类型：否则 `let config;` 会演进成 evolving any，catch 里赋 null 容易踩类型坑
+    let config: BindingConfig | null = null;
     let characters: { id?: string }[] = [];
     try {
         config = loadBindingConfig();

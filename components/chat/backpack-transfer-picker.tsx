@@ -65,7 +65,7 @@ export function BackpackTransferPicker({
         // candidateIds 由聊天室按当前群传入（session.participantIds，引用稳定）
     }, [mode, sourceCharacterId, candidateIds]);
 
-    /** 群聊送出：卡片落在本群，列表上先说清楚 */}
+    /** 群聊送出：卡片落在本群，列表上先说清楚 */
     const groupCardHint = mode === "deliver" && !!cardToSessionId;
 
     const handlePick = (target: BackpackTarget) => {
