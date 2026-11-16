@@ -24,15 +24,16 @@
 }
 
 /* 一行 = 头像 + 昵称。
-   高度 = 头像高度 + 10px：上下各 5px 内距，其余留给头像本身，
-   所以整行紧凑但不拥挤（原来那种 64px 最小高度太松）。 */
+   高度 = 头像高度(52) + 10px：上下各 5px 内距，其余留给头像本身。
+   内距保持不变，头像是唯一变大的东西——所以行高会跟着从 62px 起算，
+   但上下留白比例和之前一致，不会显得松。 */
 .account-manage-row {
   display: flex;
   align-items: center;
   gap: 12px;
   width: 100%;
   padding: 5px 16px;
-  min-height: 46px;
+  min-height: 62px;
   border: none;
   /* 无底色：整行是透明的一层，点按反馈交给 :active 的极浅灰 */
   background: transparent;
@@ -53,11 +54,11 @@
   border-top: 1px solid rgba(128, 128, 128, 0.16);
 }
 
-/* 头像 36px：配合上下各 5px 内距，整行约 46px */
+/* 头像 52px：配合上下各 5px 内距，整行约 62px */
 .account-manage-avatar {
   flex-shrink: 0;
-  width: 36px;
-  height: 36px;
+  width: 52px;
+  height: 52px;
   border-radius: 999px;
   overflow: hidden;
   background: var(--c-input);
@@ -86,12 +87,18 @@
   white-space: nowrap;
 }
 
-/* 当前账号：灰色小字标注（不加底色、不加图标）。
-   不用绿色/打勾：这里表达的是「你正在用这个」，不是「成功/已启用」。 */
+/* 当前账号：胶囊标签（灰底灰字，无图标）。
+   不用绿色/打勾：这里表达的是「你正在用这个」，不是「成功/已启用」。
+   注意只给标签本身加底色，整行保持透明——否则又变回「一堆按钮」。 */
 .account-manage-badge {
   flex-shrink: 0;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(128, 128, 128, 0.14);
+  color: var(--c-text);
   font-size: calc(11px * var(--app-text-scale, 1));
-  color: var(--c-icon);
+  font-weight: 600;
+  line-height: 1.4;
   opacity: 0.9;
   white-space: nowrap;
 }
