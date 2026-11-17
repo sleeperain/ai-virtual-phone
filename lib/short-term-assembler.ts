@@ -1025,6 +1025,11 @@ export function prepareShortTermContext(
     // 剧情里聊天/线下事件另设上限：番外这类刚开局的历史很短，剩余额度很大，
     // 不设限就会被聊天摘要灌满（表现就是动不动提聊天里的事，IF 线也照提）。
     const STORY_CHAT_EVENT_TOKEN_CAP = 1200;
+    // 剧情与聊天是两个不同场景，剧情上下文不注入聊天流水与线下摘要。
+    // 除了占额度，更严重的是：番外这类新开局没有自己的历史，模型只能照着上下文里
+    // 仅有的内容写，于是把聊天里的人和事当成本次设定，甚至照抄线下聊天的
+    // <content>/<summary> 输出格式。跨场景记忆交给长期记忆，短期上下文保持本场景纯净。
+    const excludeChatSources = appId === "story";
     const history = options?.history?.length
         ? options.history
         : (options?.chatAsHistory ? loadDirectChatHistoryForPrompt(characterId) : []);
@@ -1123,7 +1128,7 @@ export function prepareShortTermContext(
         raw.push({ tag: "recent_reading", order: FEATURE_ORDER.reading, entries: readingEntries });
     }
 
-    const groupChatEntries = timeline.filter(e =>
+    const groupChatEntries = excludeChatSources ? [] : timeline.filter(e =>
         e.sourceApp === "chat"
         && e.sourceDetail === "group"
         && e.groupSessionId !== options?.excludeGroupSessionId
@@ -1133,24 +1138,24 @@ export function prepareShortTermContext(
     }
 
     // Direct chat from timeline — skipped only when the current history already comes from chat/group_chat.
-    if (!skipDirectChatEntries) {
+    if (!skipDirectChatEntries && !excludeChatSources) {
         const chatEntries = timeline.filter(e => e.sourceApp === "chat" && e.sourceDetail === "direct");
         if (chatEntries.length > 0) {
             raw.push({ tag: "recent_chat", order: FEATURE_ORDER.chat, entries: chatEntries });
         }
     }
 
-    const offlineGroupChatEntries = timeline.filter(e => isChatOfflineEntry(e) && e.groupSessionId);
+    const offlineGroupChatEntries = excludeChatSources ? [] : timeline.filter(e => isChatOfflineEntry(e) && e.groupSessionId);
     if (offlineGroupChatEntries.length > 0) {
         raw.push({ tag: "recent_group_chat", order: FEATURE_ORDER.group_chat, entries: offlineGroupChatEntries });
     }
 
-    const offlineDirectChatEntries = timeline.filter(e => isChatOfflineEntry(e) && !e.groupSessionId);
+    const offlineDirectChatEntries = excludeChatSources ? [] : timeline.filter(e => isChatOfflineEntry(e) && !e.groupSessionId);
     if (offlineDirectChatEntries.length > 0) {
         raw.push({ tag: "recent_chat", order: FEATURE_ORDER.chat, entries: offlineDirectChatEntries });
     }
 
-    const coReadingEntries = buildCoReadingBoundaryEntries(history, {
+    const coReadingEntries = excludeChatSources ? [] : buildCoReadingBoundaryEntries(history, {
         characterName,
         userName: options?.userName ?? "用户",
         timeAware,
