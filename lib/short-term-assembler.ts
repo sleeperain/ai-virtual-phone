@@ -1017,6 +1017,14 @@ export function prepareShortTermContext(
     const wbActivationContext = timeline.slice(-10).map(e => e.content).join("\n");
     const budget = resolveShortTermTokenBudget(memConfig, options?.budgetAppId ?? appId);
     const currentTag = getFeatureTag(appId);
+    // 剧情同时装着「本场景长篇正文」和「其它场景的记忆事件」：本场景历史必须先占住预算，
+    // 聊天/线下记录只吃剩余额度。原来所有内容混在一个池子里按时间从旧到新截断，
+    // 而聊天流水通常比剧情历史更新，于是先被截掉的是剧情自己的历史——模型只看到聊天摘要，
+    // 续写/重试就接不上剧情，还会把聊天里的事当成当前场景的事。
+    const historyPriority = appId === "story";
+    // 剧情里聊天/线下事件另设上限：番外这类刚开局的历史很短，剩余额度很大，
+    // 不设限就会被聊天摘要灌满（表现就是动不动提聊天里的事，IF 线也照提）。
+    const STORY_CHAT_EVENT_TOKEN_CAP = 1200;
     const history = options?.history?.length
         ? options.history
         : (options?.chatAsHistory ? loadDirectChatHistoryForPrompt(characterId) : []);
@@ -1180,23 +1188,53 @@ export function prepareShortTermContext(
 
     pool.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 
-    // Truncate from oldest until within budget
-    let total = pool.reduce((sum, p) => sum + p.tokens, 0);
-    let startIdx = 0;
-    if (budget > 0) {
+    // Determine survivors
+    const survivingEntryIds = new Set<string>();
+    const survivingMsgIndices = new Set<number>();
+    if (budget <= 0) {
+        // 不限预算：全部保留
+        for (const p of pool) {
+            if (p.kind === "entry") survivingEntryIds.add(p.entryId);
+            else survivingMsgIndices.add(p.msgIdx);
+        }
+    } else if (historyPriority) {
+        // 本场景历史优先：历史从新到旧先占满预算……
+        let remaining = budget;
+        for (let i = pool.length - 1; i >= 0; i--) {
+            const p = pool[i];
+            if (p.kind !== "history") continue;
+            if (p.tokens > remaining) break;
+            remaining -= p.tokens;
+            survivingMsgIndices.add(p.msgIdx);
+        }
+        // ……剩余额度再按从新到旧给事件，其中聊天/线下（含线下摘要）另吃自己的上限。
+        const isChatSourceEntry = (entryId: string): boolean =>
+            entryMeta.get(entryId)?.entry.sourceApp === "chat";
+        let chatRemaining = Math.min(STORY_CHAT_EVENT_TOKEN_CAP, remaining);
+        for (let i = pool.length - 1; i >= 0; i--) {
+            const p = pool[i];
+            if (p.kind !== "entry") continue;
+            if (p.tokens > remaining) continue;
+            if (isChatSourceEntry(p.entryId)) {
+                if (p.tokens > chatRemaining) continue;
+                chatRemaining -= p.tokens;
+            }
+            remaining -= p.tokens;
+            survivingEntryIds.add(p.entryId);
+        }
+    } else {
+        // 原逻辑：整体按时间从最旧开始截到预算内
+        let total = pool.reduce((sum, p) => sum + p.tokens, 0);
+        let startIdx = 0;
         while (total > budget && startIdx < pool.length) {
             total -= pool[startIdx].tokens;
             startIdx++;
         }
-    }
-
-    // Determine survivors
-    const survivingEntryIds = new Set<string>();
-    const survivingMsgIndices = new Set<number>();
-    for (let i = startIdx; i < pool.length; i++) {
-        const p = pool[i];
-        if (p.kind === "entry") survivingEntryIds.add(p.entryId);
-        else survivingMsgIndices.add(p.msgIdx);
+        for (let i = startIdx; i < pool.length; i++) {
+            const p = pool[i];
+            if (p.kind === "entry") survivingEntryIds.add(p.entryId);
+            else survivingMsgIndices.add(p.msgIdx);
+        }
     }
 
     // Build truncated history (preserve original order)
@@ -1223,9 +1261,9 @@ export function prepareShortTermContext(
     }
 
     const unifiedRecentItems: UnifiedRecentItem[] = [];
-    for (let i = startIdx; i < pool.length; i++) {
-        const item = pool[i];
+    for (const item of pool) {
         if (item.kind === "entry") {
+            if (!survivingEntryIds.has(item.entryId)) continue;
             const meta = entryMeta.get(item.entryId);
             if (!meta) continue;
             unifiedRecentItems.push({
@@ -1238,6 +1276,7 @@ export function prepareShortTermContext(
             continue;
         }
 
+        if (!survivingMsgIndices.has(item.msgIdx)) continue;
         const historyIndex = historyIndexMap.get(item.msgIdx);
         if (historyIndex === undefined) continue;
         unifiedRecentItems.push({
