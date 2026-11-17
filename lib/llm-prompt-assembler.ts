@@ -682,6 +682,13 @@ function isWBAtDepthPosition(entry: WorldBookEntry): boolean {
  * RELATIVE/ABSOLUTE injection_position 分类、标记条目定位。
  * 预设里没有的东西一律不注入——不存在人设/世界书/记忆的硬编码兜底。
  */
+/**
+ * 背包提示词只对聊天场景有意义：私聊（chat）/ 群聊（group_chat）。
+ * 剧情、查手机、日记、访谈等其它功能共用本组装器，但它们不该看到背包物品与操作标记，
+ * 所以自动注入要按当前场景标签放行；显式传入 backpackContext 的调用方不受限制。
+ */
+const BACKPACK_PROMPT_TAGS = ["chat", "group_chat"];
+
 export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
     const { character, history, preset, worldBooks, regexes, userIdentity, userName = "User",
         longTermMemories, coreMemories, scheduleSummary } = input;
@@ -971,9 +978,16 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
     // 按「当前说话的角色」取一份：群聊里每个成员各自拿到自己那份（见群聊分支）。
     let backpackContext = input.backpackContext;
     if (backpackContext === undefined) {
-        try {
-            backpackContext = character?.id ? buildBackpackPromptForCharacter(character.id) : "";
-        } catch {
+        // 只在聊天场景自动生成：调用方必须显式声明 chat / group_chat。
+        // 剧情、查手机、日记、访谈、朋友圈等共用本组装器但不声明聊天标签，一律不注入背包。
+        const declaredChatTags = [...(input.appTags ?? []), ...(input.appId ? [input.appId] : [])];
+        if (declaredChatTags.some(tag => BACKPACK_PROMPT_TAGS.includes(tag))) {
+            try {
+                backpackContext = character?.id ? buildBackpackPromptForCharacter(character.id) : "";
+            } catch {
+                backpackContext = "";
+            }
+        } else {
             backpackContext = "";
         }
     }
@@ -1771,6 +1785,8 @@ export interface GroupAssemblerInput {
     checkPhoneBilingualInstruction?: string;
     xiaohongshuBilingualInstruction?: string;
     nativeToolHistory?: boolean;
+    /** 随身背包物品清单 + 角色可写入的操作标记（不传则按会话自动生成） */
+    backpackContext?: string;
 }
 
 function pushGroupChronologicalShortTermBlocks(params: {
@@ -2092,7 +2108,10 @@ export function assembleGroupPromptPayload(input: GroupAssemblerInput): LLMMessa
         // 背包按成员逐份注入：每个角色只看到自己的物品与「他知道的用户物品」，
         // 群聊里没有公共礼物堆，避免模型把别人的东西当成自己的。
         let backpackSection = "";
-        if (input.backpackContext === undefined) {
+        // 与单聊同一规则：只有聊天场景（群聊 group_chat）才注入背包提示词。
+        // 自定义 APP 的多人补全等调用方用空 appTags，这里就不会带上背包。
+        const backpackAllowed = (input.appTags ?? []).some(tag => BACKPACK_PROMPT_TAGS.includes(tag));
+        if (input.backpackContext === undefined && backpackAllowed) {
             try {
                 backpackSection = buildBackpackPromptForCharacter(char.id, { memberName: char.name });
             } catch {
