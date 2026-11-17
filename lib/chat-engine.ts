@@ -95,9 +95,12 @@ import { armShortcutContinuation, SHORTCUT_VISION_OFF_NOTE, type ShortcutContinu
 
 
 export class ChatEngineError extends Error {
-    constructor(message: string) {
+    /** 可选错误码：调用方据此判断是否值得退回重试（如流式只回了思考、正文一个字没有） */
+    readonly code?: string;
+    constructor(message: string, code?: string) {
         super(message);
         this.name = "ChatEngineError";
+        this.code = code;
     }
 }
 
@@ -886,7 +889,8 @@ export async function sendLLMStreamRequest(
         };
         const { content: streamedContent, rawResponse } = await readSseStream(response, request.providerKind, streamLogCallbacks, !options?.skipTimestampStrip);
         if (!streamedContent.trim()) {
-            throw new ChatEngineError("流式响应没有解析到文本增量。");
+            // 打上错误码：这是「流正常结束但一个正文字都没有」，调用方可以安全地退回整段请求重试
+            throw new ChatEngineError("流式响应没有解析到文本增量。", "stream_no_text_delta");
         }
         let rawOutput = options?.skipTimestampStrip ? streamedContent.trim() : stripHallucinatedTimestamps(streamedContent.trim());
         // 与 sendLLMRequest 一致：调用方要求时把思维链拼成 <think> 块放在正文前（剧情模式用）
@@ -948,7 +952,8 @@ export async function sendLLMRequestPreferStream(
     meta?: { characterName?: string; userName?: string },
     options?: Parameters<typeof sendLLMRequest>[5],
 ): Promise<string> {
-    let received = false;
+    let receivedContent = false;
+    let receivedReasoning = false;
     let reasoning = "";
     try {
         const result = await sendLLMStreamRequest(config, preset, messages, regexes, meta, {
@@ -962,16 +967,24 @@ export async function sendLLMRequestPreferStream(
             characterId: options?.characterId,
             signal: options?.signal,
         }, {
-            onDelta: () => { received = true; },
-            onReasoningDelta: (text: string) => { received = true; reasoning += text; },
+            onDelta: () => { receivedContent = true; },
+            onReasoningDelta: (text: string) => { receivedReasoning = true; reasoning += text; },
         });
         if (reasoning) {
             try { options?.onReasoning?.(reasoning); } catch { /* 捕获回调异常，不影响主流程 */ }
         }
         return result.content;
     } catch (error) {
-        if (received || options?.signal?.aborted) throw error;
-        console.warn("[ChatEngine] 流式请求没有收到内容，退回非流式重试：", error);
+        if (options?.signal?.aborted) throw error;
+        // 可以退回整段请求的两种情况：
+        //  ① 一个字都没收到：接口或中转不支持 SSE 等；
+        //  ② 流正常结束，但只回了思考、正文一个字没有：推理型模型把输出预算烧在 thinking 上，
+        //     或中转把正文 part 丢了，都会走到这里。重试整段请求才可能拿到正文。
+        // 「已收到正文」或「中途断开但已经产出思考」仍原样抛出——避免同一次长生成计费两次。
+        const emptyContentStream = error instanceof ChatEngineError && error.code === "stream_no_text_delta";
+        const canRetry = !receivedContent && (!receivedReasoning || emptyContentStream);
+        if (!canRetry) throw error;
+        console.warn("[ChatEngine] 流式请求没有拿到正文，退回非流式重试：", error);
         return sendLLMRequest(config, preset, messages, regexes, meta, options);
     }
 }
