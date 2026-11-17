@@ -1203,7 +1203,10 @@ export function prepareShortTermContext(
         for (let i = pool.length - 1; i >= 0; i--) {
             const p = pool[i];
             if (p.kind !== "history") continue;
-            if (p.tokens > remaining) break;
+            // 保底：最新一条历史无论多大都必须留下。剧情是连续性创作，没有最近一轮就彻底接不上；
+            // 而它一旦被裁光，上下文里通常只剩聊天/线下摘要，模型会照着那些内容另起炉灶
+            // ——输出成线下聊天的 <content>/<summary> 格式、写完全无关的角色，就是这么来的。
+            if (p.tokens > remaining && survivingMsgIndices.size > 0) break;
             remaining -= p.tokens;
             survivingMsgIndices.add(p.msgIdx);
         }
