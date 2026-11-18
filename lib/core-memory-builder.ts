@@ -125,22 +125,44 @@ export async function runCoreMemoryPipeline(
         ? (stripMemoryStructuredSections(latestPrevSummary.content) || latestPrevSummary.content).trim()
         : "";
 
+    // 角色本人最近一轮反思里给出的修正版（并存方案）：只作为「定性表述」的参考意见，
+    // 不顶替上面那份系统总结——否则下一轮总结会拿角色自己的叙述当事实底座，越迭代越自我美化。
+    const latestRefinedEntry = existingCoreEntries
+        .filter(e =>
+            e.metadata?.origin === "character_reflection"
+            && typeof e.metadata?.correctedContent === "string"
+            && String(e.metadata.correctedContent).trim()
+            && !isEntrySuperseded(e),
+        )
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+    const refinedText = latestRefinedEntry
+        ? String(latestRefinedEntry.metadata?.correctedContent ?? "").trim()
+        : "";
+
     const { eventsText, earliest, latest } = formatted;
     const latestCursorTs = entries.reduce((max, item) => (item.timestamp > max ? item.timestamp : max), entries[0].timestamp);
     const promptTemplate = config.coreMemoryPrompt?.trim() || DEFAULT_CORE_MEMORY_PROMPT;
     const hasPreviousPlaceholder = /\{\{previous\}\}/i.test(promptTemplate);
+    const hasRefinedPlaceholder = /\{\{previousRefined\}\}/i.test(promptTemplate);
+
+    // 模板没写 {{previousRefined}} 时，把角色修正意见并到上一轮总结后面（而不是前面），
+    // 保证模型先看到系统事实基线，再看角色对它的异议。
+    const previousWithRefined = refinedText
+        ? `${previousText}${previousText ? "\n\n" : ""}【角色本人对上一版的修正意见（只采纳其定性判断；其中若有长期记忆不支持的说法，一律以系统总结为准）】\n${refinedText}`
+        : previousText;
 
     // 若用户自定义提示词里没写 {{previous}} 占位符，自动把上一轮核心记忆总结拼在 {{events}} 顶部，
     // 兼容「如果长期记忆记录中已包含上一轮核心记忆总结，将其作为基础进行增量更新」的写法。
-    const eventsWithOptionalPrev = (!hasPreviousPlaceholder && previousText)
-        ? `【上一轮核心记忆总结（待增量验证与更新）】\n${previousText}\n\n【本周期新增长期记忆与事件盒总结】\n${eventsText}`
+    const eventsWithOptionalPrev = (!hasPreviousPlaceholder && previousWithRefined)
+        ? `【上一轮核心记忆总结（待增量验证与更新）】\n${previousWithRefined}\n\n【本周期新增长期记忆与事件盒总结】\n${eventsText}`
         : eventsText;
 
     const prompt = promptTemplate
         .replace(/\{\{char\}\}/gi, characterName)
         .replace(/\{\{earliest\}\}/gi, earliest)
         .replace(/\{\{latest\}\}/gi, latest)
-        .replace(/\{\{previous\}\}/gi, previousText || "（首次提炼，尚无上一轮核心记忆总结）")
+        .replace(/\{\{previous\}\}/gi, (hasRefinedPlaceholder ? previousText : previousWithRefined) || "（首次提炼，尚无上一轮核心记忆总结）")
+        .replace(/\{\{previousRefined\}\}/gi, refinedText || "（角色尚未对核心记忆提出修正）")
         .replace(/\{\{events\}\}/gi, eventsWithOptionalPrev)
         .replace(/\{\{longTermMemories\}\}/gi, eventsWithOptionalPrev);
 

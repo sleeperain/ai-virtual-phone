@@ -107,6 +107,135 @@ export const DEFAULT_REFLECTION_PROMPT = `你此刻是「{{char}}」本人。请
 - **字数严格控制在 100-180 字**，合为 **1 个紧凑的自然段**，句句皆为定性判断，拒绝散文化铺垫。
 - 纯文本输出，不要标题、编号、分条列表或括号注释，第一句话直接切入认知结论：`;
 
+/**
+ * 审校式反思模板：角色亲自核对「系统替他整理的核心记忆」准不准，并给出修正版。
+ * 与上面的提炼式模板并存——有未读核心记忆时用这套，一条都没有时回退提炼式。
+ * 占位符：{{char}} {{user}} {{persona}} {{tendency}} {{unreadCore}} {{coreMemories}} {{events}} {{previous}}
+ */
+export const DEFAULT_REFLECTION_AUDIT_PROMPT = `你此刻是「{{char}}」本人。系统一直在背后替你整理记忆，现在请你亲自过一遍这些整理结果，用你自己的眼光判断：它对你和{{user}}的描述，准不准？
+
+【你是谁（初始设定）】
+{{persona}}
+
+【你惯常的思考强度（1-10）】
+{{tendency}}
+这三个刻度只决定你审视的细致程度，严禁在正文中提及数字或刻度概念。
+
+【需要你审校的核心记忆（系统整理的，你还没读过）】
+{{unreadCore}}
+
+【你更早沉淀的核心记忆（供对照，不必逐条审校）】
+{{coreMemories}}
+
+【事实底稿（仅供核对，严禁把里面具体事物抄进正文）】
+{{events}}
+
+【你上一轮的认知判断（若为空则为首次）】
+{{previous}}
+
+═══ 你的任务 ═══
+1. 判断系统这份核心记忆：事实有没有记错、定性有没有偏、有没有把你写成不是你的人。
+2. 觉得不准，就按你自己的说法改写；觉得准，就原样重述一遍确认。
+3. 只修正定性表述与事实错误，不要推翻系统记录的事实本身。
+
+═══ 绝对禁令（违反任意一条即为失败） ═══
+1. 严禁任何动作、神态、环境描写，禁止「摘下眼镜」「夜深了」这类舞台开场。
+2. 严禁提及任何具体食物、物品、金额、地名或日常琐事。
+3. 严禁写抒情散文、时间词，结尾严禁写具体日常打算。
+4. 严禁编造【事实底稿】与核心记忆里都没有发生过的事。
+
+═══ 输出格式（严格三段，除这三段外不要任何多余文字） ═══
+【判断】准确 / 部分失真 / 严重失真
+【问题】指出错在哪，不超过 60 字；若准确则写「无」
+【修正版】用第一人称复述这份核心记忆，100-180 字紧凑一段；若准确则原样复述原文`;
+
+/** 反思审校对核心记忆打下的元数据键：只有打了点的条目才算「已被角色读过」。 */
+export const REFLECTION_META_KEYS = {
+    auditedAt: "reflectionAuditedAt",
+    auditedRound: "reflectionAuditedRound",
+    auditedBy: "reflectionAuditedBy",
+} as const;
+
+/** 单次反思最多审校的未读核心记忆条数：防止历史数据一次性灌爆上下文。 */
+const MAX_UNREAD_AUDIT_ENTRIES = 6;
+/** 待审校素材的字数护栏。 */
+const MAX_UNREAD_AUDIT_CHARS = 2400;
+
+export type ReflectionAuditVerdict = "accurate" | "partial" | "severe" | "unknown";
+
+export type ReflectionAudit = {
+    verdict: ReflectionAuditVerdict;
+    issues: string;
+    corrected: string;
+};
+
+/** 解析审校模式的固定三段输出；模型跑格式时判为 unknown，仍保留原文可用于降级。 */
+export function parseReflectionAudit(raw: string): ReflectionAudit {
+    const text = String(raw || "");
+    const grab = (label: string): string => {
+        const re = new RegExp(`【${label}】\\s*([\\s\\S]*?)(?=【[^】]+】|$)`, "i");
+        const matched = text.match(re);
+        return matched ? matched[1].trim() : "";
+    };
+    const verdictRaw = grab("判断");
+    // 注意顺序：必须先命中「否定式」表述，再判「准确」——
+    // 否则模型写「不准确」「基本不准」时会被 /准确/ 抢先匹配成 accurate，
+    // 进而走「判准即不落库」的分支，把角色本来提出的修正意见整条丢掉。
+    const verdict: ReflectionAuditVerdict = /严重|重大|完全不是|根本不是/.test(verdictRaw)
+        ? "severe"
+        : /不准确|不准|部分|不够|偏差|不太|失真|有误|不对/.test(verdictRaw)
+            ? "partial"
+            : /准确|无误|没问题/.test(verdictRaw)
+                ? "accurate"
+                : "unknown";
+    return {
+        verdict,
+        issues: grab("问题").replace(/^无[。.]?$/, "").trim(),
+        corrected: grab("修正版"),
+    };
+}
+
+/** 该条核心记忆是否已被角色反思读过（审校过）。 */
+export function isEntryReflectionAudited(entry: MemoryEntry): boolean {
+    return Boolean(entry.metadata?.[REFLECTION_META_KEYS.auditedAt]);
+}
+
+/**
+ * 挑出「最近生成、但角色还没读过」的核心记忆作为本轮审校对象。
+ * 排除三类：反思自身的产物（否则角色审自己）、已被后续版本接替的旧条目、用户手写的核心设定
+ * （user_manual 是用户亲自置顶的，角色只作参考，不参与裁定）。
+ */
+export function selectUnreadCoreTargets(coreEntries: MemoryEntry[]): MemoryEntry[] {
+    return coreEntries
+        .filter(entry =>
+            entry.type === "core"
+            && !isReflectionMemoryEntry(entry)
+            && !isEntrySuperseded(entry)
+            && !isEntryReflectionAudited(entry)
+            && String(entry.metadata?.origin ?? "") !== "user_manual",
+        )
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, MAX_UNREAD_AUDIT_ENTRIES);
+}
+
+/** 待审校素材格式化：逐条标明来源，让角色知道自己在审哪一份。 */
+function formatUnreadCoreText(targets: MemoryEntry[]): string {
+    if (targets.length === 0) return "";
+    const lines: string[] = [];
+    let total = 0;
+    for (const entry of targets) {
+        const span = typeof entry.metadata?.timeSpan === "string" && entry.metadata.timeSpan.trim()
+            ? entry.metadata.timeSpan.trim()
+            : resolveEventDay(entry);
+        const body = cleanMemoryBody(entry.content).replace(/\s+/g, " ").trim();
+        if (!body) continue;
+        total += body.length;
+        if (total > MAX_UNREAD_AUDIT_CHARS) break;
+        lines.push(`- [${span}] ${body}`);
+    }
+    return lines.join("\n");
+}
+
 function toLocalDayKey(isoStr: string): string {
     const d = new Date(isoStr);
     if (isNaN(d.getTime())) return isoStr.slice(0, 10) || "";
@@ -246,6 +375,12 @@ export async function runCoreMemoryReflection(
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
         .slice(-5);
 
+    // ── 本轮审校对象：只挑「角色还没读过」的核心记忆 ──
+    // 这是「让角色参与记忆库管理」的入口：系统整理的每一份核心记忆，最终都要经过角色本人的一次核准。
+    // 一条未读都没有时，unreadTargets 为空，本次反思退回原来的提炼式行为，不会卡住流程。
+    const unreadTargets = selectUnreadCoreTargets(coreEntries);
+    const unreadCoreText = formatUnreadCoreText(unreadTargets);
+
     // ── 素材降噪（防止几十条日常吃喝琐事把反思拉回日记体）──
     // 既然反思是「核心记忆之上的更高一层理解」：
     // 1. 当已有核心记忆沉淀（activeCoreSummaries）或事件盒阶段总结（isDigest）时，
@@ -260,8 +395,12 @@ export async function runCoreMemoryReflection(
             ? highSignalScoped.slice(-MAX_EVENT_ENTRIES)
             : scoped.slice(-MAX_EVENT_ENTRIES));
     const selected = effectivePool;
-    const coreMemoriesText = activeCoreSummaries.length > 0
-        ? activeCoreSummaries
+    // 审校模式下，待审校的那几条已经单独列进 {{unreadCore}}，这里剔除掉避免同一份内容在提示词里出现两次
+    // （既省上下文，也防止模型把重复段落误当成「两条独立证据」）。
+    const unreadIdSet = new Set(unreadTargets.map(e => e.id));
+    const coreEntriesForContext = activeCoreSummaries.filter(e => !unreadIdSet.has(e.id));
+    const coreMemoriesText = coreEntriesForContext.length > 0
+        ? coreEntriesForContext
             .map(e => {
                 const span = typeof e.metadata?.timeSpan === "string" && e.metadata.timeSpan.trim()
                     ? e.metadata.timeSpan.trim()
@@ -269,7 +408,9 @@ export async function runCoreMemoryReflection(
                 return `- [${span}] ${cleanMemoryBody(e.content).replace(/\s+/g, " ")}`;
             })
             .join("\n")
-        : "（暂无核心记忆沉淀，请直接基于下方事件脉络进行反思）";
+        : (unreadTargets.length > 0
+            ? "（暂无其他核心记忆可供对照）"
+            : "（暂无核心记忆沉淀，请直接基于下方事件脉络进行反思）");
 
     // ── 素材 3：短期即时片段（仅在完全没有长期记忆与核心记忆沉淀时作兜底）──
     // 一旦已有长期记忆或核心记忆沉淀，绝不再混入未总结的原始日常聊天记录：
@@ -320,9 +461,18 @@ export async function runCoreMemoryReflection(
         ? buildPersonaText(character, userName)
         : `你的名字是「${resolvedName || "这个角色"}」，你在和「${userName}」相处。`;
 
-    // 用用户在「记忆库 → 设置 → 角色反思提示词」里保存的模板；没配过就回退内置默认
-    const reflectionTemplate = (loadMemoryConfig().reflectionPrompt ?? "").trim() || DEFAULT_REFLECTION_PROMPT;
+    // 用用户在「记忆库 → 设置 → 角色反思提示词」里保存的模板；没配过则按本轮目的选内置默认：
+    // 有未读核心记忆 → 审校式模板；一条都没有 → 提炼式模板（保持旧行为）
+    const builtinReflectionTemplate = unreadTargets.length > 0
+        ? DEFAULT_REFLECTION_AUDIT_PROMPT
+        : DEFAULT_REFLECTION_PROMPT;
+    const reflectionTemplate = (loadMemoryConfig().reflectionPrompt ?? "").trim() || builtinReflectionTemplate;
     const hasCorePlaceholder = /\{\{coreMemories\}\}/i.test(reflectionTemplate);
+    const hasUnreadPlaceholder = /\{\{unreadCore\}\}/i.test(reflectionTemplate);
+    // 兜底：用户模板没写 {{unreadCore}} 时，把待审校内容并进核心记忆段顶部
+    const coreMemoriesWithUnread = (!hasUnreadPlaceholder && unreadCoreText)
+        ? `【待你审校的核心记忆（系统整理，你还没读过）】\n${unreadCoreText}\n\n${coreMemoriesText}`
+        : coreMemoriesText;
     // 若用户自定义了旧版反思模板（不含 {{coreMemories}}），自动将核心记忆沉淀拼入 {{events}} 顶部，保证不丢高层脉络
     const finalEventsText = (!hasCorePlaceholder && activeCoreSummaries.length > 0)
         ? `【近期核心记忆心理沉淀】\n${coreMemoriesText}\n\n【具体事件与长期记忆】\n${eventsText}`
@@ -337,7 +487,8 @@ export async function runCoreMemoryReflection(
             .replace(/\{\{persona\}\}/gi, personaText)
             .replace(/\{\{earliest\}\}/gi, earliest || "未知")
             .replace(/\{\{latest\}\}/gi, latest || "未知")
-            .replace(/\{\{coreMemories\}\}/gi, coreMemoriesText)
+            .replace(/\{\{unreadCore\}\}/gi, unreadCoreText || "（本轮没有待审校的核心记忆）")
+            .replace(/\{\{coreMemories\}\}/gi, coreMemoriesWithUnread)
             .replace(/\{\{events\}\}/gi, finalEventsText)
             .replace(/\{\{transient\}\}/gi, transientText || "（无）")
             .replace(/\{\{previous\}\}/gi, previousText || "（这是第一次反思，此前没有留下过想法）"),
@@ -365,9 +516,36 @@ export async function runCoreMemoryReflection(
         return { success: false, error: "反思结果疑似被截断，已取消入库，请稍后重试", apiSource: api.source };
     }
 
-    const reflection = cleanReflectionOutput(result.content);
+    const cleanedOutput = cleanReflectionOutput(result.content);
+    // 审校模式解析【判断】【问题】【修正版】三段；提炼模式下解析为空，回退整段入库（旧行为不变）
+    const audit = parseReflectionAudit(cleanedOutput);
+    const reflection = (audit.corrected || cleanedOutput).trim();
     if (reflection.length < 20) {
         return { success: false, error: "反思结果过短，已取消入库", apiSource: api.source };
+    }
+
+    // 角色判定「系统这份写得准确」时，不再往库里多写一条近乎同义的反思条目，
+    // 只给被审校的条目打「已读」标记——并存的前提是不制造重复内容。
+    if (unreadTargets.length > 0 && audit.verdict === "accurate") {
+        const auditedAt = new Date().toISOString();
+        for (const target of unreadTargets) {
+            await saveMemoryEntry({
+                ...target,
+                metadata: {
+                    ...(target.metadata ?? {}),
+                    [REFLECTION_META_KEYS.auditedAt]: auditedAt,
+                    [REFLECTION_META_KEYS.auditedRound]: round,
+                    [REFLECTION_META_KEYS.auditedBy]: "accurate_noop",
+                },
+            });
+        }
+        return {
+            success: true,
+            content: reflection,
+            round,
+            apiSource: api.source,
+            model: api.apiConfig.defaultModel,
+        };
     }
 
     // 主导来源：与核心记忆保持一致，便于检索统计
@@ -409,9 +587,32 @@ export async function runCoreMemoryReflection(
             previousReflectionId: previousReflection?.id ?? null,
             apiSource: api.source,
             model: api.apiConfig.defaultModel,
+            // ── 审校模式独有：并存方案下，原 AI 总结一条都不删、不改，
+            //    角色的裁定与修正版作为独立条目留在这里，两版在记忆库里可以并列回看 ──
+            reflectionMode: unreadTargets.length > 0 ? "audit" : "consolidate",
+            auditTargetIds: unreadTargets.map(e => e.id),
+            auditVerdict: audit.verdict,
+            auditIssues: audit.issues,
+            correctedContent: audit.corrected || "",
+            auditRaw: cleanedOutput,
         },
     };
     await saveMemoryEntry(coreEntry);
+
+    // 给本轮审校过的核心记忆打上「已读」标记：内容一行不改，只加元数据
+    if (unreadTargets.length > 0) {
+        for (const target of unreadTargets) {
+            await saveMemoryEntry({
+                ...target,
+                metadata: {
+                    ...(target.metadata ?? {}),
+                    [REFLECTION_META_KEYS.auditedAt]: now,
+                    [REFLECTION_META_KEYS.auditedRound]: round,
+                    [REFLECTION_META_KEYS.auditedBy]: entryId,
+                },
+            });
+        }
+    }
 
     // 新一轮反思落盘后，将之前的旧反思标记为已被新反思接替并降权（取消 active），
     // 历史记录仍留在核心记忆列表供用户回看，但避免多轮过期心境同时注入聊天导致角色精分。

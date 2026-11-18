@@ -91,7 +91,7 @@ export const DEFAULT_SUMMARIZATION_PROMPT = `你是一个记忆整理助手。�
 
 /**
  * Default core-memory summarization prompt template.
- * Placeholders: {{char}}, {{earliest}}, {{latest}}, {{previous}}, {{events}}
+ * Placeholders: {{char}}, {{earliest}}, {{latest}}, {{previous}}, {{previousRefined}}, {{events}}
  */
 export const DEFAULT_CORE_MEMORY_PROMPT = `你是一个核心记忆整理助手。你的任务是以角色的内在视角，将长期记忆中的经历提炼为角色自身的成长脉络，这不是关系档案，而是角色"经历过这些事之后，变成了怎样的人"的心理沉淀。
 
@@ -100,6 +100,9 @@ export const DEFAULT_CORE_MEMORY_PROMPT = `你是一个核心记忆整理助手�
 
 上一轮核心记忆总结（若为首次提炼则为空）：
 {{previous}}
+
+角色本人对上一轮的修正意见（可能为空；只参考其中对性格、动机、关系定性的判断，不得据此新增长期记忆里没有的事实）：
+{{previousRefined}}
 
 本周期长期记忆记录：
 {{events}}
