@@ -784,8 +784,8 @@ export async function resplitMergedMemory(
         };
     }
 
-    // 原条目弃用：整条移进「最近删除」，不再以低权重半活着参与注入。
-    // 用户想回退时可以在「最近删除」里一键恢复，恢复后它就是普通的可用记忆。
+    // 原条目移进「最近删除」：不再以低权重半活着参与注入。
+    // 用户想回退时点「恢复」，detachResplitChildren 会把上面这批碎片直接删掉，回到拆分前。
     await trashMemoryEntry(
         {
             ...target,
@@ -804,33 +804,24 @@ export async function resplitMergedMemory(
 }
 
 /**
- * 恢复「被拆分的那条原记忆」时，把它拆分出来的子条目一并停用（移入「最近删除」）。
+ * 恢复「被拆分的那条原记忆」时，把由它拆出来的碎片直接从库里删掉。
  *
- * 为什么必须做：拆分时原条目进了回收站、碎片留在主列表；用户点恢复本意是「回到拆之前」，
- * 若碎片还留在库里，同样的内容就会以原条目 + 若干碎片的形式重复存在，越用越乱。
- * 这里不硬删——碎片里也是真实内容，只是不再与原条目同时生效，用户仍可在回收站里单独恢复。
+ * 为什么必须删干净：拆分时原条目进了回收站、碎片留在主列表；用户点恢复的本意是
+ * 「回到拆之前」。碎片留着就是同一件事的重复副本，既占召回名额又让记忆库变乱，
+ * 而且内容已经被原条目完整覆盖，留着没有任何价值——所以这里直接彻底删除，不进回收站。
+ *
+ * 只删「resplitFrom 指向这条原记忆」的条目，绝不碰其它记忆。
  */
 export async function detachResplitChildren(
     characterId: string,
     parent: MemoryEntry,
 ): Promise<{ removed: number; parent: MemoryEntry }> {
     const all = await loadMemoryEntriesByType(characterId, "long_term");
-    const children = all.filter(entry =>
-        !isEntryTrashed(entry) && String(entry.metadata?.resplitFrom ?? "") === parent.id,
-    );
-    for (const child of children) {
-        await trashMemoryEntry(
-            {
-                ...child,
-                updatedAt: new Date().toISOString(),
-                metadata: {
-                    ...(child.metadata ?? {}),
-                    // 记下它是被哪次恢复牵连停用的，回收站里能看懂来龙去脉
-                    resplitDetachedBy: parent.id,
-                },
-            },
-            { by: "user", reason: "所属原记忆已恢复，拆分产物一并停用" },
-        );
+    const childIds = all
+        .filter(entry => !isEntryTrashed(entry) && String(entry.metadata?.resplitFrom ?? "") === parent.id)
+        .map(entry => entry.id);
+    if (childIds.length > 0) {
+        await deleteMemoryEntries(childIds);
     }
     // 原条目上「拆成了哪几条」的记录已经失效，顺手清掉，避免下次恢复又去找这批碎片
     const metadata: Record<string, unknown> = { ...(parent.metadata ?? {}) };
@@ -841,14 +832,14 @@ export async function detachResplitChildren(
         metadata,
     };
     await saveMemoryEntry(next);
-    return { removed: children.length, parent: next };
+    return { removed: childIds.length, parent: next };
 }
 
 /**
  * 兜底清理「孤儿碎片」：父条目已经恢复（不在最近删除里）却还留在主列表的拆分子条目。
  *
- * 用于修复已经发生过的状态——早先版本恢复原记忆时不会处理碎片，库里就会同时存在
- * 原条目和它的若干碎片。这里把这些碎片移入「最近删除」（可恢复、不硬删）。
+ * 用于修复已经发生过的状态——早先版本恢复原记忆时不处理碎片，库里就会同时存在
+ * 原条目和它的若干碎片，同一件事重复参与召回。这里把这些碎片直接彻底删除。
  * 父条目已被彻底删除、或仍在回收站时不动：那时碎片是唯一内容，删了才是真丢。
  */
 export async function sweepOrphanResplitChildren(
@@ -867,20 +858,9 @@ export async function sweepOrphanResplitChildren(
     });
     if (orphans.length === 0) return { count: 0, ids: [] };
 
-    for (const child of orphans) {
-        await trashMemoryEntry(
-            {
-                ...child,
-                updatedAt: new Date().toISOString(),
-                metadata: {
-                    ...(child.metadata ?? {}),
-                    resplitDetachedBy: String(child.metadata?.resplitFrom ?? ""),
-                },
-            },
-            { by: "user", reason: "所属原记忆已恢复，拆分产物一并停用" },
-        );
-    }
-    return { count: orphans.length, ids: orphans.map(entry => entry.id) };
+    const ids = orphans.map(entry => entry.id);
+    await deleteMemoryEntries(ids);
+    return { count: ids.length, ids };
 }
 
 /**

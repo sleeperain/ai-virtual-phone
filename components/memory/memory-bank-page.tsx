@@ -562,7 +562,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             setBoxes(loadEventBoxes(charId));
             const notices: string[] = [];
             if (swept.count > 0) {
-                notices.push(`${swept.count} 条残留的拆分碎片已移入「最近删除」（原记忆已恢复，碎片不该再重复生效）`);
+                notices.push(`已删除 ${swept.count} 条残留的拆分碎片（原记忆已恢复，碎片是重复内容）`);
             }
             if (purged.count > 0) {
                 notices.push(`已自动清理 ${purged.count} 条在「最近删除」中超过 ${TRASH_RETENTION_DAYS} 天的记忆`);
@@ -700,13 +700,13 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         if (!selectedCharId) return;
         try {
             const restored = await restoreTrashedEntry(entry);
-            // 这条记忆若曾被「拆分重总结」拆开过，把拆出来的碎片一并停用：
-            // 恢复的语义是「回到拆之前」，碎片若还留着，同样的内容会重复存在。
+            // 这条记忆若曾被「拆分重总结」拆开过，把拆出来的碎片直接删掉：
+            // 恢复的语义是「回到拆之前」，碎片留着就是同一件事的重复副本。
             const detached = await detachResplitChildren(selectedCharId, restored);
             await loadDetailData(selectedCharId);
             loadCharacterList();
             showNotice(detached.removed > 0
-                ? `已恢复；同时把 ${detached.removed} 条由它拆分出来的条目移入「最近删除」，避免内容重复`
+                ? `已恢复；并已删除 ${detached.removed} 条由它拆分出来的碎片`
                 : "已恢复，这条记忆会重新参与记忆注入");
         } catch (err) {
             showNotice("恢复失败: " + String(err));
@@ -725,7 +725,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             await loadDetailData(selectedCharId);
             loadCharacterList();
             showNotice(detachedTotal > 0
-                ? `已恢复 ${entries.length} 条记忆；同时把 ${detachedTotal} 条由它们拆分出来的条目移入「最近删除」，避免内容重复`
+                ? `已恢复 ${entries.length} 条记忆；并已删除 ${detachedTotal} 条由它们拆分出来的碎片`
                 : `已恢复 ${entries.length} 条记忆`);
         } catch (err) {
             showNotice("批量恢复失败: " + String(err));
@@ -755,7 +755,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             if (res.success) {
                 await loadDetailData(selectedCharId);
                 loadCharacterList();
-                showNotice(`已拆分为 ${res.createdCount} 条独立记忆，原条目已移入「最近删除」（恢复原条目时这些碎片会自动停用）`);
+                showNotice(`已拆分为 ${res.createdCount} 条独立记忆，原条目已移入「最近删除」（恢复原条目会自动删掉这些碎片）`);
             } else {
                 showNotice(res.error || "拆分失败");
             }
@@ -2468,10 +2468,8 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                     {(resplitIntoCount > 0 || resplitFromId || resplitDetached) && (
                         <div className="ts-11 text-secondary" style={{ padding: "2px 0" }}>
                             {resplitIntoCount > 0
-                                ? `这条曾被拆成 ${resplitIntoCount} 条碎片：点「恢复」会把它们一并停用，回到拆分前的样子。`
-                                : resplitDetached
-                                    ? "由拆分产生，原记忆恢复时已自动停用；单独恢复它就会重新生效。"
-                                    : "由拆分产生：单独恢复它会和原记忆同时存在，注意别重复。"}
+                                ? `这条曾被拆成 ${resplitIntoCount} 条碎片：点「恢复」会直接删掉那些碎片，回到拆分前的样子。`
+                                : "由拆分产生：原记忆恢复后它会被自动删除；单独恢复它会和原记忆重复，一般不必恢复。"}
                         </div>
                     )}
                     <div
@@ -3349,7 +3347,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                 {confirmBatchResplit !== null && (
                     <ConfirmDialog
                         title={`批量拆分 ${confirmBatchResplit} 条疑似合并的记忆？`}
-                        message="每一条都会单独调用一次模型判断：只有确实把互不相干的事硬凑成一条时才拆（最多 3 条），本来就是一件事的原样保留、不做改动。被拆的原条目会移入「最近删除」，点「恢复」会连同碎片一起回到拆分前。条数多时耗时较长，请不要离开页面。"
+                        message="每一条都会单独调用一次模型判断：只有确实把互不相干的事硬凑成一条时才拆（最多 3 条），本来就是一件事的原样保留、不做改动。被拆的原条目会移入「最近删除」，点「恢复」会直接删掉拆出来的碎片、回到拆分前。条数多时耗时较长，请不要离开页面。"
                         icon={AlertCircle}
                         confirmLabel="开始拆分"
                         cancelLabel="取消"
