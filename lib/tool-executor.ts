@@ -23,7 +23,13 @@ import {
 } from "./tool-storage";
 import { executeCustomAppToolCall } from "./custom-app-tool-runtime";
 import { characterWorkspace, agentComputerRequest, isAgentComputerConfigured } from "./agent-computer";
-import { AGENT_COMPUTER_CAPABILITY_ID, CALENDAR_MANAGEMENT_CAPABILITY_ID, LOCAL_DATA_LIBRARY_CAPABILITY_ID, MEMORY_WRITE_CAPABILITY_ID, MUSIC_CONTROL_CAPABILITY_ID, NOTE_WALL_CAPABILITY_ID, REALITY_BRIDGE_CAPABILITY_ID, SEND_FILE_CAPABILITY_ID, TIMED_WAKE_CAPABILITY_ID, TOOLBOX_MANAGEMENT_CAPABILITY_ID, getInternalCapability } from "./internal-capability-storage";
+import { AGENT_COMPUTER_CAPABILITY_ID, CALENDAR_MANAGEMENT_CAPABILITY_ID, LOCAL_DATA_LIBRARY_CAPABILITY_ID, MEMORY_MANAGE_CAPABILITY_ID, MEMORY_WRITE_CAPABILITY_ID, MUSIC_CONTROL_CAPABILITY_ID, NOTE_WALL_CAPABILITY_ID, REALITY_BRIDGE_CAPABILITY_ID, SEND_FILE_CAPABILITY_ID, TIMED_WAKE_CAPABILITY_ID, TOOLBOX_MANAGEMENT_CAPABILITY_ID, getInternalCapability } from "./internal-capability-storage";
+import {
+    listMemoriesForCharacter,
+    readMemoryDetail,
+    trashMemoryForCharacter,
+    updateMemoryForCharacter,
+} from "./memory-manage-tools";
 import { bridgeConnection, loadBridgeDataItems, loadBridgeShortcutActions, readAllBridgeStateSnapshots, readBridgeStateSnapshot } from "./reality-bridge/storage";
 import { createShortcutCommand, deliverShortcutCommand, waitForShortcutCommand } from "./shortcut-command-client";
 import { loadMemoryEntriesByType, saveMemoryEntry } from "./memory-storage";
@@ -803,6 +809,7 @@ async function executeInternalTool(call: ToolCall, context?: ToolExecutionContex
     if (call.name === "角色电脑") return executeAgentComputerTool(call, context);
     if (isRealityBridgeToolName(call.name)) return executeRealityBridgeTool(call, context);
     if (call.name === "稍后主动联系" || call.name === "设置定时醒来") return executeTimedWakeTool(call, context);
+    if (isMemoryManageToolName(call.name)) return executeMemoryManageTool(call, context);
 
     if (call.name !== "写入记忆") return null;
 
@@ -3088,6 +3095,112 @@ async function executeMemoryWriteTool(
         continueConversation: false,
         persistToHistory: false,
     };
+}
+
+const MEMORY_MANAGE_TOOL_NAMES = ["查看记忆列表", "查看记忆详情", "修改记忆", "弃用记忆"] as const;
+
+function isMemoryManageToolName(name: string): boolean {
+    return (MEMORY_MANAGE_TOOL_NAMES as readonly string[]).includes(name);
+}
+
+/**
+ * 角色主动管理记忆：只作用于 context.characterId 这一个角色，绝不接受模型传入的角色 id。
+ * 没有任何「彻底删除」路径——弃用即可，原文留给用户在「最近删除」里裁决。
+ */
+async function executeMemoryManageTool(call: ToolCall, context?: ToolExecutionContext): Promise<ToolResult> {
+    const capability = getInternalCapability(MEMORY_MANAGE_CAPABILITY_ID);
+    if (!capability || !capability.enabled || capability.mode === "off") {
+        return {
+            name: call.name,
+            success: false,
+            error: "记忆管理能力未启用",
+            userNotice: "记忆管理能力未启用",
+        };
+    }
+
+    if (!isSupportedChatToolContext(context) || !context.characterId) {
+        return {
+            name: call.name,
+            success: false,
+            error: "当前场景暂不支持管理记忆",
+            userNotice: "当前场景暂不支持管理记忆",
+        };
+    }
+
+    const characterId = context.characterId;
+    const memoryId = cleanToolString(call.args.memoryId ?? call.args.memory_id ?? call.args.id, 200);
+
+    try {
+        if (call.name === "查看记忆列表") {
+            const rawType = cleanToolString(call.args.type, 20);
+            const type = rawType === "core" || rawType === "long_term" ? rawType : "all";
+            const limitRaw = Number(call.args.limit);
+            const outcome = await listMemoriesForCharacter(characterId, type, Number.isFinite(limitRaw) ? limitRaw : 15);
+            return {
+                name: call.name,
+                success: outcome.ok,
+                ...(outcome.ok ? { data: outcome.text } : { error: outcome.text }),
+                continueConversation: true,
+                persistToHistory: true,
+            };
+        }
+
+        if (!memoryId) {
+            return {
+                name: call.name,
+                success: false,
+                error: "缺少 memoryId 参数，先用「查看记忆列表」拿到记忆 id",
+                userNotice: "没有指定要处理的记忆",
+            };
+        }
+
+        if (call.name === "查看记忆详情") {
+            const outcome = await readMemoryDetail(characterId, memoryId);
+            return {
+                name: call.name,
+                success: outcome.ok,
+                ...(outcome.ok ? { data: outcome.text } : { error: outcome.text }),
+                continueConversation: true,
+                persistToHistory: true,
+            };
+        }
+
+        if (call.name === "修改记忆") {
+            const contentRaw = call.args.content ?? call.args.text;
+            const content = typeof contentRaw === "string" ? contentRaw : undefined;
+            const importanceRaw = Number(call.args.importance);
+            const outcome = await updateMemoryForCharacter(characterId, memoryId, {
+                ...(content !== undefined ? { content } : {}),
+                ...(Number.isFinite(importanceRaw) ? { importance: importanceRaw } : {}),
+            });
+            return {
+                name: call.name,
+                success: outcome.ok,
+                ...(outcome.ok ? { data: outcome.text } : { error: outcome.text }),
+                continueConversation: outcome.ok,
+                persistToHistory: true,
+                userNotice: outcome.ok ? "角色改了一条记忆" : "记忆修改未生效",
+            };
+        }
+
+        // 弃用记忆
+        const reason = cleanToolString(call.args.reason, 200);
+        const outcome = await trashMemoryForCharacter(characterId, memoryId, reason);
+        return {
+            name: call.name,
+            success: outcome.ok,
+            ...(outcome.ok ? { data: outcome.text } : { error: outcome.text }),
+            continueConversation: outcome.ok,
+            persistToHistory: true,
+            userNotice: outcome.ok ? "角色弃用了一条记忆（可在「最近删除」恢复）" : "记忆弃用未生效",
+        };
+    } catch (err) {
+        return {
+            name: call.name,
+            success: false,
+            error: err instanceof Error ? err.message : String(err),
+        };
+    }
 }
 
 async function executeTimedWakeTool(call: ToolCall, context?: ToolExecutionContext): Promise<ToolResult> {

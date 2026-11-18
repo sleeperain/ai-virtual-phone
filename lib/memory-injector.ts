@@ -138,7 +138,12 @@ export function formatLongTermMemories(memories: MemoryEntry[]): string {
 export function formatCoreMemories(memories: MemoryEntry[]): string {
     if (memories.length === 0) return "";
 
-    const sorted = sortMemoriesByDateThenImportance(memories, 0.95);
+    // 与长期记忆保持一致：被弃用（进了回收站）的核心记忆不再注入。
+    // 这里原先直接排序输出，没走 filterRecallableEntries，导致核心记忆被弃用后仍会进 Prompt。
+    const recallable = filterRecallableEntries(memories);
+    if (recallable.length === 0) return "";
+
+    const sorted = sortMemoriesByDateThenImportance(recallable, 0.95);
 
     const lines: string[] = [];
     for (const entry of sorted) {

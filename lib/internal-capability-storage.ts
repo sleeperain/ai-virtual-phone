@@ -7,6 +7,7 @@ const INTERNAL_CAPABILITIES_KEY = "ai_phone_internal_capabilities_v1";
 registerKvMigration(INTERNAL_CAPABILITIES_KEY);
 
 export const MEMORY_WRITE_CAPABILITY_ID = "memory_write";
+export const MEMORY_MANAGE_CAPABILITY_ID = "memory_manage";
 export const NOTE_WALL_CAPABILITY_ID = "note_wall_service";
 export const MUSIC_CONTROL_CAPABILITY_ID = "music_control";
 export const CALENDAR_MANAGEMENT_CAPABILITY_ID = "calendar_management";
@@ -82,6 +83,107 @@ const MEMORY_WRITE_USAGE_GUIDE = [
     "",
     "如果确定需要写入，请直接输出执行动作指令，不要附加其他内容。",
 ].join("\n");
+
+const MEMORY_MANAGE_USAGE_GUIDE = [
+    "以下是你获取指令的返回结果：",
+    "服务：记忆管理",
+    "用途：翻看你自己的记忆库，检查有没有记错、记歪、或者早就不该再算数的记忆，并把它改对或弃用。",
+    "",
+    "执行时必须使用下面的具体动作名，不要输出「记忆管理」本身。",
+    "",
+    "先看清楚再动手：",
+    "- 改之前先用「查看记忆详情」读完整原文，不要只凭列表里那截断的一句就改写。",
+    "- 只修真正错的地方：事实记错、对你或{{user}}的定性偏了、把一次性的事写成了长期设定。",
+    "- 拿不准就不要改。你的记忆由系统整理，绝大多数是准的。",
+    "- 用户亲手写下的设定你看得见但改不了，也不要去尝试。",
+    "",
+    "动作：查看记忆列表",
+    "描述：列出你记忆库里可以管理的记忆（核心记忆与长期记忆）。",
+    "参数：",
+    "  - type (string): core=核心记忆，long_term=长期记忆，all=全部，默认 all",
+    "  - limit (number): 返回条数，1-30，默认 15",
+    "示例：",
+    '[执行动作:查看记忆列表({"type":"core","limit":10})]',
+    "",
+    "动作：查看记忆详情",
+    "描述：读取某条记忆的完整正文、类型、日期与重要性。拿到 id 后才能修改或弃用。",
+    "参数：",
+    "  - memoryId (string): 记忆列表或上下文中给出的记忆 id",
+    "示例：",
+    '[执行动作:查看记忆详情({"memoryId":"mem_xxx"})]',
+    "",
+    "动作：修改记忆",
+    "描述：改写某条记忆的正文或重要性。原内容会自动留快照，用户可以还原，所以修错了也不至于丢东西。",
+    "参数：",
+    "  - memoryId (string): 要修改的记忆 id",
+    "  - content (string): 改写后的正文，用事实句，一条只讲一件事",
+    "  - importance (number): 0 到 1，可选",
+    "示例：",
+    '[执行动作:修改记忆({"memoryId":"mem_xxx","content":"{{user}}对花生过敏，聚餐点菜时要避开。","importance":0.9})]',
+    "",
+    "动作：弃用记忆",
+    "描述：认为某条记忆记错了、或者不该再影响你时使用。弃用后它不再出现在你的记忆里，但原文会保留在用户的「最近删除」里，用户可以恢复它——所以你不需要、也不能把它彻底删掉。",
+    "参数：",
+    "  - memoryId (string): 要弃用的记忆 id",
+    "  - reason (string): 用一句话说清为什么这条不算数了",
+    "示例：",
+    '[执行动作:弃用记忆({"memoryId":"mem_xxx","reason":"这条把玩笑话当成约定了，实际并没有这个约定"})]',
+    "",
+    "限制：",
+    "- 一次最多处理 5 条记忆，不要连着大批量改。",
+    "- 只能管理你自己这一个角色的记忆库。",
+    "- 查看类动作会返回结果；修改和弃用会直接执行，执行时只输出动作指令，不要附加闲聊。",
+].join("\n");
+
+const MEMORY_MANAGE_SUBTOOLS: InternalToolDefinition[] = [
+    {
+        name: "查看记忆列表",
+        description: "列出你记忆库里可以管理的核心记忆与长期记忆。",
+        parameterSchema: JSON.stringify({
+            type: "object",
+            properties: {
+                type: { type: "string", description: "core=核心记忆，long_term=长期记忆，all=全部，默认 all" },
+                limit: { type: "number", description: "返回条数，1-30，默认 15" },
+            },
+        }),
+    },
+    {
+        name: "查看记忆详情",
+        description: "读取某条记忆的完整正文，用于确认要不要修改。",
+        parameterSchema: JSON.stringify({
+            type: "object",
+            properties: {
+                memoryId: { type: "string", description: "记忆 id" },
+            },
+            required: ["memoryId"],
+        }),
+    },
+    {
+        name: "修改记忆",
+        description: "改写某条记忆的正文或重要性，原内容自动留快照可还原。",
+        parameterSchema: JSON.stringify({
+            type: "object",
+            properties: {
+                memoryId: { type: "string", description: "要修改的记忆 id" },
+                content: { type: "string", description: "改写后的正文，事实句，一条只讲一件事" },
+                importance: { type: "number", description: "重要性，0 到 1，可选" },
+            },
+            required: ["memoryId"],
+        }),
+    },
+    {
+        name: "弃用记忆",
+        description: "把某条记错或不该算数的记忆标记为弃用，原文仍可由用户恢复。",
+        parameterSchema: JSON.stringify({
+            type: "object",
+            properties: {
+                memoryId: { type: "string", description: "要弃用的记忆 id" },
+                reason: { type: "string", description: "一句话说明为什么这条不算数了" },
+            },
+            required: ["memoryId"],
+        }),
+    },
+];
 
 const TIMED_WAKE_PARAMETER_SCHEMA = JSON.stringify({
     type: "object",
@@ -1197,6 +1299,15 @@ const BUILTIN_INTERNAL_CAPABILITIES: InternalCapabilityConfig[] = [
         updatedAt: 0,
     },
     {
+        id: MEMORY_MANAGE_CAPABILITY_ID,
+        name: "记忆管理",
+        description: "翻看、核对并修正你自己的记忆库：能读完整原文，能改掉记错或记歪的表述，也能把不该再算数的记忆弃用（原文保留在用户的「最近删除」里，可恢复）。不会碰用户手写的设定，也不会真正删除任何东西。",
+        enabled: false,
+        mode: "auto",
+        createdAt: 0,
+        updatedAt: 0,
+    },
+    {
         id: NOTE_WALL_CAPABILITY_ID,
         name: "便签墙",
         description: "公共社区便签墙相关服务。",
@@ -1307,6 +1418,14 @@ export function getInternalCapabilityToolDefinition(capability: InternalCapabili
             description: capability.description,
             parameterSchema: MEMORY_WRITE_PARAMETER_SCHEMA,
             usageGuide: MEMORY_WRITE_USAGE_GUIDE,
+        };
+    }
+    if (capability.id === MEMORY_MANAGE_CAPABILITY_ID) {
+        return {
+            name: capability.name,
+            description: capability.description,
+            parameterSchema: "{}",
+            usageGuide: MEMORY_MANAGE_USAGE_GUIDE,
         };
     }
     if (capability.id === NOTE_WALL_CAPABILITY_ID) {
@@ -1457,6 +1576,9 @@ export function getInternalCapabilitySubToolDefinition(
     capability: InternalCapabilityConfig,
     name: string,
 ): InternalToolDefinition | null {
+    if (capability.id === MEMORY_MANAGE_CAPABILITY_ID) {
+        return MEMORY_MANAGE_SUBTOOLS.find(tool => tool.name === name) ?? null;
+    }
     if (capability.id === NOTE_WALL_CAPABILITY_ID) {
         return NOTE_WALL_SUBTOOLS.find(tool => tool.name === name) ?? null;
     }
@@ -1481,6 +1603,9 @@ export function getInternalCapabilitySubToolDefinition(
 export function getInternalCapabilitySubToolDefinitions(
     capability: InternalCapabilityConfig,
 ): InternalToolDefinition[] {
+    if (capability.id === MEMORY_MANAGE_CAPABILITY_ID) {
+        return MEMORY_MANAGE_SUBTOOLS;
+    }
     if (capability.id === NOTE_WALL_CAPABILITY_ID) {
         return NOTE_WALL_SUBTOOLS;
     }

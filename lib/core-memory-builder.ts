@@ -12,6 +12,7 @@ import {
 import { resolveSummarizationApiConfig, stripMemoryStructuredSections } from "./memory-summarizer";
 import { simpleLLMCall } from "./api-helpers";
 import { filterRecallableEntries, isEntryBoxDigest } from "./memory-event-boxes";
+import { isEntryTrashed } from "./memory-trash";
 import {
     DEFAULT_REVISION_WEIGHT,
     isEntrySuperseded,
@@ -117,8 +118,9 @@ export async function runCoreMemoryPipeline(
 
     // 读取上一轮核心记忆总结，供增量验证与演进
     const existingCoreEntries = await loadMemoryEntriesByType(characterId, "core");
+    // 被弃用（进了回收站）的核心记忆不再作为「上一轮总结」的基线，也不参与演进
     const previousSummaries = existingCoreEntries
-        .filter(isAutoCoreSummaryEntry)
+        .filter(entry => isAutoCoreSummaryEntry(entry) && !isEntryTrashed(entry))
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     const latestPrevSummary = previousSummaries[0];
     const previousText = latestPrevSummary
@@ -132,7 +134,8 @@ export async function runCoreMemoryPipeline(
             e.metadata?.origin === "character_reflection"
             && typeof e.metadata?.correctedContent === "string"
             && String(e.metadata.correctedContent).trim()
-            && !isEntrySuperseded(e),
+            && !isEntrySuperseded(e)
+            && !isEntryTrashed(e),
         )
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
     const refinedText = latestRefinedEntry

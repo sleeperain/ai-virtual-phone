@@ -62,6 +62,18 @@ import {
     sliceSupersededText,
 } from "@/lib/memory-revision";
 import {
+    buildTrashBucket,
+    isEntryTrashed,
+    permanentlyDeleteTrashed,
+    readEditSnapshot,
+    readTrashActor,
+    readTrashedAt,
+    readTrashReason,
+    restoreTrashedEntry,
+    revertCharacterEdit,
+    trashMemoryEntry,
+} from "@/lib/memory-trash";
+import {
     DEFAULT_EVENT_BOX_SUMMARY_PROMPT,
     EVENT_BOX_STATUS_META,
     buildSmartBoxSuggestions,
@@ -93,7 +105,7 @@ import {
 } from "@/lib/memory-cognition";
 
 type MemoryView = "list" | "detail" | "settings";
-type MemoryTab = "short" | "shared" | "long" | "boxes" | "core";
+type MemoryTab = "short" | "shared" | "long" | "boxes" | "core" | "trash";
 type MemoryBudgetKey = "shortTermTokenBudget" | "coreMemoryTokenBudget" | "longTermTokenBudget";
 
 const MEMORY_TOKEN_BUDGET_MAX = 100000;
@@ -377,6 +389,8 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     // 反思会按「有未读 → 审校式模板 / 无未读 → 提炼式模板」自动切换，这里把实际生效情况显式告诉用户。
     const [auditPending, setAuditPending] = useState<{ core: number; unread: number } | null>(null);
     const [confirmDeleteEntryId, setConfirmDeleteEntryId] = useState<string | null>(null);
+    // 最近删除页里「彻底删除」的二次确认（这里删掉就真的没了）
+    const [confirmPurgeEntry, setConfirmPurgeEntry] = useState<MemoryEntry | null>(null);
     const [confirmClearAll, setConfirmClearAll] = useState(false);
     const [pickedCharId, setPickedCharId] = useState<string | null>(null);
     const [entryMenuId, setEntryMenuId] = useState<string | null>(null);
@@ -617,6 +631,77 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         if (type === "core") setCoreEntries([]);
         else setLongTermEntries([]);
         loadCharacterList();
+    };
+
+    // ── 最近删除（回收站）──
+    /** 用户手动弃用一条记忆：只标记，不删除，之后可在本页恢复 */
+    const handleTrashEntry = async (entry: MemoryEntry) => {
+        if (!selectedCharId) return;
+        setEntryMenuId(null);
+        try {
+            await trashMemoryEntry(entry, { by: "user", reason: "用户手动弃用" });
+            await loadDetailData(selectedCharId);
+            loadCharacterList();
+            showNotice("已弃用，可在「最近删除」里恢复");
+        } catch (err) {
+            showNotice("弃用失败: " + String(err));
+        }
+    };
+
+    const handleRestoreTrashed = async (entry: MemoryEntry) => {
+        if (!selectedCharId) return;
+        try {
+            await restoreTrashedEntry(entry);
+            await loadDetailData(selectedCharId);
+            loadCharacterList();
+            showNotice("已恢复，这条记忆会重新参与记忆注入");
+        } catch (err) {
+            showNotice("恢复失败: " + String(err));
+        }
+    };
+
+    const handleRestoreAllTrashed = async (entries: MemoryEntry[]) => {
+        if (!selectedCharId || entries.length === 0) return;
+        try {
+            for (const entry of entries) {
+                await restoreTrashedEntry(entry);
+            }
+            await loadDetailData(selectedCharId);
+            loadCharacterList();
+            showNotice(`已恢复 ${entries.length} 条记忆`);
+        } catch (err) {
+            showNotice("批量恢复失败: " + String(err));
+        }
+    };
+
+    /** 彻底删除：仅在「最近删除」里可用，执行后不可恢复 */
+    const handlePurgeTrashed = async (entry: MemoryEntry) => {
+        if (!selectedCharId) return;
+        try {
+            await permanentlyDeleteTrashed([entry.id]);
+            await loadDetailData(selectedCharId);
+            loadCharacterList();
+            showNotice("已彻底删除");
+        } catch (err) {
+            showNotice("删除失败: " + String(err));
+        }
+    };
+
+    /** 把角色改过的记忆还原到修改前的内容 */
+    const handleRevertCharacterEdit = async (entry: MemoryEntry) => {
+        if (!selectedCharId) return;
+        try {
+            const reverted = await revertCharacterEdit(entry);
+            if (!reverted) {
+                showNotice("这条记忆没有可还原的修改快照");
+                return;
+            }
+            await loadDetailData(selectedCharId);
+            loadCharacterList();
+            showNotice("已还原到角色修改前的版本");
+        } catch (err) {
+            showNotice("还原失败: " + String(err));
+        }
     };
 
     const showNotice = (msg: string) => {
@@ -1698,8 +1783,10 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         }
     };
 
-    const renderMemoryEntries = (type: MemoryEntry["type"], entries: MemoryEntry[], emptyText: string) => {
+    const renderMemoryEntries = (type: MemoryEntry["type"], allEntries: MemoryEntry[], emptyText: string) => {
         const label = type === "core" ? "核心记忆" : "长期记忆";
+        // 被弃用的记忆只在「最近删除」里出现，不混在主列表里
+        const entries = allEntries.filter(e => !isEntryTrashed(e));
         const missingVectorCount = type === "long_term"
             ? entries.filter(e => !isEntryVectorValid(e)).length
             : 0;
@@ -1961,6 +2048,10 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                         <Edit3 size={13} />
                                                         <span>编辑</span>
                                                     </button>
+                                                    <button onClick={() => void handleTrashEntry(entry)}>
+                                                        <Trash2 size={13} />
+                                                        <span>弃用</span>
+                                                    </button>
                                                     {type === "long_term" && !entryIsDigest && (
                                                         <button
                                                             onClick={() => void handleCleanSingleLegacyEntry(entry)}
@@ -2097,6 +2188,148 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                             </div>
                         );
                     })
+                )}
+            </>
+        );
+    };
+
+    /**
+     * 最近删除页：按当前角色隔离，分「已弃用」和「被角色修改过」两摞。
+     * - 已弃用：不再注入 Prompt，可恢复；只有在这里点「彻底删除」才真正 drop。
+     * - 被角色修改过：新内容在生效，但保留了修改前快照，可一键还原创。
+     */
+    const renderTrashTab = () => {
+        const bucket = buildTrashBucket([...coreEntries, ...longTermEntries]);
+        const { trashed, edited } = bucket;
+        const total = trashed.length + edited.length;
+
+        const renderCard = (entry: MemoryEntry, mode: "trashed" | "edited") => {
+            const body = (stripMemoryStructuredSections(entry.content) || entry.content).trim();
+            const snapshot = mode === "edited" ? readEditSnapshot(entry) : null;
+            const actor = readTrashActor(entry);
+            const reason = readTrashReason(entry);
+            const trashedAt = readTrashedAt(entry);
+            const typeLabel = entry.type === "core" ? "核心记忆" : "长期记忆";
+            const isExpanded = expandedId === entry.id;
+            const displayBody = isExpanded || body.length <= 180 ? body : body.slice(0, 180) + "...";
+            return (
+                <div key={entry.id} className="g-card memory-report-card">
+                    <div className="mem-report-head">
+                        <span
+                            className="ts-11 text-secondary"
+                            style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 1, lineHeight: 1.5 }}
+                        >
+                            <span>{typeLabel} · {formatEntryDateLines(entry)[0]}</span>
+                            <span>
+                                {mode === "trashed"
+                                    ? `弃用于 ${trashedAt ? formatIsoTimestamp(trashedAt) : "未知时间"} · ${actor === "character" ? "角色弃用" : "用户弃用"}`
+                                    : `角色改于 ${formatIsoTimestamp(entry.updatedAt)}`}
+                            </span>
+                        </span>
+                        <div className="mem-report-actions">
+                            <span className="mem-stat-pill" style={{ fontWeight: 700, borderRadius: 5 }}>
+                                {mode === "trashed" ? "已弃用" : "角色改过"}
+                            </span>
+                        </div>
+                    </div>
+                    {reason && (
+                        <div className="ts-11 text-secondary" style={{ padding: "2px 0" }}>
+                            理由：{reason}
+                        </div>
+                    )}
+                    <div
+                        className="ts-13 leading-[1.7]"
+                        style={{ cursor: "pointer", whiteSpace: "pre-wrap" }}
+                        onClick={() => setExpandedId(isExpanded ? null : entry.id)}
+                    >
+                        {displayBody}
+                    </div>
+                    {snapshot && (
+                        <div className="mem-superseded-note" style={{ display: "block" }}>
+                            <div className="ts-11 text-secondary" style={{ fontWeight: 600, marginBottom: 2 }}>
+                                修改前的原文（可还原）
+                            </div>
+                            <div className="ts-12" style={{ whiteSpace: "pre-wrap", opacity: 0.85 }}>
+                                {snapshot.content}
+                            </div>
+                        </div>
+                    )}
+                    <div className="mem-structured-footer">
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            {mode === "trashed" ? (
+                                <>
+                                    <button
+                                        type="button"
+                                        className="mem-superseded-jump"
+                                        onClick={() => void handleRestoreTrashed(entry)}
+                                    >
+                                        恢复
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="mem-superseded-jump"
+                                        style={{ color: "var(--c-danger, #e5484d)" }}
+                                        onClick={() => setConfirmPurgeEntry(entry)}
+                                    >
+                                        彻底删除
+                                    </button>
+                                </>
+                            ) : (
+                                <>
+                                    <button
+                                        type="button"
+                                        className="mem-superseded-jump"
+                                        onClick={() => void handleRevertCharacterEdit(entry)}
+                                    >
+                                        还原到修改前
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="mem-superseded-jump"
+                                        onClick={() => void handleTrashEntry(entry)}
+                                    >
+                                        弃用这条
+                                    </button>
+                                </>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        return (
+            <>
+                {total === 0 ? (
+                    <div className="mem-empty-card">
+                        <p>最近删除是空的。角色或你弃用的记忆会出现在这里，可以随时恢复；在这里点「彻底删除」才是真的删掉。</p>
+                    </div>
+                ) : (
+                    <>
+                        <div className="mem-entry-toolbar" style={{ flexWrap: "wrap" }}>
+                            {trashed.length > 0 && (
+                                <button
+                                    className="mem-entry-add-btn"
+                                    onClick={() => void handleRestoreAllTrashed(trashed)}
+                                >
+                                    <RotateCcw size={15} strokeWidth={1.8} />
+                                    <span>全部恢复({trashed.length})</span>
+                                </button>
+                            )}
+                        </div>
+                        {trashed.length > 0 && (
+                            <>
+                                <p className="menu-group-desc mx-2">已弃用（不再参与记忆注入，{trashed.length} 条）</p>
+                                {trashed.map(entry => renderCard(entry, "trashed"))}
+                            </>
+                        )}
+                        {edited.length > 0 && (
+                            <>
+                                <p className="menu-group-desc mx-2">被角色修改过（新内容仍在生效，{edited.length} 条）</p>
+                                {edited.map(entry => renderCard(entry, "edited"))}
+                            </>
+                        )}
+                    </>
                 )}
             </>
         );
@@ -2535,6 +2768,8 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                         })()
                     ) : activeTab === "core" ? (
                         renderMemoryEntries("core", coreEntries, "暂无核心记忆。长期记忆累计到设定条数后会自动提炼，也可以手动新增。")
+                    ) : activeTab === "trash" ? (
+                        renderTrashTab()
                     ) : (
                         /* ── Long-term: Summarized Memories ── */
                         renderMemoryEntries("long_term", longTermEntries, "暂无长期记忆。点击设置页的手动总结，或直接新增一条记忆。")
@@ -2550,6 +2785,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                         { key: "long" as const, icon: Archive, label: "长期" },
                         { key: "boxes" as const, icon: Folder, label: "事件盒" },
                         { key: "core" as const, icon: Archive, label: "核心" },
+                        { key: "trash" as const, icon: Trash2, label: "最近删除" },
                     ]).map(tab => (
                         <button
                             key={tab.key}
@@ -2866,6 +3102,23 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                         </div>
                     );
                 })()}
+
+                {/* 最近删除：彻底删除二次确认（不可恢复） */}
+                {confirmPurgeEntry && (
+                    <ConfirmDialog
+                        title="彻底删除这条记忆？"
+                        message="这一步不可恢复，删掉之后记忆库里不会再留下内容。只是不想让它再被注入的话，点「取消」并保持弃用状态即可。"
+                        variant="danger"
+                        confirmLabel="彻底删除"
+                        cancelLabel="取消"
+                        onCancel={() => setConfirmPurgeEntry(null)}
+                        onConfirm={() => {
+                            const target = confirmPurgeEntry;
+                            setConfirmPurgeEntry(null);
+                            void handlePurgeTrashed(target);
+                        }}
+                    />
+                )}
 
                 {/* 事件盒：新建 / 编辑弹窗（支持修改事件盒标题、阶段总结正文、重要性与检索关键词） */}
                 {boxDialog && (

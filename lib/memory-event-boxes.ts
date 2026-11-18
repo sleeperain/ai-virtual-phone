@@ -9,6 +9,7 @@
 import type { MemoryEntry } from "./memory-types";
 import { kvGet, kvSet, registerDynamicPrefix } from "./kv-db";
 import { saveMemoryEntry, deleteMemoryEntry, loadMemoryConfig } from "./memory-storage";
+import { isEntryTrashed } from "./memory-trash";
 import { resolveAuxiliaryApiConfig } from "./settings-storage";
 import { generateEmbedding, resolveEmbeddingModel, cosineSimilarity, keywordOverlapRatio } from "./memory-embedding";
 import { simpleLLMCall } from "./api-helpers";
@@ -176,6 +177,7 @@ export function isEntryArchived(entry: MemoryEntry): boolean {
 
 /**
  * 过滤可参与 Prompt 召回的记忆条目：
+ * - 已被「弃用」的条目一律不召回（角色或用户在回收站里弃用的记忆，原文仍保留、可恢复）
  * - 未归档的条目（含盒内「新事件」、盒外普通记忆、以及事件盒生成的「先前事件总结」digestEntry）正常召回
  * - 已归档的原始条目不再重复注入 Prompt（由对应的事件盒总结条目代表），但如果该事件盒的总结条目被删或不存在，自动兜底放行，绝不丢记忆
  */
@@ -188,6 +190,8 @@ export function filterRecallableEntries(entries: MemoryEntry[]): MemoryEntry[] {
         }
     }
     return entries.filter(entry => {
+        // 弃用优先级最高：无论归档与否，弃用后都不再注入，直到用户从回收站恢复
+        if (isEntryTrashed(entry)) return false;
         if (!isEntryArchived(entry)) return true;
         const archivedBoxId = String(entry.metadata?.[EVENT_BOX_META_KEYS.archivedInto] ?? "");
         // 只有当该盒子确实存在总结条目时，才由总结条目代替；否则兜底保留原文召回

@@ -35,6 +35,7 @@ import {
 } from "./short-term-assembler";
 import { stripMemoryStructuredSections } from "./memory-summarizer";
 import { filterRecallableEntries, isEntryBoxDigest } from "./memory-event-boxes";
+import { isEntryTrashed } from "./memory-trash";
 import {
     DEFAULT_REVISION_WEIGHT,
     isEntrySuperseded,
@@ -212,6 +213,7 @@ export function selectUnreadCoreTargets(coreEntries: MemoryEntry[]): MemoryEntry
             && !isReflectionMemoryEntry(entry)
             && !isEntrySuperseded(entry)
             && !isEntryReflectionAudited(entry)
+            && !isEntryTrashed(entry)
             && String(entry.metadata?.origin ?? "") !== "user_manual",
         )
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
@@ -355,7 +357,7 @@ export async function runCoreMemoryReflection(
     // ── 素材 2：核心记忆沉淀（第三人称心理成长脉络 + 用户手动核心设定）与上一轮第一人称反思 ──
     const coreEntries = await loadMemoryEntriesByType(characterId, "core");
     const previousReflections = coreEntries
-        .filter(isReflectionMemoryEntry)
+        .filter(entry => isReflectionMemoryEntry(entry) && !isEntryTrashed(entry))
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     const previousReflection = previousReflections[0];
     const rawPreviousText = previousReflection
@@ -371,7 +373,7 @@ export async function runCoreMemoryReflection(
     // 提炼当前生效的非反思类核心记忆（包括自动/手动生成的核心记忆总结与用户手动置顶的核心记忆），
     // 让角色反思真正站在「核心记忆心理沉淀」的肩膀上做更高一层的审视。
     const activeCoreSummaries = coreEntries
-        .filter(e => !isReflectionMemoryEntry(e) && !isEntrySuperseded(e))
+        .filter(e => !isReflectionMemoryEntry(e) && !isEntrySuperseded(e) && !isEntryTrashed(e))
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
         .slice(-5);
 
