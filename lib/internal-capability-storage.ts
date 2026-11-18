@@ -1407,6 +1407,9 @@ export function getEnabledInternalCapabilities(appId?: string): InternalCapabili
         if (!item.enabled || item.mode === "off") return false;
         // 角色电脑是可插拔模块：没连接就不注入，模型完全看不见
         if (item.id === AGENT_COMPUTER_CAPABILITY_ID && !isAgentComputerConfigured()) return false;
+        // 记忆管理只对私聊开放：群聊里多角色共用一个记忆库，互相改写会串档。
+        // 这里直接不注入，模型连这个工具都看不见，不会反复尝试再失败。
+        if (item.id === MEMORY_MANAGE_CAPABILITY_ID && appId !== "chat") return false;
         return true;
     });
 }

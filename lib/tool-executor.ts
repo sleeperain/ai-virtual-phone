@@ -3118,12 +3118,15 @@ async function executeMemoryManageTool(call: ToolCall, context?: ToolExecutionCo
         };
     }
 
-    if (!isSupportedChatToolContext(context) || !context.characterId) {
+    // 记忆管理只在「私聊」里开放。
+    // isSupportedChatToolContext 同时放行 group_chat，而群聊里多个角色共用一个记忆库时，
+    // 谁都能改写别人的记忆，属于不可接受的串改风险——这里单独收紧到 appId/sourceEngine 都是 chat。
+    if (!isSupportedChatToolContext(context) || context.appId !== "chat" || context.sourceEngine !== "chat") {
         return {
             name: call.name,
             success: false,
-            error: "当前场景暂不支持管理记忆",
-            userNotice: "当前场景暂不支持管理记忆",
+            error: "记忆管理只能在私聊里使用",
+            userNotice: "群聊里不能管理记忆",
         };
     }
 
