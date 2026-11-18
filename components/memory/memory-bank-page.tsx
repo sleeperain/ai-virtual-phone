@@ -705,7 +705,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             if (res.success) {
                 await loadDetailData(selectedCharId);
                 loadCharacterList();
-                showNotice(`已拆分为 ${res.createdCount} 条独立记忆，原条目已降权保留`);
+                showNotice(`已拆分为 ${res.createdCount} 条独立记忆，原条目已移入「最近删除」`);
             } else {
                 showNotice(res.error || "拆分失败");
             }

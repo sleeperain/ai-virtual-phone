@@ -37,6 +37,7 @@ import {
     toProvenanceEntry,
     withMergeSuspicionMetadata,
 } from "./memory-provenance";
+import { isEntryTrashed, trashMemoryEntry } from "./memory-trash";
 
 /** Per-character lock to prevent concurrent summarization. */
 const summarizingSet = new Set<string>();
@@ -654,6 +655,9 @@ export async function resplitMergedMemory(
     const allLongTerm = await loadMemoryEntriesByType(characterId, "long_term");
     const target = allLongTerm.find(e => e.id === entryId);
     if (!target) return { success: false, error: "找不到这条记忆，可能已被删除" };
+    if (isEntryTrashed(target)) {
+        return { success: false, error: "这条记忆已在「最近删除」里，先恢复再拆分" };
+    }
     if (isEntrySuperseded(target)) {
         return { success: false, error: "这条记忆已被更新版本接替，先处理最新的那条" };
     }
@@ -753,21 +757,21 @@ export async function resplitMergedMemory(
         }
     }
 
-    // 原条目降权保留：不删除，记忆库里仍可回看，界面显示「已被更正」
-    const superseded: MemoryEntry = {
-        ...target,
-        updatedAt: now,
-        metadata: {
-            ...(target.metadata ?? {}),
-            [REVISION_META_KEYS.by]: createdIds[0],
-            [REVISION_META_KEYS.at]: now,
-            [REVISION_META_KEYS.weight]: 0.35,
-            active: false,
-            resplitInto: createdIds,
-            mergeSuspect: false,
+    // 原条目弃用：整条移进「最近删除」，不再以低权重半活着参与注入。
+    // 用户想回退时可以在「最近删除」里一键恢复，恢复后它就是普通的可用记忆。
+    await trashMemoryEntry(
+        {
+            ...target,
+            updatedAt: now,
+            metadata: {
+                ...(target.metadata ?? {}),
+                // 记下它被拆成了哪几条，便于在回收站里顺着查
+                resplitInto: createdIds,
+                mergeSuspect: false,
+            },
         },
-    };
-    await saveMemoryEntry(superseded);
+        { by: "user", reason: `已拆分为 ${createdIds.length} 条独立记忆` },
+    );
 
     return { success: true, createdCount: createdIds.length, entryIds: createdIds };
 }
