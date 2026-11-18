@@ -37,6 +37,7 @@ import {
     isLegacyUnorganizedMemory,
     cleanLegacyMemoryEntry,
     runBatchCleanLegacyMemories,
+    resplitMergedMemory,
     type CleanedManualMemoryDraft,
 } from "@/lib/memory-summarizer";
 import ReactMarkdown from "react-markdown";
@@ -402,6 +403,8 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const [memoryEditor, setMemoryEditor] = useState<MemoryEditorState | null>(null);
     const [savingMemory, setSavingMemory] = useState(false);
     const [embeddingAll, setEmbeddingAll] = useState(false);
+    /** 正在「拆分重总结」的条目 id：拆完把原条目降权、新条目入库 */
+    const [resplittingEntryId, setResplittingEntryId] = useState<string | null>(null);
     const [cleaningManualText, setCleaningManualText] = useState(false);
     const [cleaningAllLegacy, setCleaningAllLegacy] = useState(false);
     const [cleanLegacyProgress, setCleanLegacyProgress] = useState("");
@@ -689,6 +692,27 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             showNotice("已彻底删除");
         } catch (err) {
             showNotice("删除失败: " + String(err));
+        }
+    };
+
+    /** 拆分重总结：把一条合并错的记忆交给模型拆成多条独立记忆 */
+    const handleResplitEntry = async (entry: MemoryEntry) => {
+        if (!selectedCharId || resplittingEntryId) return;
+        setEntryMenuId(null);
+        setResplittingEntryId(entry.id);
+        try {
+            const res = await resplitMergedMemory(selectedCharId, selectedChar?.name ?? "角色", entry.id);
+            if (res.success) {
+                await loadDetailData(selectedCharId);
+                loadCharacterList();
+                showNotice(`已拆分为 ${res.createdCount} 条独立记忆，原条目已降权保留`);
+            } else {
+                showNotice(res.error || "拆分失败");
+            }
+        } catch (err) {
+            showNotice("拆分出错: " + String(err));
+        } finally {
+            setResplittingEntryId(null);
         }
     };
 
@@ -2069,6 +2093,15 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                         <Edit3 size={13} />
                                                         <span>编辑</span>
                                                     </button>
+                                                    {type === "long_term" && !entryIsDigest && (
+                                                        <button
+                                                            onClick={() => void handleResplitEntry(entry)}
+                                                            disabled={resplittingEntryId === entry.id}
+                                                        >
+                                                            <Sparkles size={13} />
+                                                            <span>{resplittingEntryId === entry.id ? "拆分中..." : "拆分重总结"}</span>
+                                                        </button>
+                                                    )}
                                                     <button onClick={() => void handleTrashEntry(entry)}>
                                                         <Trash2 size={13} />
                                                         <span>弃用</span>

@@ -24,6 +24,7 @@ import {
     buildSupersededMetadata,
     computeSupersededSpans,
     effectiveImportance,
+    isEntrySuperseded,
     REVISION_EXACT_THRESHOLD,
     REVISION_META_KEYS,
 } from "./memory-revision";
@@ -31,6 +32,7 @@ import {
 import { loadBindingConfig, loadApiConfigs, resolveBinding } from "./settings-storage";
 import {
     detectMergeSuspicion,
+    loadProvenanceBatch,
     saveProvenanceBatch,
     toProvenanceEntry,
     withMergeSuspicionMetadata,
@@ -630,6 +632,144 @@ export async function runSummarizationPipeline(
 
     console.log(`[MemorySummarizer] Summarized ${allEntries.length} entries across ${summarizedDayCount} day(s) into ${savedEntryCount} memory entries`);
     return { success: true };
+}
+
+/**
+ * 拆分重总结：把一条「把多件事合并成一条（还编了因果）」的长期记忆，
+ * 交给模型重新拆成若干条独立记忆，原条目按 supersede 机制降权保留（不删原文）。
+ *
+ * 与后置校验（detectMergeSuspicion）配套：校验只负责挑出来，这里负责真正修好，
+ * 不必让用户手动删了再重录。
+ */
+export async function resplitMergedMemory(
+    characterId: string,
+    characterName: string,
+    entryId: string,
+): Promise<{ success: boolean; error?: string; createdCount?: number; entryIds?: string[] }> {
+    const apiConfig = resolveSummarizationApiConfig(characterId);
+    if (!apiConfig) {
+        return { success: false, error: "未配置记忆总结 API（请在绑定配置 → 辅助API绑定中设置）" };
+    }
+
+    const allLongTerm = await loadMemoryEntriesByType(characterId, "long_term");
+    const target = allLongTerm.find(e => e.id === entryId);
+    if (!target) return { success: false, error: "找不到这条记忆，可能已被删除" };
+    if (isEntrySuperseded(target)) {
+        return { success: false, error: "这条记忆已被更新版本接替，先处理最新的那条" };
+    }
+
+    const body = (stripMemoryStructuredSections(target.content) || target.content).trim();
+    if (!body) return { success: false, error: "这条记忆正文为空" };
+
+    // 带上原始事件原文供核对：拆分时必须以原话为准，不能凭记忆内容二次推断
+    const batchId = typeof target.metadata?.provenanceBatchId === "string" ? target.metadata.provenanceBatchId : "";
+    const batch = batchId ? loadProvenanceBatch(characterId, batchId) : null;
+    const sourceText = batch && batch.entries.length > 0
+        ? batch.entries
+            .slice(-40)
+            .map(item => `- [${item.sourceApp}] ${item.content}`)
+            .join("\n")
+        : "";
+
+    const prompt = [
+        `下面这条长期记忆把本来互不相干的事情合并成了一条，甚至补出了原文没有的因果关系。请把它重新拆成若干条独立的记忆。`,
+        "",
+        "记忆正文：",
+        body,
+        "",
+        sourceText
+            ? `对应的原始事件记录（核对事实用，严禁照抄，也严禁据此新增原话没有的因果）：\n${sourceText}`
+            : "（这条记忆没有可用的原始事件存档，请只依据上面正文里已经写明的事实拆分，不要自行推断因果。）",
+        "",
+        "═══ 拆分规则 ═══",
+        "1. 一件事一条：每件事必须是独立成立的，不依赖另一件事才能讲通。",
+        "2. 严禁补出原文没写过的因果（例如“通过A就能达成B”“A是B的步骤”）。原文没写的关联，就不要写。",
+        "3. 如果这条记忆其实只讲了一件事、并没有合并，就原样输出一条，不要硬拆。",
+        "4. 正文用第三人称，40-120 字，不得出现任何日期或时间。",
+        "",
+        "═══ 输出格式 ═══",
+        "多条之间用单独一行的 --- 分隔；每条末尾单独输出两行：",
+        "**重要性**：（1-10的整数）",
+        "**检索关键词**：关键词1、关键词2、关键词3",
+    ].join("\n");
+
+    const result = await simpleLLMCall(
+        apiConfig,
+        [{ role: "user", content: prompt }],
+        { temperature: 0.2, label: `记忆拆分·${characterName || characterId}` },
+    );
+    if (!result.content) {
+        return { success: false, error: result.error || "拆分失败：模型没有返回内容" };
+    }
+
+    const blocks = splitMultiTopicSummaries(result.content);
+    const now = new Date().toISOString();
+    const dayKey = typeof target.metadata?.eventDate === "string" && target.metadata.eventDate.trim()
+        ? target.metadata.eventDate.trim()
+        : target.createdAt.slice(0, 10);
+
+    const createdIds: string[] = [];
+    for (let i = 0; i < blocks.length; i++) {
+        const block = blocks[i];
+        const { keywords, importance } = extractMemoryStructuredMeta(block);
+        const cleanBody = stripMemoryStructuredSections(block) || stripInlineMemoryTimeMarkers(block);
+        if (!cleanBody || cleanBody.length < 8) continue;
+
+        const newId = `mem_lt_resplit_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 7)}`;
+        const next: MemoryEntry = {
+            id: newId,
+            characterId,
+            sourceApp: target.sourceApp,
+            type: "long_term",
+            content: cleanBody,
+            importance: importance ?? target.importance ?? 0.8,
+            accessCount: 0,
+            createdAt: new Date(Date.now() + i).toISOString(),
+            updatedAt: new Date(Date.now() + i).toISOString(),
+            metadata: {
+                ...(target.metadata ?? {}),
+                eventDate: dayKey,
+                keywords: keywords.length > 0 ? keywords : (Array.isArray(target.metadata?.keywords) ? target.metadata?.keywords : []),
+                resplitFrom: entryId,
+                topicSplitV2: true,
+                ...withMergeSuspicionMetadata({}, detectMergeSuspicion(cleanBody)),
+            },
+        };
+        await saveMemoryEntry(next);
+        createdIds.push(newId);
+    }
+
+    if (createdIds.length === 0) {
+        return { success: false, error: "拆分结果为空，已保持原样" };
+    }
+    // 只拆出一条且内容几乎没变：说明模型判断本来就没有合并，不做任何覆盖
+    if (createdIds.length === 1) {
+        const only = await loadMemoryEntriesByType(characterId, "long_term");
+        const created = only.find(e => e.id === createdIds[0]);
+        const unchanged = created && created.content.trim() === body;
+        if (unchanged) {
+            await deleteMemoryEntries(createdIds);
+            return { success: false, error: "模型认为这条记忆本身没有合并多件事，未做改动" };
+        }
+    }
+
+    // 原条目降权保留：不删除，记忆库里仍可回看，界面显示「已被更正」
+    const superseded: MemoryEntry = {
+        ...target,
+        updatedAt: now,
+        metadata: {
+            ...(target.metadata ?? {}),
+            [REVISION_META_KEYS.by]: createdIds[0],
+            [REVISION_META_KEYS.at]: now,
+            [REVISION_META_KEYS.weight]: 0.35,
+            active: false,
+            resplitInto: createdIds,
+            mergeSuspect: false,
+        },
+    };
+    await saveMemoryEntry(superseded);
+
+    return { success: true, createdCount: createdIds.length, entryIds: createdIds };
 }
 
 /**
