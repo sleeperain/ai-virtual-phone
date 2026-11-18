@@ -803,62 +803,30 @@ export async function resplitMergedMemory(
 }
 
 /**
- * 恢复「被拆分的那条原记忆」时，把由它拆出来的碎片直接从库里删掉。
- *
- * 为什么必须删干净：拆分时原条目进了回收站、碎片留在主列表；用户点恢复的本意是
- * 「回到拆之前」。碎片留着就是同一件事的重复副本，既占召回名额又让记忆库变乱，
- * 而且内容已经被原条目完整覆盖，留着没有任何价值——所以这里直接彻底删除，不进回收站。
- *
- * 只删「resplitFrom 指向这条原记忆」的条目，绝不碰其它记忆。
+ * 由「拆分重总结」产生的碎片条目的识别特征：
+ * metadata 上带 resplitFrom，或 id 处于 mem_lt_resplit_ 前缀（早先版本写下的）。
  */
-export async function detachResplitChildren(
-    characterId: string,
-    parent: MemoryEntry,
-): Promise<{ removed: number; parent: MemoryEntry }> {
-    const all = await loadMemoryEntriesByType(characterId, "long_term");
-    const childIds = all
-        .filter(entry => !isEntryTrashed(entry) && String(entry.metadata?.resplitFrom ?? "") === parent.id)
-        .map(entry => entry.id);
-    if (childIds.length > 0) {
-        await deleteMemoryEntries(childIds);
-    }
-    // 原条目上「拆成了哪几条」的记录已经失效，顺手清掉，避免下次恢复又去找这批碎片
-    const metadata: Record<string, unknown> = { ...(parent.metadata ?? {}) };
-    delete metadata.resplitInto;
-    const next: MemoryEntry = {
-        ...parent,
-        updatedAt: new Date().toISOString(),
-        metadata,
-    };
-    await saveMemoryEntry(next);
-    return { removed: childIds.length, parent: next };
+export function isResplitChild(entry: MemoryEntry): boolean {
+    if (String(entry.metadata?.resplitFrom ?? "").length > 0) return true;
+    return entry.id.startsWith("mem_lt_resplit_");
 }
 
 /**
- * 兜底清理「孤儿碎片」：父条目已经恢复（不在最近删除里）却还留在主列表的拆分子条目。
+ * 批量清理「拆分重总结」产生的碎片（必须由用户在记忆库工具栏点击才执行）。
  *
- * 用于修复已经发生过的状态——早先版本恢复原记忆时不处理碎片，库里就会同时存在
- * 原条目和它的若干碎片，同一件事重复参与召回。这里把这些碎片直接彻底删除。
- * 父条目已被彻底删除、或仍在回收站时不动：那时碎片是唯一内容，删了才是真丢。
+ * 早先版本的拆分把相关联的事件拆散了，库里会堆下大量碎片条目。
+ * 这里把命中的碎片整批移入「最近删除」——先软删除，进回收站仍可恢复，
+ * 确认不要了再由用户在回收站里「彻底删除」。
+ * 只挑 isResplitChild 命中的条目，正常记忆一条都不碰。
  */
-export async function sweepOrphanResplitChildren(
+export async function trashAllResplitChildren(
     entries: MemoryEntry[],
 ): Promise<{ count: number; ids: string[] }> {
-    const byId = new Map(entries.map(entry => [entry.id, entry]));
-    const orphans = entries.filter(entry => {
-        if (isEntryTrashed(entry)) return false;
-        const parentId = String(entry.metadata?.resplitFrom ?? "");
-        if (!parentId) return false;
-        const parent = byId.get(parentId);
-        if (!parent) return false;
-        // 父条目仍在回收站：拆分关系有效，碎片照旧参与召回
-        return !isEntryTrashed(parent);
-    });
-    if (orphans.length === 0) return { count: 0, ids: [] };
-
-    const ids = orphans.map(entry => entry.id);
-    await deleteMemoryEntries(ids);
-    return { count: ids.length, ids };
+    const targets = entries.filter(entry => !isEntryTrashed(entry) && isResplitChild(entry));
+    for (const entry of targets) {
+        await trashMemoryEntry(entry, { by: "user", reason: "清理拆分产生的碎片" });
+    }
+    return { count: targets.length, ids: targets.map(entry => entry.id) };
 }
 
 /**

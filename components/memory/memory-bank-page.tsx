@@ -38,8 +38,8 @@ import {
     cleanLegacyMemoryEntry,
     runBatchCleanLegacyMemories,
     resplitMergedMemory,
-    detachResplitChildren,
-    sweepOrphanResplitChildren,
+    isResplitChild,
+    trashAllResplitChildren,
     type CleanedManualMemoryDraft,
 } from "@/lib/memory-summarizer";
 import ReactMarkdown from "react-markdown";
@@ -74,7 +74,6 @@ import {
     buildTrashBucket,
     isEntryTrashed,
     permanentlyDeleteTrashed,
-    purgeExpiredTrashed,
     readEditSnapshot,
     readTrashActor,
     readTrashReason,
@@ -414,6 +413,9 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const [batchResplitting, setBatchResplitting] = useState(false);
     const [batchResplitProgress, setBatchResplitProgress] = useState("");
     const [confirmBatchResplit, setConfirmBatchResplit] = useState<number | null>(null);
+    /** 一键清理拆分碎片：先确认，再整批移入「最近删除」 */
+    const [confirmClearResplit, setConfirmClearResplit] = useState<number | null>(null);
+    const [clearingResplit, setClearingResplit] = useState(false);
     const [cleaningManualText, setCleaningManualText] = useState(false);
     const [cleaningAllLegacy, setCleaningAllLegacy] = useState(false);
     const [cleanLegacyProgress, setCleanLegacyProgress] = useState("");
@@ -465,11 +467,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     // 行高由 chip 实测得出（不同主题/字号下不写死），量不到就整段展开不滚。
     const boxChipScrollRef = useRef<HTMLDivElement | null>(null);
     const [boxChipMaxHeight, setBoxChipMaxHeight] = useState<number | undefined>(undefined);
-
-    // 提示回调放进 ref：loadDetailData 里要用它提示「自动清理了几条」，
-    // 若直接进依赖数组，父级传内联函数会让 loadDetailData 每次都换身份、把加载 effect 打成死循环。
-    const noticeRef = useRef(onNotice);
-    useEffect(() => { noticeRef.current = onNotice; }, [onNotice]);
 
     const disabledSourceCount = MEMORY_SOURCE_OPTIONS
         .filter(source => (config.shortTermAllowedSources ?? {})[source.key] === false).length;
@@ -541,33 +538,15 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         setLoading(true);
         try {
             await hydrateChatStorage();
-            let [core, lt] = await Promise.all([
+            const [core, lt] = await Promise.all([
                 loadMemoryEntriesByType(charId, "core"),
                 loadMemoryEntriesByType(charId, "long_term"),
             ]);
-            // 先修一遍历史遗留：原记忆已经恢复、却还留着当初拆出来的碎片
-            const swept = await sweepOrphanResplitChildren(lt);
-            if (swept.count > 0) {
-                // 碎片已被彻底删除，重新读一次让列表与库保持一致
-                [core, lt] = await Promise.all([
-                    loadMemoryEntriesByType(charId, "core"),
-                    loadMemoryEntriesByType(charId, "long_term"),
-                ]);
-            }
-            // 回收站自动清理：超过保留期的条目在这里顺手彻底删掉，不用用户手动清理
-            const purged = await purgeExpiredTrashed([...core, ...lt]);
-            const droppedIds = new Set(purged.ids);
-            setCoreEntries(droppedIds.size > 0 ? core.filter(e => !droppedIds.has(e.id)) : core);
-            setLongTermEntries(droppedIds.size > 0 ? lt.filter(e => !droppedIds.has(e.id)) : lt);
+            // 只读加载：这里绝不删除、不清理任何东西。
+            // 任何删除都必须由用户在列表里明确点击触发，避免一次误判造成不可逆丢档。
+            setCoreEntries(core);
+            setLongTermEntries(lt);
             setBoxes(loadEventBoxes(charId));
-            const notices: string[] = [];
-            if (swept.count > 0) {
-                notices.push(`已删除 ${swept.count} 条残留的拆分碎片（原记忆已恢复，碎片是重复内容）`);
-            }
-            if (purged.count > 0) {
-                notices.push(`已自动清理 ${purged.count} 条在「最近删除」中超过 ${TRASH_RETENTION_DAYS} 天的记忆`);
-            }
-            if (notices.length > 0) noticeRef.current?.(notices.join("；"));
         } catch {
             setCoreEntries([]);
             setLongTermEntries([]);
@@ -699,15 +678,11 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const handleRestoreTrashed = async (entry: MemoryEntry) => {
         if (!selectedCharId) return;
         try {
-            const restored = await restoreTrashedEntry(entry);
-            // 这条记忆若曾被「拆分重总结」拆开过，把拆出来的碎片直接删掉：
-            // 恢复的语义是「回到拆之前」，碎片留着就是同一件事的重复副本。
-            const detached = await detachResplitChildren(selectedCharId, restored);
+            // 恢复只做一件事：把这条记忆放回记忆库，不牵连、不删除其它条目。
+            await restoreTrashedEntry(entry);
             await loadDetailData(selectedCharId);
             loadCharacterList();
-            showNotice(detached.removed > 0
-                ? `已恢复；并已删除 ${detached.removed} 条由它拆分出来的碎片`
-                : "已恢复，这条记忆会重新参与记忆注入");
+            showNotice("已恢复，这条记忆会重新参与记忆注入");
         } catch (err) {
             showNotice("恢复失败: " + String(err));
         }
@@ -716,17 +691,12 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const handleRestoreAllTrashed = async (entries: MemoryEntry[]) => {
         if (!selectedCharId || entries.length === 0) return;
         try {
-            let detachedTotal = 0;
             for (const entry of entries) {
-                const restored = await restoreTrashedEntry(entry);
-                const detached = await detachResplitChildren(selectedCharId, restored);
-                detachedTotal += detached.removed;
+                await restoreTrashedEntry(entry);
             }
             await loadDetailData(selectedCharId);
             loadCharacterList();
-            showNotice(detachedTotal > 0
-                ? `已恢复 ${entries.length} 条记忆；并已删除 ${detachedTotal} 条由它们拆分出来的碎片`
-                : `已恢复 ${entries.length} 条记忆`);
+            showNotice(`已恢复 ${entries.length} 条记忆`);
         } catch (err) {
             showNotice("批量恢复失败: " + String(err));
         }
@@ -817,6 +787,25 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         } finally {
             setBatchResplitting(false);
             setBatchResplitProgress("");
+        }
+    };
+
+    /** 一键清理拆分碎片：把 isResplitChild 命中的条目整批移入「最近删除」 */
+    const handleClearResplitChildren = async () => {
+        if (!selectedCharId || clearingResplit) return;
+        setConfirmClearResplit(null);
+        setClearingResplit(true);
+        try {
+            const res = await trashAllResplitChildren(longTermEntries);
+            await loadDetailData(selectedCharId);
+            loadCharacterList();
+            showNotice(res.count > 0
+                ? `已把 ${res.count} 条拆分碎片移入「最近删除」，可随时恢复或彻底删除`
+                : "没有找到拆分产生的碎片");
+        } catch (err) {
+            showNotice("清理拆分碎片失败: " + String(err));
+        } finally {
+            setClearingResplit(false);
         }
     };
 
@@ -1931,6 +1920,10 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             ? entries.filter(e => isEntryMergeSuspect(e) && !isEntrySuperseded(e))
             : [];
         const mergeSuspectCount = mergeSuspectTargets.length;
+        // 拆分重总结留下的碎片条数：可一键整批收进「最近删除」
+        const resplitChildCount = type === "long_term"
+            ? entries.filter(isResplitChild).length
+            : 0;
 
         // Filter or rank entries when search query is active
         const trimmedQ = searchQuery.trim().toLowerCase();
@@ -2000,6 +1993,17 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                 >
                                     <Zap size={14} strokeWidth={1.8} />
                                     <span>{embeddingAll ? "向量化中..." : `补全向量(${missingVectorCount})`}</span>
+                                </button>
+                            )}
+                            {type === "long_term" && resplitChildCount > 0 && (
+                                <button
+                                    className="mem-entry-clear-btn"
+                                    onClick={() => setConfirmClearResplit(resplitChildCount)}
+                                    disabled={clearingResplit}
+                                    title="把「拆分重总结」产生的碎片整批移入「最近删除」，可恢复；正常记忆不受影响"
+                                >
+                                    <Trash2 size={15} strokeWidth={1.8} />
+                                    <span>{clearingResplit ? "清理中..." : `清理拆分碎片(${resplitChildCount})`}</span>
                                 </button>
                             )}
                             <button
@@ -3347,7 +3351,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                 {confirmBatchResplit !== null && (
                     <ConfirmDialog
                         title={`批量拆分 ${confirmBatchResplit} 条疑似合并的记忆？`}
-                        message="每一条都会单独调用一次模型判断：只有确实把互不相干的事硬凑成一条时才拆（最多 3 条），本来就是一件事的原样保留、不做改动。被拆的原条目会移入「最近删除」，点「恢复」会直接删掉拆出来的碎片、回到拆分前。条数多时耗时较长，请不要离开页面。"
+                        message="每一条都会单独调用一次模型判断：只有确实把互不相干的事硬凑成一条时才拆（最多 3 条），本来就是一件事的原样保留、不做改动。被拆的原条目会移入「最近删除」，可随时恢复。条数多时耗时较长，请不要离开页面。"
                         icon={AlertCircle}
                         confirmLabel="开始拆分"
                         cancelLabel="取消"
@@ -3356,6 +3360,19 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                             const targets = longTermEntries.filter(e => isEntryMergeSuspect(e) && !isEntrySuperseded(e));
                             void handleBatchResplit(targets);
                         }}
+                    />
+                )}
+
+                {/* 清理拆分碎片：二次确认（移入最近删除，可恢复） */}
+                {confirmClearResplit !== null && (
+                    <ConfirmDialog
+                        title={`清理 ${confirmClearResplit} 条拆分碎片？`}
+                        message="这些是「拆分重总结」产生的碎片条目，会整批移入「最近删除」（可恢复，不会直接删库）。正常记忆一条都不受影响。"
+                        icon={AlertCircle}
+                        confirmLabel="移入最近删除"
+                        cancelLabel="取消"
+                        onCancel={() => setConfirmClearResplit(null)}
+                        onConfirm={() => void handleClearResplitChildren()}
                     />
                 )}
 
