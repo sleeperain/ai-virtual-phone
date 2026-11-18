@@ -525,6 +525,15 @@ export async function runCoreMemoryReflection(
     if (reflection.length < 20) {
         return { success: false, error: "反思结果过短，已取消入库", apiSource: api.source };
     }
+    // 本该审校、但模型没按三段格式输出：不入库、也不打已读标记，直接报错让用户重试。
+    // 否则会把一段跑歪的文本当成反思写进核心记忆，还得连带把那几条记忆标成已读。
+    if (unreadTargets.length > 0 && audit.verdict === "unknown") {
+        return {
+            success: false,
+            error: "审校结果不符合【判断】/【问题】/【修正版】三段格式，已取消入库，请重试（本次不会标记已读）",
+            apiSource: api.source,
+        };
+    }
 
     // 角色判定「系统这份写得准确」时，不再往库里多写一条近乎同义的反思条目，
     // 只给被审校的条目打「已读」标记——并存的前提是不制造重复内容。
@@ -601,16 +610,35 @@ export async function runCoreMemoryReflection(
     };
     await saveMemoryEntry(coreEntry);
 
-    // 给本轮审校过的核心记忆打上「已读」标记：内容一行不改，只加元数据
-    if (unreadTargets.length > 0) {
+    // 给本轮审校过的核心记忆打上「已读」标记：正文不改，只加元数据。
+    // 例外：verdict=unknown 说明模型把三段格式跑歪了，等于「没审成」，
+    // 这时不能打已读——否则这几条会被永久跳过，再也不会被审校。
+    if (unreadTargets.length > 0 && audit.verdict !== "unknown") {
+        const supersededByReflection = audit.verdict === "severe";
         for (const target of unreadTargets) {
+            const metadata: Record<string, unknown> = {
+                ...(target.metadata ?? {}),
+                [REFLECTION_META_KEYS.auditedAt]: now,
+                [REFLECTION_META_KEYS.auditedRound]: round,
+                [REFLECTION_META_KEYS.auditedBy]: entryId,
+            };
+            // ── 严重失真：让修正版接管注入 ──
+            // 复用现有 supersede 机制：原条目降权并标记被接替（记忆库里仍可回看原文、
+            // 界面上会显示「已被更正」），避免角色的修正和错误的原说法同时在上下文里打架。
+            // 只对 severe 动手；partial 是措辞偏差，继续注入危害小，留给下一轮总结消化。
+            if (supersededByReflection) {
+                metadata[REVISION_META_KEYS.by] = entryId;
+                metadata[REVISION_META_KEYS.at] = now;
+                metadata[REVISION_META_KEYS.weight] = DEFAULT_REVISION_WEIGHT;
+                metadata.auditSuperseded = true;
+            }
             await saveMemoryEntry({
                 ...target,
+                updatedAt: now,
                 metadata: {
-                    ...(target.metadata ?? {}),
-                    [REFLECTION_META_KEYS.auditedAt]: now,
-                    [REFLECTION_META_KEYS.auditedRound]: round,
-                    [REFLECTION_META_KEYS.auditedBy]: entryId,
+                    ...metadata,
+                    // 只有 severe 才取消 active；partial 保持原状继续注入
+                    ...(supersededByReflection ? { active: false } : {}),
                 },
             });
         }

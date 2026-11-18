@@ -48,12 +48,12 @@ function manageableEntries(entries: MemoryEntry[]): MemoryEntry[] {
     );
 }
 
-/** 给角色看的短 id：用 seq 避免把一长串内部 id 塞进上下文，降低复述出错率 */
-function buildIndex(entries: MemoryEntry[]): { list: MemoryEntry[]; label: (e: MemoryEntry) => string } {
-    return {
-        list: entries,
-        label: (e: MemoryEntry) => `M${entries.indexOf(e) + 1}`,
-    };
+/**
+ * 列表里必须给出真实 id：模型要靠它去调「查看记忆详情 / 修改记忆 / 弃用记忆」。
+ * （早先版本只打印 M1、M2 这类序号，模型拿不到 id，后续动作全部无法执行。）
+ */
+function labelOf(entry: MemoryEntry): string {
+    return entry.id;
 }
 
 export async function listMemoriesForCharacter(
@@ -73,19 +73,18 @@ export async function listMemoriesForCharacter(
         return { ok: true, text: "记忆库里暂时没有可以管理的记忆。" };
     }
     const shown = buckets.slice(0, max);
-    const idx = buildIndex(shown);
     const lines = shown.map(e => {
         const kind = e.type === "core" ? "核心" : "长期";
         const date = String(e.metadata?.eventDate ?? e.createdAt.slice(0, 10));
-        return `${idx.label(e)}｜${kind}｜${date}｜${clip(bodyOf(e), 160)}`;
+        return `${labelOf(e)}｜${kind}｜${date}｜${clip(bodyOf(e), 160)}`;
     });
     return {
         ok: true,
         text: [
-            `共 ${buckets.length} 条可管理记忆，以下是其中 ${shown.length} 条（编号仅供本轮编辑时指认，不要念给用户）：`,
+            `共 ${buckets.length} 条可管理记忆，以下是其中 ${shown.length} 条：`,
             ...lines,
             "",
-            "要修改或弃用某条，请先用「查看记忆详情」拿到它的完整内容再动手。",
+            "要修改或弃用某条，先按它行首的 id 调「查看记忆详情」读完整原文再动手；id 不要念给用户。",
         ].join("\n"),
     };
 }
