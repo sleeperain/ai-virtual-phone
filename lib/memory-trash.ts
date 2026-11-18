@@ -2,12 +2,13 @@
 // 记忆回收站（最近删除）
 //
 // 设计原则：
-// 1. 「弃用」不是删除。角色或用户把一条记忆弃用后，它只是不再参与任何 Prompt 注入
-//    （由 filterRecallableEntries 统一拦截），原文完整留在库里，随时可以恢复。
-// 2. 「彻底删除」只发生在回收站里。用户主动在回收站按下删除才真正 drop 记录。
+// 1. 界面上的「删除」不是真删。用户或角色最近删除/弃用一条记忆后，它只是不再参与任何
+//    Prompt 注入（由 filterRecallableEntries 统一拦截），原文完整留在库里，随时可以恢复。
+// 2. 「彻底删除」只发生在回收站里。用户主动在回收站按下「彻底删除」才真正 drop 记录。
 // 3. 回收站按角色隔离：所有读取函数都以 characterId 为第一参数，绝不跨角色返回。
 // 4. 「角色修改」也进回收站视野：修改前的内容快照留在 metadata 里，
 //    用户可以一键还原到角色动手之前的版本。
+// 5. 回收站不是永久的：超过 TRASH_RETENTION_DAYS（60 天）的条目在下次打开记忆库时自动清理。
 //
 // 依赖方向：本模块只依赖 memory-types / memory-storage，不依赖 memory-event-boxes，
 // 因此可以被 memory-event-boxes 反过来引用而不形成循环。
@@ -15,13 +16,13 @@
 import type { MemoryEntry } from "./memory-types";
 import { deleteMemoryEntries, saveMemoryEntry } from "./memory-storage";
 
-/** 弃用/修改相关的 metadata 键，集中定义避免各处拼字符串。 */
+/** 删除/修改相关的 metadata 键，集中定义避免各处拼字符串。 */
 export const TRASH_META_KEYS = {
-    /** 弃用时间（ISO）。存在即视为已弃用，不再注入 */
+    /** 删除时间（ISO）。存在即视为已移入「最近删除」，不再注入；也是 60 天自动清理的计时起点 */
     at: "trashedAt",
     /** 操作者："character" | "user" */
     by: "trashedBy",
-    /** 弃用理由（角色给的一句话） */
+    /** 删除理由（角色给的一句话） */
     reason: "trashReason",
     /** 修改前的正文快照 */
     previousContent: "preEditContent",
@@ -35,7 +36,7 @@ export const TRASH_META_KEYS = {
 
 export type TrashActor = "character" | "user";
 
-/** 这条记忆是否已被弃用（不再注入 Prompt） */
+/** 这条记忆是否已被删除（在「最近删除」里，不再注入 Prompt） */
 export function isEntryTrashed(entry: MemoryEntry): boolean {
     return typeof entry.metadata?.[TRASH_META_KEYS.at] === "string";
 }
@@ -79,8 +80,9 @@ export function readTrashedAt(entry: MemoryEntry): string {
 }
 
 /**
- * 弃用一条记忆（软删除）：只加标记，正文与 id 都不动。
- * 弃用后该条不再参与任何 Prompt 注入，但会出现在「最近删除」里等待用户裁决。
+ * 删除一条记忆（软删除）：只加标记，正文与 id 都不动。
+ * 删除后该条不再参与任何 Prompt 注入，但会出现在「最近删除」里等待用户裁决——
+ * 在那里点「彻底删除」才真正 drop，满 TRASH_RETENTION_DAYS 天也会自动清理。
  */
 export async function trashMemoryEntry(
     entry: MemoryEntry,
@@ -102,9 +104,9 @@ export async function trashMemoryEntry(
 }
 
 /**
- * 从回收站恢复一条记忆：清掉弃用标记，让它重新参与注入。
+ * 从回收站恢复一条记忆：清掉删除标记，让它重新参与注入。
  * 注意不清 previousContent —— 如果这条记忆同时带着「角色改过」的快照，
- * 恢复弃用之后用户仍然可以再选择还原到修改前的版本。
+ * 恢复之后用户仍然可以再选择还原到修改前的版本。
  */
 export async function restoreTrashedEntry(entry: MemoryEntry): Promise<MemoryEntry> {
     const metadata: Record<string, unknown> = { ...(entry.metadata ?? {}) };
@@ -149,8 +151,40 @@ export async function permanentlyDeleteTrashed(ids: string[]): Promise<void> {
     await deleteMemoryEntries(ids);
 }
 
+// ── 回收站自动清理 ──────────────────────────────
+
+/** 回收站保留天数：到期自动彻底删除（给误删留足反悔时间） */
+export const TRASH_RETENTION_DAYS = 60;
+
+/** 距离过期还剩多少天（≤0 表示已到期）；读不到删除时间时返回 null */
+export function readTrashRemainingDays(entry: MemoryEntry): number | null {
+    if (!isEntryTrashed(entry)) return null;
+    const at = Date.parse(readTrashedAt(entry));
+    if (!Number.isFinite(at)) return null;
+    const deadline = at + TRASH_RETENTION_DAYS * 86400000;
+    return Math.ceil((deadline - Date.now()) / 86400000);
+}
+
+/**
+ * 清理回收站里超过保留期的条目（真正从库里删除）。
+ * 入参通常是某角色 core + long_term 的全量记忆，本函数只挑出已过期的那些，
+ * 返回被删掉的 id，便于调用方把这些条目从本地状态里剔掉。
+ */
+export async function purgeExpiredTrashed(entries: MemoryEntry[]): Promise<{ ids: string[]; count: number }> {
+    const cutoff = Date.now() - TRASH_RETENTION_DAYS * 86400000;
+    const ids: string[] = [];
+    for (const entry of entries) {
+        if (!isEntryTrashed(entry)) continue;
+        const at = Date.parse(readTrashedAt(entry));
+        if (Number.isFinite(at) && at <= cutoff) ids.push(entry.id);
+    }
+    if (ids.length === 0) return { ids: [], count: 0 };
+    await permanentlyDeleteTrashed(ids);
+    return { ids, count: ids.length };
+}
+
 export type TrashBucket = {
-    /** 被弃用的记忆（不再注入） */
+    /** 被删除（移入最近删除）的记忆：不再注入，可恢复，满 60 天自动清理 */
     trashed: MemoryEntry[];
     /** 被角色改过、新内容仍在生效、可还原到修改前的记忆 */
     edited: MemoryEntry[];

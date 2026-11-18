@@ -195,7 +195,7 @@ export async function trashMemoryForCharacter(
     await trashMemoryEntry(target, { by: "character", reason });
     return {
         ok: true,
-        text: "已弃用。它不会再出现在你的记忆里，但原文还在，用户可以在「最近删除」里恢复。",
+        text: "已弃用。它不会再出现在你的记忆里，但原文还在，用户可以在「最近删除」里恢复（删除满 60 天后由系统自动清理）。",
     };
 }
 

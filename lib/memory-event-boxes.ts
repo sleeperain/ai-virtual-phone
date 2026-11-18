@@ -177,7 +177,7 @@ export function isEntryArchived(entry: MemoryEntry): boolean {
 
 /**
  * 过滤可参与 Prompt 召回的记忆条目：
- * - 已被「弃用」的条目一律不召回（角色或用户在回收站里弃用的记忆，原文仍保留、可恢复）
+ * - 已删除（在「最近删除」里）的条目一律不召回（原文仍保留、可恢复，满 60 天自动清理）
  * - 未归档的条目（含盒内「新事件」、盒外普通记忆、以及事件盒生成的「先前事件总结」digestEntry）正常召回
  * - 已归档的原始条目不再重复注入 Prompt（由对应的事件盒总结条目代表），但如果该事件盒的总结条目被删或不存在，自动兜底放行，绝不丢记忆
  */
@@ -190,7 +190,7 @@ export function filterRecallableEntries(entries: MemoryEntry[]): MemoryEntry[] {
         }
     }
     return entries.filter(entry => {
-        // 弃用优先级最高：无论归档与否，弃用后都不再注入，直到用户从回收站恢复
+        // 删除优先级最高：无论归档与否，删除后都不再注入，直到用户从「最近删除」恢复
         if (isEntryTrashed(entry)) return false;
         if (!isEntryArchived(entry)) return true;
         const archivedBoxId = String(entry.metadata?.[EVENT_BOX_META_KEYS.archivedInto] ?? "");

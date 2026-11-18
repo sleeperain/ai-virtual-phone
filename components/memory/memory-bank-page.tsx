@@ -68,13 +68,16 @@ import {
     loadProvenanceBatch,
 } from "@/lib/memory-provenance";
 import {
+    TRASH_RETENTION_DAYS,
     buildTrashBucket,
     isEntryTrashed,
     permanentlyDeleteTrashed,
+    purgeExpiredTrashed,
     readEditSnapshot,
     readTrashActor,
-    readTrashedAt,
     readTrashReason,
+    readTrashRemainingDays,
+    readTrashedAt,
     restoreTrashedEntry,
     revertCharacterEdit,
     trashMemoryEntry,
@@ -394,10 +397,10 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     // 设置页用：这个角色有几条核心记忆还没被角色审校过。
     // 反思会按「有未读 → 审校式模板 / 无未读 → 提炼式模板」自动切换，这里把实际生效情况显式告诉用户。
     const [auditPending, setAuditPending] = useState<{ core: number; unread: number } | null>(null);
-    const [confirmDeleteEntryId, setConfirmDeleteEntryId] = useState<string | null>(null);
     // 最近删除页里「彻底删除」的二次确认（这里删掉就真的没了）
     const [confirmPurgeEntry, setConfirmPurgeEntry] = useState<MemoryEntry | null>(null);
-    const [confirmClearAll, setConfirmClearAll] = useState(false);
+    /** 批量删除的二次确认：只移入回收站，不真删 */
+    const [confirmClearAll, setConfirmClearAll] = useState<null | "core" | "long_term">(null);
     const [pickedCharId, setPickedCharId] = useState<string | null>(null);
     const [entryMenuId, setEntryMenuId] = useState<string | null>(null);
     const [memoryEditor, setMemoryEditor] = useState<MemoryEditorState | null>(null);
@@ -405,6 +408,10 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const [embeddingAll, setEmbeddingAll] = useState(false);
     /** 正在「拆分重总结」的条目 id：拆完把原条目降权、新条目入库 */
     const [resplittingEntryId, setResplittingEntryId] = useState<string | null>(null);
+    /** 批量拆分重总结：一次性处理所有「疑似合并」的长期记忆 */
+    const [batchResplitting, setBatchResplitting] = useState(false);
+    const [batchResplitProgress, setBatchResplitProgress] = useState("");
+    const [confirmBatchResplit, setConfirmBatchResplit] = useState<number | null>(null);
     const [cleaningManualText, setCleaningManualText] = useState(false);
     const [cleaningAllLegacy, setCleaningAllLegacy] = useState(false);
     const [cleanLegacyProgress, setCleanLegacyProgress] = useState("");
@@ -456,6 +463,11 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     // 行高由 chip 实测得出（不同主题/字号下不写死），量不到就整段展开不滚。
     const boxChipScrollRef = useRef<HTMLDivElement | null>(null);
     const [boxChipMaxHeight, setBoxChipMaxHeight] = useState<number | undefined>(undefined);
+
+    // 提示回调放进 ref：loadDetailData 里要用它提示「自动清理了几条」，
+    // 若直接进依赖数组，父级传内联函数会让 loadDetailData 每次都换身份、把加载 effect 打成死循环。
+    const noticeRef = useRef(onNotice);
+    useEffect(() => { noticeRef.current = onNotice; }, [onNotice]);
 
     const disabledSourceCount = MEMORY_SOURCE_OPTIONS
         .filter(source => (config.shortTermAllowedSources ?? {})[source.key] === false).length;
@@ -531,9 +543,15 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                 loadMemoryEntriesByType(charId, "core"),
                 loadMemoryEntriesByType(charId, "long_term"),
             ]);
-            setCoreEntries(core);
-            setLongTermEntries(lt);
+            // 回收站自动清理：超过保留期的条目在这里顺手彻底删掉，不用用户手动清理
+            const purged = await purgeExpiredTrashed([...core, ...lt]);
+            const droppedIds = new Set(purged.ids);
+            setCoreEntries(droppedIds.size > 0 ? core.filter(e => !droppedIds.has(e.id)) : core);
+            setLongTermEntries(droppedIds.size > 0 ? lt.filter(e => !droppedIds.has(e.id)) : lt);
             setBoxes(loadEventBoxes(charId));
+            if (purged.count > 0) {
+                noticeRef.current?.(`已自动清理 ${purged.count} 条在「最近删除」中超过 ${TRASH_RETENTION_DAYS} 天的记忆`);
+            }
         } catch {
             setCoreEntries([]);
             setLongTermEntries([]);
@@ -625,34 +643,40 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         onSelectChar(char.id);
     };
 
-    const handleDeleteEntry = async (id: string) => {
-        await deleteMemoryEntry(id);
-        setCoreEntries(prev => prev.filter(e => e.id !== id));
-        setLongTermEntries(prev => prev.filter(e => e.id !== id));
-        setEntryMenuId(null);
-        loadCharacterList();
-    };
-
+    /**
+     * 批量把某一类记忆全部移进「最近删除」。
+     * 这里不做真正的删除——怕误删的人点错一次不该丢档，真删只留给回收站里的「彻底删除」。
+     */
     const handleClearEntries = async (type: "core" | "long_term") => {
         if (!selectedCharId) return;
-        await deleteCharacterMemoriesByType(selectedCharId, type);
-        if (type === "core") setCoreEntries([]);
-        else setLongTermEntries([]);
-        loadCharacterList();
+        const targets = (type === "core" ? coreEntries : longTermEntries).filter(e => !isEntryTrashed(e));
+        try {
+            for (const entry of targets) {
+                await trashMemoryEntry(entry, { by: "user" });
+            }
+            await loadDetailData(selectedCharId);
+            loadCharacterList();
+            showNotice(`已将 ${targets.length} 条${type === "core" ? "核心" : "长期"}记忆移入「最近删除」，可随时恢复`);
+        } catch (err) {
+            showNotice("批量删除失败: " + String(err));
+        }
     };
 
     // ── 最近删除（回收站）──
-    /** 用户手动弃用一条记忆：只标记，不删除，之后可在本页恢复 */
+    /**
+     * 删除一条记忆 = 移进「最近删除」。正文完整保留、立刻停止注入，随时可恢复。
+     * 真正的彻底删除只在回收站页面里做，所以主列表不需要「弃用」这第二个按钮。
+     */
     const handleTrashEntry = async (entry: MemoryEntry) => {
         if (!selectedCharId) return;
         setEntryMenuId(null);
         try {
-            await trashMemoryEntry(entry, { by: "user", reason: "用户手动弃用" });
+            await trashMemoryEntry(entry, { by: "user" });
             await loadDetailData(selectedCharId);
             loadCharacterList();
-            showNotice("已弃用，可在「最近删除」里恢复");
+            showNotice(`已移入「最近删除」，${TRASH_RETENTION_DAYS} 天内可恢复`);
         } catch (err) {
-            showNotice("弃用失败: " + String(err));
+            showNotice("删除失败: " + String(err));
         }
     };
 
@@ -713,6 +737,59 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             showNotice("拆分出错: " + String(err));
         } finally {
             setResplittingEntryId(null);
+        }
+    };
+
+    /**
+     * 某条长期记忆是否该判「疑似合并」。
+     * 事件盒总结不判（合并就是它的目的），其余长期记忆一律按规则扫一遍。
+     */
+    const isEntryMergeSuspect = (entry: MemoryEntry): boolean => {
+        if (entry.type !== "long_term" || isEntryBoxDigest(entry)) return false;
+        const stored = readMergeSuspicion(entry);
+        return stored.length > 0 || detectMergeSuspicion(entry.content).reasons.length > 0;
+    };
+
+    /**
+     * 批量拆分重总结：把所有「疑似合并」的长期记忆逐条交给模型拆开。
+     * 一条失败不影响后面的条目，最后汇总结果。
+     */
+    const handleBatchResplit = async (targets: MemoryEntry[]) => {
+        if (!selectedCharId || batchResplitting || targets.length === 0) return;
+        setConfirmBatchResplit(null);
+        setBatchResplitting(true);
+        setBatchResplitProgress(`0/${targets.length}`);
+        let ok = 0;
+        let created = 0;
+        const failures: string[] = [];
+        try {
+            for (let i = 0; i < targets.length; i++) {
+                const entry = targets[i];
+                setBatchResplitProgress(`${i + 1}/${targets.length}`);
+                try {
+                    const res = await resplitMergedMemory(selectedCharId, selectedChar?.name ?? "角色", entry.id);
+                    if (res.success) {
+                        ok += 1;
+                        created += res.createdCount ?? 0;
+                    } else {
+                        failures.push(res.error || "拆分失败");
+                    }
+                } catch (err) {
+                    failures.push(String(err));
+                }
+            }
+            await loadDetailData(selectedCharId);
+            loadCharacterList();
+            if (ok === 0) {
+                showNotice(failures[0] || "批量拆分失败");
+            } else if (failures.length > 0) {
+                showNotice(`已拆分 ${ok}/${targets.length} 条（共生成 ${created} 条独立记忆），${failures.length} 条失败：${failures[0]}`);
+            } else {
+                showNotice(`已拆分 ${ok} 条疑似合并的记忆，共生成 ${created} 条独立记忆，原条目均移入「最近删除」`);
+            }
+        } finally {
+            setBatchResplitting(false);
+            setBatchResplitProgress("");
         }
     };
 
@@ -1814,7 +1891,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
 
     const renderMemoryEntries = (type: MemoryEntry["type"], allEntries: MemoryEntry[], emptyText: string) => {
         const label = type === "core" ? "核心记忆" : "长期记忆";
-        // 被弃用的记忆只在「最近删除」里出现，不混在主列表里
+        // 已删除的记忆只在「最近删除」里出现，不混在主列表里
         const entries = allEntries.filter(e => !isEntryTrashed(e));
         const missingVectorCount = type === "long_term"
             ? entries.filter(e => !isEntryVectorValid(e)).length
@@ -1822,6 +1899,11 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         const legacyUnorganizedCount = type === "long_term"
             ? entries.filter(isLegacyUnorganizedMemory).length
             : 0;
+        // 可批量拆分的疑似合并条数（被更新版本接替的旧条目跳过：它们本来就不该再参与拆分）
+        const mergeSuspectTargets = type === "long_term"
+            ? entries.filter(e => isEntryMergeSuspect(e) && !isEntrySuperseded(e))
+            : [];
+        const mergeSuspectCount = mergeSuspectTargets.length;
 
         // Filter or rank entries when search query is active
         const trimmedQ = searchQuery.trim().toLowerCase();
@@ -1867,6 +1949,21 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                     </span>
                                 </button>
                             )}
+                            {type === "long_term" && mergeSuspectCount > 0 && (
+                                <button
+                                    className="mem-entry-add-btn"
+                                    onClick={() => setConfirmBatchResplit(mergeSuspectCount)}
+                                    disabled={batchResplitting || Boolean(resplittingEntryId)}
+                                    title="把所有「疑似合并」的长期记忆逐条交给模型重新拆分重总结：一条一件事分开入库，原条目移入「最近删除」"
+                                >
+                                    <Sparkles size={14} strokeWidth={1.8} />
+                                    <span>
+                                        {batchResplitting
+                                            ? `批量拆分中(${batchResplitProgress})...`
+                                            : `批量拆分重总结(${mergeSuspectCount})`}
+                                    </span>
+                                </button>
+                            )}
                             {type === "long_term" && missingVectorCount > 0 && (
                                 <button
                                     className="mem-entry-add-btn"
@@ -1880,10 +1977,11 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                             )}
                             <button
                                 className="mem-entry-clear-btn"
-                                onClick={() => setConfirmClearAll(true)}
+                                onClick={() => setConfirmClearAll(type)}
+                                title="把这一类记忆全部移入「最近删除」，随时可以恢复"
                             >
                                 <Trash2 size={15} strokeWidth={1.8} />
-                                <span>清除{label}</span>
+                                <span>全部移入最近删除</span>
                             </button>
                         </div>
 
@@ -2055,8 +2153,12 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                             </span>
                                         )}
                                         {(() => {
-                                            // 新记忆在总结时已写入标记；旧记忆没有 metadata，
-                                            // 这里用同一套规则实时扫一遍，让历史数据也能被挑出来
+                                            // 只有「长期记忆」判定是否混了多件事，核心记忆永远不判
+                                            // （核心记忆是提炼后的认知综述，本来就会涵盖多个层面）。
+                                            // 长期记忆这一侧不按来源排除：角色反思、核心综述的片段同样是长期记忆，
+                                            // 一样可能把几件事并成一条，全部交给用户顺手裁决；
+                                            // 唯一的例外是事件盒总结——合并本来就是它的目的。
+                                            if (type !== "long_term" || entryIsDigest) return null;
                                             const stored = readMergeSuspicion(entry);
                                             const live = stored.length > 0 ? stored : detectMergeSuspicion(entry.content).reasons;
                                             if (live.length === 0) return null;
@@ -2064,7 +2166,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                 <span
                                                     className="mem-stat-pill"
                                                     style={{ fontWeight: 700, borderRadius: 5, color: "var(--c-danger, #e5484d)" }}
-                                                    title={`疑似把多件事合并成了一条：${live.join("；")}`}
+                                                    title={`疑似把多件事合并成了一条：${live.join("；")}。可点菜单里的「拆分重总结」单独处理，或用列表上方的「批量拆分疑似合并」一次全拆。`}
                                                 >
                                                     疑似合并
                                                 </span>
@@ -2096,16 +2198,17 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                     {type === "long_term" && !entryIsDigest && (
                                                         <button
                                                             onClick={() => void handleResplitEntry(entry)}
-                                                            disabled={resplittingEntryId === entry.id}
+                                                            disabled={resplittingEntryId === entry.id || batchResplitting}
                                                         >
                                                             <Sparkles size={13} />
-                                                            <span>{resplittingEntryId === entry.id ? "拆分中..." : "拆分重总结"}</span>
+                                                            <span>
+                                                                {batchResplitting
+                                                                    ? `批量拆分中(${batchResplitProgress})`
+                                                                    : resplittingEntryId === entry.id ? "拆分中..." : "拆分重总结"}
+                                                            </span>
                                                         </button>
                                                     )}
-                                                    <button onClick={() => void handleTrashEntry(entry)}>
-                                                        <Trash2 size={13} />
-                                                        <span>弃用</span>
-                                                    </button>
+
                                                     {type === "long_term" && !entryIsDigest && (
                                                         <button
                                                             onClick={() => void handleCleanSingleLegacyEntry(entry)}
@@ -2115,12 +2218,11 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                             <span>{cleaningLegacyEntryId === entry.id ? "清洗中..." : "清洗"}</span>
                                                         </button>
                                                     )}
+                                                    {/* 只有一个删除入口：先移进「最近删除」，真删在回收站里做。
+                                                        不做「弃用」和「删除」两个按钮——两个都是删，没人愿意点两次才放心。 */}
                                                     <button
                                                         className="is-danger"
-                                                        onClick={() => {
-                                                            setEntryMenuId(null);
-                                                            setConfirmDeleteEntryId(entry.id);
-                                                        }}
+                                                        onClick={() => void handleTrashEntry(entry)}
                                                     >
                                                         <Trash2 size={13} />
                                                         <span>删除</span>
@@ -2279,8 +2381,9 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     };
 
     /**
-     * 最近删除页：按当前角色隔离，分「已弃用」和「被角色修改过」两摞。
-     * - 已弃用：不再注入 Prompt，可恢复；只有在这里点「彻底删除」才真正 drop。
+     * 最近删除页：按当前角色隔离，分「已删除」和「被角色修改过」两摞。
+     * - 已删除：不再注入 Prompt，可恢复；只有在这里点「彻底删除」才真正 drop，
+     *   且删除满 60 天后会自动清理（见 memory-trash 的 purgeExpiredTrashed）。
      * - 被角色修改过：新内容在生效，但保留了修改前快照，可一键还原创。
      */
     const renderTrashTab = () => {
@@ -2294,6 +2397,8 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             const actor = readTrashActor(entry);
             const reason = readTrashReason(entry);
             const trashedAt = readTrashedAt(entry);
+            // 距自动清理还剩几天（到期会由 loadDetailData 里的清理逻辑真正删掉）
+            const remainingDays = mode === "trashed" ? readTrashRemainingDays(entry) : null;
             const typeLabel = entry.type === "core" ? "核心记忆" : "长期记忆";
             const isExpanded = expandedId === entry.id;
             const displayBody = isExpanded || body.length <= 180 ? body : body.slice(0, 180) + "...";
@@ -2307,13 +2412,18 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                             <span>{typeLabel} · {formatEntryDateLines(entry)[0]}</span>
                             <span>
                                 {mode === "trashed"
-                                    ? `弃用于 ${trashedAt ? formatIsoTimestamp(trashedAt) : "未知时间"} · ${actor === "character" ? "角色弃用" : "用户弃用"}`
+                                    ? `删除于 ${trashedAt ? formatIsoTimestamp(trashedAt) : "未知时间"} · ${actor === "character" ? "角色" : "用户"}删除`
                                     : `角色改于 ${formatIsoTimestamp(entry.updatedAt)}`}
+                                {mode === "trashed" && remainingDays !== null
+                                    ? remainingDays > 0
+                                        ? ` · 剩 ${remainingDays} 天自动清理`
+                                        : " · 即将自动清理"
+                                    : ""}
                             </span>
                         </span>
                         <div className="mem-report-actions">
                             <span className="mem-stat-pill" style={{ fontWeight: 700, borderRadius: 5 }}>
-                                {mode === "trashed" ? "已弃用" : "角色改过"}
+                                {mode === "trashed" ? `已删除（${TRASH_RETENTION_DAYS}天内可恢复）` : "角色改过"}
                             </span>
                         </div>
                     </div>
@@ -2373,7 +2483,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                         className="mem-superseded-jump"
                                         onClick={() => void handleTrashEntry(entry)}
                                     >
-                                        弃用这条
+                                        删除这条
                                     </button>
                                 </>
                             )}
@@ -2387,7 +2497,10 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             <>
                 {total === 0 ? (
                     <div className="mem-empty-card">
-                        <p>最近删除是空的。角色或你弃用的记忆会出现在这里，可以随时恢复；在这里点「彻底删除」才是真的删掉。</p>
+                        <p>
+                            最近删除是空的。角色或你删掉的记忆会先放在这里，可以随时恢复；
+                            在这里点「彻底删除」才是真的删掉，超过 {TRASH_RETENTION_DAYS} 天的条目会自动清理。
+                        </p>
                     </div>
                 ) : (
                     <>
@@ -2404,7 +2517,9 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                         </div>
                         {trashed.length > 0 && (
                             <>
-                                <p className="menu-group-desc mx-2">已弃用（不再参与记忆注入，{trashed.length} 条）</p>
+                                <p className="menu-group-desc mx-2">
+                                    已删除（不再参与记忆注入，{trashed.length} 条；删除满 {TRASH_RETENTION_DAYS} 天自动清理）
+                                </p>
                                 {trashed.map(entry => renderCard(entry, "trashed"))}
                             </>
                         )}
@@ -3188,11 +3303,27 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                     );
                 })()}
 
+                {/* 批量拆分重总结：二次确认后再逐条调模型拆 */}
+                {confirmBatchResplit !== null && (
+                    <ConfirmDialog
+                        title={`批量拆分 ${confirmBatchResplit} 条疑似合并的记忆？`}
+                        message="每一条都会单独调用一次模型重新拆分：拆成一条一件事分别入库，原条目移入「最近删除」（可恢复）。条数多时耗时会比较长，中途可以等待进度但请不要离开页面。"
+                        icon={AlertCircle}
+                        confirmLabel="开始拆分"
+                        cancelLabel="取消"
+                        onCancel={() => setConfirmBatchResplit(null)}
+                        onConfirm={() => {
+                            const targets = longTermEntries.filter(e => isEntryMergeSuspect(e) && !isEntrySuperseded(e));
+                            void handleBatchResplit(targets);
+                        }}
+                    />
+                )}
+
                 {/* 最近删除：彻底删除二次确认（不可恢复） */}
                 {confirmPurgeEntry && (
                     <ConfirmDialog
                         title="彻底删除这条记忆？"
-                        message="这一步不可恢复，删掉之后记忆库里不会再留下内容。只是不想让它再被注入的话，点「取消」并保持弃用状态即可。"
+                        message="这一步不可恢复，删掉之后记忆库里不会再留下内容。如果只是不想让它参与记忆注入，点「取消」让它留在「最近删除」里即可。"
                         variant="danger"
                         confirmLabel="彻底删除"
                         cancelLabel="取消"
@@ -3516,30 +3647,18 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                     />
                 )}
 
-                {/* Confirm delete single entry */}
-                {confirmDeleteEntryId && (
-                    <ConfirmDialog
-                        title="确认删除？"
-                        message="删除记忆条目后无法恢复。是否继续？"
-                        icon={AlertCircle}
-                        variant="danger"
-                        confirmLabel="确认删除"
-                        onConfirm={() => {
-                            handleDeleteEntry(confirmDeleteEntryId);
-                            setConfirmDeleteEntryId(null);
-                        }}
-                        onCancel={() => setConfirmDeleteEntryId(null)}
-                    />
-                )}
-
                 {/* Confirm clear all long-term entries */}
                 {confirmClearAll && (
                     <ConfirmDialog
-                        title="确认清除？"
-                        message={activeTab === "core" ? "将清除该角色所有核心记忆，此操作无法恢复。" : "将清除该角色所有长期记忆，此操作无法恢复。"}
+                        title="全部移入最近删除？"
+                        message={
+                            activeTab === "core"
+                                ? "该角色的核心记忆会全部移入「最近删除」，随时可以恢复；在「最近删除」里点「彻底删除」才真的删掉，超过 60 天也会自动清理。"
+                                : "该角色的长期记忆会全部移入「最近删除」，随时可以恢复；在「最近删除」里点「彻底删除」才真的删掉，超过 60 天也会自动清理。"
+                        }
                         icon={AlertCircle}
                         variant="danger"
-                        confirmLabel="确认清除"
+                        confirmLabel="全部移入"
                         onConfirm={() => {
                             handleClearEntries(activeTab === "core" ? "core" : "long_term");
                             setConfirmClearAll(false);
