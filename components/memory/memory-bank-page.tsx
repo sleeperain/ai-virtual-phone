@@ -43,7 +43,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { runCoreMemoryPipeline } from "@/lib/core-memory-builder";
-import { DEFAULT_REFLECTION_PROMPT, runCoreMemoryReflection, type ReflectionScope } from "@/lib/core-memory-reflection";
+import { DEFAULT_REFLECTION_PROMPT, runCoreMemoryReflection, selectUnreadCoreTargets, type ReflectionScope } from "@/lib/core-memory-reflection";
 import { resolveAuxiliaryApiConfig, resolveUserIdentity } from "@/lib/settings-storage";
 import {
     generateEmbedding,
@@ -373,6 +373,9 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const [editingCorePrompt, setEditingCorePrompt] = useState<string | null>(null);
     const [editingEventBoxPrompt, setEditingEventBoxPrompt] = useState<string | null>(null);
     const [editingReflectionPrompt, setEditingReflectionPrompt] = useState<string | null>(null);
+    // 设置页用：这个角色有几条核心记忆还没被角色审校过。
+    // 反思会按「有未读 → 审校式模板 / 无未读 → 提炼式模板」自动切换，这里把实际生效情况显式告诉用户。
+    const [auditPending, setAuditPending] = useState<{ core: number; unread: number } | null>(null);
     const [confirmDeleteEntryId, setConfirmDeleteEntryId] = useState<string | null>(null);
     const [confirmClearAll, setConfirmClearAll] = useState(false);
     const [pickedCharId, setPickedCharId] = useState<string | null>(null);
@@ -550,6 +553,25 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             setEditingReflectionPrompt(null);
         }
     }, [view]);
+
+    // 设置页打开时统计「待角色审校」的核心记忆条数，用于显式提示当前生效的反思模板是哪一套
+    useEffect(() => {
+        if (view !== "settings" || !selectedCharId) {
+            setAuditPending(null);
+            return;
+        }
+        let cancelled = false;
+        (async () => {
+            try {
+                const core = await loadMemoryEntriesByType(selectedCharId, "core");
+                if (cancelled) return;
+                setAuditPending({ core: core.length, unread: selectUnreadCoreTargets(core).length });
+            } catch {
+                if (!cancelled) setAuditPending(null);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [view, selectedCharId]);
 
     // 切角色（或重新进入设置页）时，读取该角色已构建的思考倾向
     useEffect(() => {
@@ -3477,7 +3499,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                     </div>
                                     <div className="modal-body modal-body-tight" data-ui="modal-body">
                                         <p className="ts-11 text-secondary" style={{ margin: "0 4px 8px" }}>
-                                            完整读取角色卡设定，以角色第一人称回看这段时间的事，生成一条只属于这个角色的核心记忆；会产生一次 API 调用。反思会参考上一次的结论，越用越连贯。
+                                            完整读取角色卡设定，以角色第一人称回看这段时间的事，会产生一次 API 调用。若这个角色已有「还没被角色读过」的核心记忆，本轮先做<b>审校</b>：核对系统整理得准不准，判定失真的修正版与原文并存入库；没有待审校内容时，则产出一条新的核心记忆。反思会参考上一次的结论，越用越连贯。
                                         </p>
                                         <div className="menu-group">
                                             {REFLECTION_SCOPE_OPTIONS.map(option => (
@@ -3911,6 +3933,23 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                         <p className="ts-11 text-secondary" style={{ margin: 0 }}>
                             反思用角色自己绑定的聊天 API；角色设定始终完整注入，改这里只调整反思的问法与写作要求。
                         </p>
+                        <p className="ts-11 text-secondary" style={{ margin: 0 }}>
+                            上面的文本框显示的是<b>默认提炼式模板</b>，只是给你编辑的底稿，不代表本次一定会用它。
+                            内置模板会按下面的条件自动切换：有「还没被角色读过」的核心记忆时用<b>审校式模板</b>（角色核对系统整理得准不准，输出【判断】/【问题】/【修正版】三段，判定失真的修正版会作为独立条目并存入库）；
+                            一条都没有时回退<b>提炼式模板</b>（输出一段连贯的认知结论）。
+                        </p>
+                        <p className="ts-11" style={{ margin: 0 }}>
+                            {isReflectionDefault
+                                ? "当前未自定义，使用内置模板并按上述条件自动切换。"
+                                : "当前已自定义：下面这段文本会覆盖两种内置模板，审校式模板不会自动生效——想用审校式请点「恢复默认」。"}
+                        </p>
+                        {auditPending ? (
+                            <p className="ts-11" style={{ margin: 0 }}>
+                                {auditPending.unread > 0
+                                    ? `本角色将走【审校式】：待审校 ${auditPending.unread} 条（核心记忆共 ${auditPending.core} 条）。`
+                                    : `本角色将走【提炼式】：暂无待审校核心记忆（核心记忆共 ${auditPending.core} 条）。`}
+                            </p>
+                        ) : null}
                         {isReflectionModified && (
                             <button
                                 onClick={handleSaveReflectionPrompt}
