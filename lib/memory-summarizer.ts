@@ -635,12 +635,15 @@ export async function runSummarizationPipeline(
     return { success: true };
 }
 
+/** 单次拆分最多允许的段数：超过就是过度拆分，宁可不拆 */
+const MAX_RESPLIT_BLOCKS = 3;
+
 /**
- * 拆分重总结：把一条「把多件事合并成一条（还编了因果）」的长期记忆，
- * 交给模型重新拆成若干条独立记忆，原条目按 supersede 机制降权保留（不删原文）。
+ * 拆分重总结：只在一条长期记忆确实把几件互不相干的事硬凑成一条时，
+ * 交给模型拆成最多 3 条独立记忆；原条目移入「最近删除」并可一键恢复。
  *
- * 与后置校验（detectMergeSuspicion）配套：校验只负责挑出来，这里负责真正修好，
- * 不必让用户手动删了再重录。
+ * 判断口径刻意保守：同一件事的起因/经过/结果、同一场景的连续动作、有真实因果或
+ * 前后依赖的细节都算「同一件事」，不拆。相关联的事件拆散比不拆错得多。
  */
 export async function resplitMergedMemory(
     characterId: string,
@@ -676,20 +679,30 @@ export async function resplitMergedMemory(
         : "";
 
     const prompt = [
-        `下面这条长期记忆把本来互不相干的事情合并成了一条，甚至补出了原文没有的因果关系。请把它重新拆成若干条独立的记忆。`,
+        "下面是一条长期记忆。请先判断它到底是「一件事」还是「几件互不相干的事被硬凑在一起」，再决定要不要拆。",
         "",
         "记忆正文：",
         body,
         "",
         sourceText
             ? `对应的原始事件记录（核对事实用，严禁照抄，也严禁据此新增原话没有的因果）：\n${sourceText}`
-            : "（这条记忆没有可用的原始事件存档，请只依据上面正文里已经写明的事实拆分，不要自行推断因果。）",
+            : "（这条记忆没有可用的原始事件存档，请只依据上面正文里已经写明的事实判断，不要自行推断因果。）",
         "",
-        "═══ 拆分规则 ═══",
-        "1. 一件事一条：每件事必须是独立成立的，不依赖另一件事才能讲通。",
-        "2. 严禁补出原文没写过的因果（例如“通过A就能达成B”“A是B的步骤”）。原文没写的关联，就不要写。",
-        "3. 如果这条记忆其实只讲了一件事、并没有合并，就原样输出一条，不要硬拆。",
-        "4. 正文用第三人称，40-120 字，不得出现任何日期或时间。",
+        "═══ 判断规则（先判断，再决定拆不拆）═══",
+        "1. 以下这些都属于「同一件事」，必须原样保留在同一条记忆里，严禁按句子切碎：",
+        "   - 同一件事的起因、经过、转折、结果；",
+        "   - 同一场景/同一场对话里连续发生的动作与反应；",
+        "   - 彼此有真实因果、前后依赖、或共同构成一个约定的细节（例如「约好周末去海边」和「为此开始查天气」，是一件事的两个环节）；",
+        "   - 一方做了一件事、另一方的回应与后续态度。",
+        "2. 只有一种情况才拆：这条记忆确实把两件互不相干的事硬凑成了一条，原文里根本不存在它们之间的关联，"
+        "拆开后各自都能独立讲通，且拆开不会丢掉任何信息。",
+        "3. 拿不准就不要拆。宁可原样输出一条，也不要为了凑条数去拆；把相关联的事件拆散比不拆错得更离谱。",
+        "",
+        "═══ 写作要求 ═══",
+        "- 严禁补出原文没写过的因果（例如「通过A就能达成B」「A是B的步骤」）。原文没写的关联就不要写。",
+        "- 如果决定拆，最多拆成 3 条；超过 3 条说明这条记忆其实是一条完整的事，请改为原样输出 1 条。",
+        "- 不拆时把原文整理通顺输出一条即可，不要改写事实、不要删掉原有细节。",
+        "- 正文用第三人称，40-120 字，不得出现任何日期或时间。",
         "",
         "═══ 输出格式 ═══",
         "多条之间用单独一行的 --- 分隔；每条末尾单独输出两行：",
@@ -712,6 +725,15 @@ export async function resplitMergedMemory(
         ? target.metadata.eventDate.trim()
         : target.createdAt.slice(0, 10);
 
+    // 条数上限兜底：模型不听话把一条记忆炸成七八段碎片时，宁可不拆也不覆盖原文。
+    // 拆碎了相关联的事件，比保持原样糟得多。
+    if (blocks.length > MAX_RESPLIT_BLOCKS) {
+        return {
+            success: false,
+            error: `模型想拆成 ${blocks.length} 段，超过 ${MAX_RESPLIT_BLOCKS} 段上限，已判定为过度拆分并保持原样。这条记忆可以直接手动编辑。`,
+        };
+    }
+
     const createdIds: string[] = [];
     for (let i = 0; i < blocks.length; i++) {
         const block = blocks[i];
@@ -720,6 +742,18 @@ export async function resplitMergedMemory(
         if (!cleanBody || cleanBody.length < 8) continue;
 
         const newId = `mem_lt_resplit_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 7)}`;
+        // 继承原条目的归属信息（事件日期、事件盒、溯源批次），但绝不继承「被拆过」的记录
+        const childMetadata: Record<string, unknown> = {
+            ...(target.metadata ?? {}),
+            eventDate: dayKey,
+            keywords: keywords.length > 0 ? keywords : (Array.isArray(target.metadata?.keywords) ? target.metadata?.keywords : []),
+            resplitFrom: entryId,
+            topicSplitV2: true,
+            ...withMergeSuspicionMetadata({}, detectMergeSuspicion(cleanBody)),
+        };
+        delete childMetadata.resplitInto;
+        delete childMetadata.resplitDetachedBy;
+
         const next: MemoryEntry = {
             id: newId,
             characterId,
@@ -730,14 +764,7 @@ export async function resplitMergedMemory(
             accessCount: 0,
             createdAt: new Date(Date.now() + i).toISOString(),
             updatedAt: new Date(Date.now() + i).toISOString(),
-            metadata: {
-                ...(target.metadata ?? {}),
-                eventDate: dayKey,
-                keywords: keywords.length > 0 ? keywords : (Array.isArray(target.metadata?.keywords) ? target.metadata?.keywords : []),
-                resplitFrom: entryId,
-                topicSplitV2: true,
-                ...withMergeSuspicionMetadata({}, detectMergeSuspicion(cleanBody)),
-            },
+            metadata: childMetadata,
         };
         await saveMemoryEntry(next);
         createdIds.push(newId);
@@ -746,15 +773,15 @@ export async function resplitMergedMemory(
     if (createdIds.length === 0) {
         return { success: false, error: "拆分结果为空，已保持原样" };
     }
-    // 只拆出一条且内容几乎没变：说明模型判断本来就没有合并，不做任何覆盖
+    // 只产出 1 条 = 模型判断「本来就是一件事」，一律保持原样：
+    // 既不拆、也不拿一段改写版去替换原条目（那会平白丢掉原文措辞）。
+    // 真要润色措辞，用编辑功能手动改，别让自动流程动用户的记忆。
     if (createdIds.length === 1) {
-        const only = await loadMemoryEntriesByType(characterId, "long_term");
-        const created = only.find(e => e.id === createdIds[0]);
-        const unchanged = created && created.content.trim() === body;
-        if (unchanged) {
-            await deleteMemoryEntries(createdIds);
-            return { success: false, error: "模型认为这条记忆本身没有合并多件事，未做改动" };
-        }
+        await deleteMemoryEntries(createdIds);
+        return {
+            success: false,
+            error: "模型判断这条记忆本身没有合并多件事，已保持原样（如需改措辞请直接编辑这条记忆）",
+        };
     }
 
     // 原条目弃用：整条移进「最近删除」，不再以低权重半活着参与注入。
@@ -774,6 +801,86 @@ export async function resplitMergedMemory(
     );
 
     return { success: true, createdCount: createdIds.length, entryIds: createdIds };
+}
+
+/**
+ * 恢复「被拆分的那条原记忆」时，把它拆分出来的子条目一并停用（移入「最近删除」）。
+ *
+ * 为什么必须做：拆分时原条目进了回收站、碎片留在主列表；用户点恢复本意是「回到拆之前」，
+ * 若碎片还留在库里，同样的内容就会以原条目 + 若干碎片的形式重复存在，越用越乱。
+ * 这里不硬删——碎片里也是真实内容，只是不再与原条目同时生效，用户仍可在回收站里单独恢复。
+ */
+export async function detachResplitChildren(
+    characterId: string,
+    parent: MemoryEntry,
+): Promise<{ removed: number; parent: MemoryEntry }> {
+    const all = await loadMemoryEntriesByType(characterId, "long_term");
+    const children = all.filter(entry =>
+        !isEntryTrashed(entry) && String(entry.metadata?.resplitFrom ?? "") === parent.id,
+    );
+    for (const child of children) {
+        await trashMemoryEntry(
+            {
+                ...child,
+                updatedAt: new Date().toISOString(),
+                metadata: {
+                    ...(child.metadata ?? {}),
+                    // 记下它是被哪次恢复牵连停用的，回收站里能看懂来龙去脉
+                    resplitDetachedBy: parent.id,
+                },
+            },
+            { by: "user", reason: "所属原记忆已恢复，拆分产物一并停用" },
+        );
+    }
+    // 原条目上「拆成了哪几条」的记录已经失效，顺手清掉，避免下次恢复又去找这批碎片
+    const metadata: Record<string, unknown> = { ...(parent.metadata ?? {}) };
+    delete metadata.resplitInto;
+    const next: MemoryEntry = {
+        ...parent,
+        updatedAt: new Date().toISOString(),
+        metadata,
+    };
+    await saveMemoryEntry(next);
+    return { removed: children.length, parent: next };
+}
+
+/**
+ * 兜底清理「孤儿碎片」：父条目已经恢复（不在最近删除里）却还留在主列表的拆分子条目。
+ *
+ * 用于修复已经发生过的状态——早先版本恢复原记忆时不会处理碎片，库里就会同时存在
+ * 原条目和它的若干碎片。这里把这些碎片移入「最近删除」（可恢复、不硬删）。
+ * 父条目已被彻底删除、或仍在回收站时不动：那时碎片是唯一内容，删了才是真丢。
+ */
+export async function sweepOrphanResplitChildren(
+    characterId: string,
+    entries: MemoryEntry[],
+): Promise<{ count: number; ids: string[] }> {
+    const byId = new Map(entries.map(entry => [entry.id, entry]));
+    const orphans = entries.filter(entry => {
+        if (isEntryTrashed(entry)) return false;
+        const parentId = String(entry.metadata?.resplitFrom ?? "");
+        if (!parentId) return false;
+        const parent = byId.get(parentId);
+        if (!parent) return false;
+        // 父条目仍在回收站：拆分关系有效，碎片照旧参与召回
+        return !isEntryTrashed(parent);
+    });
+    if (orphans.length === 0) return { count: 0, ids: [] };
+
+    for (const child of orphans) {
+        await trashMemoryEntry(
+            {
+                ...child,
+                updatedAt: new Date().toISOString(),
+                metadata: {
+                    ...(child.metadata ?? {}),
+                    resplitDetachedBy: String(child.metadata?.resplitFrom ?? ""),
+                },
+            },
+            { by: "user", reason: "所属原记忆已恢复，拆分产物一并停用" },
+        );
+    }
+    return { count: orphans.length, ids: orphans.map(entry => entry.id) };
 }
 
 /**

@@ -143,9 +143,14 @@ export function clearProvenanceBatches(characterId: string): void {
 
 // ── 疑似合并的后置校验 ──────────────────────────────
 
-/** 因果连词：一条纯记录不应该出现「因为/所以/就能/从而」这类推断 */
-const CAUSAL_CONNECTORS = /(?:通过|只要|就能|才能|从而|于是|因此|所以|顺便|借此|好在|为了|以便|导致|使得|达成|前提是|条件是)/g;
-/** 并列分隔符：一条记忆里出现多个分隔 + 不同主体时更可疑 */
+/**
+ * 强推断连词：这些词会把两件事「焊」成因果关系，是最典型的编造因果信号。
+ * 只把它们计入可疑判定——「于是/所以/为了」这类叙述里本来就常用，人人都写，不算证据。
+ */
+const STRONG_INFERENCE_CONNECTORS = /(?:通过|就能|才能|从而|导致|使得|达成|前提是|条件是|以便)/g;
+/** 弱因果连词：只作为辅助信息返回，不单独构成可疑 */
+const WEAK_CAUSAL_CONNECTORS = /(?:于是|因此|所以|顺便|借此|好在|为了)/g;
+/** 并列分隔符：一条记忆里出现多个分隔 + 篇幅明显偏长时才可疑 */
 const ENUM_SEPARATORS = /[；;]|、(?=.{4,})/g;
 
 export type MergeSuspicion = {
@@ -159,29 +164,46 @@ export type MergeSuspicion = {
 
 /**
  * 规则扫描一条长期记忆正文，判断是否疑似把两件事合并成一条。
- * 纯启发式、不调模型：宁可误报让人扫一眼，也不要把编造的因果直接喂给角色。
+ * 纯启发式、不调模型。口径刻意保守：相关联的事被误标一下，用户可能真的去拆，
+ * 把好记忆拆散比漏检糟糕得多，所以宁可漏检。
  */
 export function detectMergeSuspicion(content: string): MergeSuspicion {
     const body = String(content || "").trim();
     const reasons: string[] = [];
     if (!body) return { suspect: false, reasons, connectors: [] };
 
-    const connectors = Array.from(new Set(body.match(CAUSAL_CONNECTORS) ?? []));
-    // 「为了/只要」单独出现可能只是复述用户原话，累积到 2 个以上才认定可疑
-    if (connectors.length >= 2) {
-        reasons.push(`含 ${connectors.length} 个因果/推论连词（${connectors.slice(0, 4).join("、")}）`);
-    } else if (connectors.length === 1 && /(?:就能|才能|从而|因此|所以|导致|使得)/.test(connectors[0])) {
-        reasons.push(`含因果推断词「${connectors[0]}」，原文未必有这层关系`);
+    const strong = Array.from(new Set(body.match(STRONG_INFERENCE_CONNECTORS) ?? []));
+    const weak = Array.from(new Set(body.match(WEAK_CAUSAL_CONNECTORS) ?? []));
+    const connectors = Array.from(new Set([...strong, ...weak]));
+
+    // 口径刻意保守：相关联的事（起因→经过→结果、同一场景的连续动作、有真实因果的约定）
+    // 本来就是一条好记忆，不该被标成「疑似合并」再被拆散。
+    // 1. 强推断连词本身就很可疑（「通过A就能B」「A是B的前提」几乎都是模型自己焊出来的），出现 2 个以上直接认定；
+    // 2. 出现 1 个强推断词 + 至少 1 个弱因果词，也认定（两层因果叠在一起）；
+    // 3. 弱因果词单独出现一律不认定——那是正常叙述，人人都会用。
+    if (strong.length >= 2) {
+        reasons.push(`含 ${strong.length} 个强推断词（${strong.slice(0, 4).join("、")}），原文未必有这层因果关系`);
+    } else if (strong.length === 1 && weak.length >= 1) {
+        reasons.push(`同时出现推断词「${strong[0]}」与「${weak[0]}」，像是把两件事焊成了因果`);
     }
 
-    // 分号分隔多个动作、且句子偏长：典型的两件事拼在一起
+    // 罗列多个动作且篇幅明显偏长：只有「；」这种明确分句、且分段够多时才可疑
+    const semicolons = (body.match(/[;；]/g) ?? []).length;
     const separators = body.match(ENUM_SEPARATORS) ?? [];
-    if (separators.length >= 1 && body.length >= 60) {
-        reasons.push("用分号/顿号罗列了多个动作且篇幅偏长，可能混了两件事");
+    if (semicolons >= 2 && body.length >= 90) {
+        reasons.push(`用分号罗列了 ${semicolons + 1} 段以上内容且篇幅偏长，可能混了几件事`);
+    } else if (separators.length >= 3 && body.length >= 140) {
+        reasons.push("顿号并列项过多且篇幅很长，可能混了几件事");
     }
 
     return { suspect: reasons.length > 0, reasons, connectors };
 }
+
+/**
+ * 判定规则版本号。规则一收紧，就要把旧版留下的标记全部作废——
+ * 上一版几乎给所有带「所以/于是」的记忆都盖了「疑似合并」，那些标记不能继续驱动拆分。
+ */
+export const MERGE_SUSPECT_VERSION = 2;
 
 /** 把可疑标记写进记忆元数据（只标不改正文，人工在记忆库里裁决） */
 export function withMergeSuspicionMetadata(
@@ -192,17 +214,23 @@ export function withMergeSuspicionMetadata(
         const next = { ...metadata };
         delete next.mergeSuspect;
         delete next.mergeSuspectReasons;
+        delete next.mergeSuspectVersion;
         return next;
     }
     return {
         ...metadata,
         mergeSuspect: true,
         mergeSuspectReasons: suspicion.reasons,
+        mergeSuspectVersion: MERGE_SUSPECT_VERSION,
     };
 }
 
-/** 读取某条记忆的疑似合并标记 */
+/**
+ * 读取某条记忆的疑似合并标记。
+ * 旧版规则（无版本号或版本号不符）留下的标记一律忽略，由界面按新规则重新检测。
+ */
 export function readMergeSuspicion(entry: MemoryEntry): string[] {
+    if (entry.metadata?.mergeSuspectVersion !== MERGE_SUSPECT_VERSION) return [];
     const raw = entry.metadata?.mergeSuspectReasons;
     if (!Array.isArray(raw)) return entry.metadata?.mergeSuspect ? ["疑似混入了多件事"] : [];
     return raw.map(String).filter(Boolean);
