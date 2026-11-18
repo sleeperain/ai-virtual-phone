@@ -546,9 +546,9 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                 loadMemoryEntriesByType(charId, "long_term"),
             ]);
             // 先修一遍历史遗留：原记忆已经恢复、却还留着当初拆出来的碎片
-            const swept = await sweepOrphanResplitChildren(charId, lt);
+            const swept = await sweepOrphanResplitChildren(lt);
             if (swept.count > 0) {
-                // 碎片已入库为「最近删除」，重新读一次让它们出现在回收站列表里
+                // 碎片已被彻底删除，重新读一次让列表与库保持一致
                 [core, lt] = await Promise.all([
                     loadMemoryEntriesByType(charId, "core"),
                     loadMemoryEntriesByType(charId, "long_term"),

@@ -843,7 +843,6 @@ export async function detachResplitChildren(
  * 父条目已被彻底删除、或仍在回收站时不动：那时碎片是唯一内容，删了才是真丢。
  */
 export async function sweepOrphanResplitChildren(
-    characterId: string,
     entries: MemoryEntry[],
 ): Promise<{ count: number; ids: string[] }> {
     const byId = new Map(entries.map(entry => [entry.id, entry]));
