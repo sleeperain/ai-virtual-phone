@@ -62,6 +62,11 @@ import {
     sliceSupersededText,
 } from "@/lib/memory-revision";
 import {
+    detectMergeSuspicion,
+    readMergeSuspicion,
+    loadProvenanceBatch,
+} from "@/lib/memory-provenance";
+import {
     buildTrashBucket,
     isEntryTrashed,
     permanentlyDeleteTrashed,
@@ -2025,6 +2030,22 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                 已归档
                                             </span>
                                         )}
+                                        {(() => {
+                                            // 新记忆在总结时已写入标记；旧记忆没有 metadata，
+                                            // 这里用同一套规则实时扫一遍，让历史数据也能被挑出来
+                                            const stored = readMergeSuspicion(entry);
+                                            const live = stored.length > 0 ? stored : detectMergeSuspicion(entry.content).reasons;
+                                            if (live.length === 0) return null;
+                                            return (
+                                                <span
+                                                    className="mem-stat-pill"
+                                                    style={{ fontWeight: 700, borderRadius: 5, color: "var(--c-danger, #e5484d)" }}
+                                                    title={`疑似把多件事合并成了一条：${live.join("；")}`}
+                                                >
+                                                    疑似合并
+                                                </span>
+                                            );
+                                        })()}
                                         <span
                                             className={`mem-origin-badge ${isManualMemoryEntry(entry) ? "is-manual" : ""}`}
                                             style={{ borderRadius: 5 }}
@@ -2185,6 +2206,37 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                         </div>
                                     )}
                                 </div>
+                                {/* 原文溯源：仅在展开时渲染，避免主列表被原文撑长 */}
+                                {isExpanded && (() => {
+                                    const batchId = typeof entry.metadata?.provenanceBatchId === "string"
+                                        ? entry.metadata.provenanceBatchId
+                                        : "";
+                                    if (!batchId) return null;
+                                    const batch = loadProvenanceBatch(selectedCharId!, batchId);
+                                    if (!batch) return null;
+                                    return (
+                                        <div className="mem-superseded-note" style={{ display: "block" }}>
+                                            <div className="ts-11 text-secondary" style={{ fontWeight: 600, marginBottom: 4 }}>
+                                                这条记忆是从 {batch.totalEntries} 条原始事件里总结出来的（{batch.earliest} ~ {batch.latest}）
+                                                {batch.entries.length < batch.totalEntries
+                                                    ? ` · 下面显示其中最近 ${batch.entries.length} 条`
+                                                    : ""}
+                                            </div>
+                                            <div style={{ maxHeight: 260, overflowY: "auto" }}>
+                                                {batch.entries.map(item => (
+                                                    <div
+                                                        key={item.id}
+                                                        className="ts-11"
+                                                        style={{ padding: "3px 0", borderTop: "1px solid rgba(128,128,128,.15)" }}
+                                                    >
+                                                        <span className="text-secondary" style={{ marginRight: 6 }}>{item.sourceApp}</span>
+                                                        <span style={{ whiteSpace: "pre-wrap", opacity: 0.85 }}>{item.content}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
                             </div>
                         );
                     })

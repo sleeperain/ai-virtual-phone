@@ -29,6 +29,12 @@ import {
 } from "./memory-revision";
 
 import { loadBindingConfig, loadApiConfigs, resolveBinding } from "./settings-storage";
+import {
+    detectMergeSuspicion,
+    saveProvenanceBatch,
+    toProvenanceEntry,
+    withMergeSuspicionMetadata,
+} from "./memory-provenance";
 
 /** Per-character lock to prevent concurrent summarization. */
 const summarizingSet = new Set<string>();
@@ -348,6 +354,12 @@ export async function runSummarizationPipeline(
         promptTemplate += ruleEnforcement;
     }
 
+    // 禁止编造因果：模型拆条时最容易犯的错不是「话题判错」，而是为了让叙事通顺
+    // 自己补出「做了 A 就能达成 B」的因果。这类虚构因果一旦进了长期记忆，
+    // 之后每一轮对话角色都会当真事执行。所以这条独立于用户自定义提示词，始终追加。
+    const antiFabricationRule = `\n\n【禁止编造因果关系（同样最高优先级）】：\n1. **同一场景、同一时段发生的两件事，不等于同一件事。** 除非原始事件记录里【明确写明了】A 导致 B、或 A 是 B 的前提/步骤，否则绝不能把两件事写成一条，也绝不能补出“通过A就能达成B”“A是B的一部分”这类原文没写过的因果关系。\n2. **独立性测试**：若把两件事分开写成两条，各自仍然完整成立；而合并成一条时必须加上“因为/所以/顺便/就能”之类的连接词才读得通——那就必须拆开。\n3. **反例（错误）**：「用户在舞厅打关卡并攒代币，把关卡打通就能攒满代币」——打关卡与攒代币是两套独立机制，原文没有“打通关就能攒币”这个因果关系，正确做法是拆成两条：一条记打关卡，一条记攒代币，不解释二者关系。\n4. **不确定就分开写**：宁可拆成两条略有重叠的记忆，也不要把两件事合并成一条带因果的错误记忆。`;
+    promptTemplate += antiFabricationRule;
+
     const embeddingApiConfig = config.vectorRecallEnabled ? resolveAuxiliaryApiConfig("embeddingApiConfigId") : null;
     const canEmbed = Boolean(embeddingApiConfig && resolveEmbeddingModel(embeddingApiConfig));
 
@@ -416,6 +428,17 @@ export async function runSummarizationPipeline(
                 .filter((sessionId): sessionId is string => Boolean(sessionId)),
         ));
 
+        // 原文存档：把这批拆条所依据的原始事件完整留档，
+        // 之后每条记忆都能顺着 batchId 回看「这句话是从哪些原话里炼出来的」。
+        // 存档写在独立 kv 里，不进记忆库、不占记忆注入预算。
+        const provenanceBatchId = saveProvenanceBatch({
+            characterId,
+            dayKey,
+            entries: dayEntries.map(toProvenanceEntry),
+            earliest,
+            latest,
+        });
+
         // Parse all blocks for this day first so we can batch-generate embeddings
         const parsedTopics: Array<{
             cleanBody: string;
@@ -480,12 +503,14 @@ export async function runSummarizationPipeline(
                 // 正文被换成新文本时，旧的划掉区间（按老正文下标算的）已经失效，必须一并清掉，
                 // 否则删除线会画到毫不相干的位置上。
                 const contentReplaced = mergedContent !== duplicate.content;
-                const mergedMetadata: Record<string, unknown> = {
+                const mergedMetadata: Record<string, unknown> = withMergeSuspicionMetadata({
                     ...(duplicate.metadata ?? {}),
                     eventDate: dayKey,
                     keywords: mergedKeywords,
+                    // 合并进旧条目时同步刷新溯源指向，否则详情里看到的是上一批原文
+                    provenanceBatchId,
                     ...(embedding ? { embeddingDim: embedding.length } : {}),
-                };
+                }, detectMergeSuspicion(topic.cleanBody));
                 if (contentReplaced) {
                     delete mergedMetadata[REVISION_META_KEYS.by];
                     delete mergedMetadata[REVISION_META_KEYS.at];
@@ -530,9 +555,16 @@ export async function runSummarizationPipeline(
                     accessCount: 0,
                     keywords: topic.keywords,
                     topicSplitV2: true,
+                    // 原文溯源：指向本批原始事件的存档，记忆库详情里可展开回看
+                    provenanceBatchId,
                     // 这条记忆改写了哪条旧记忆：点进详情时能顺着找回去
                     ...(match && revision && revision.spans.length > 0 ? { revisesMemoryId: match.entry.id } : {}),
                     ...(embedding ? { embeddingDim: embedding.length } : {}),
+                    // 后置校验：命中可疑特征就标出来，等人工在记忆库里裁决要不要拆
+                    ...withMergeSuspicionMetadata(
+                        {},
+                        detectMergeSuspicion(topic.cleanBody),
+                    ),
                 },
             };
             await saveMemoryEntry(longTermEntry);

@@ -190,6 +190,9 @@ const PRIMARY_DATA_MODULES: DataModuleDefinition[] = [
         keys: ["ai_phone_memory_config_v1"],
         prefixes: [
           "ai_phone_memory_boxes_",
+          // 长期记忆的原文溯源存档：换设备/恢复备份时一起带走，
+          // 否则记忆还在、却再也查不到它是从哪些原话里炼出来的
+          "ai_phone_memory_provenance_",
           "ai_phone_mem_evt_count_",
           "ai_phone_mem_last_sum_",
           "ai_phone_mem_core_count_",
