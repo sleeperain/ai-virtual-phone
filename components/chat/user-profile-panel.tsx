@@ -34,6 +34,20 @@ import { loadPushCloudScheduled, savePushCloudScheduled } from "@/lib/cloud-depl
 import { armIdleReconnectBailout, armTimedWakeBailout, cancelBailoutKey, cancelBailoutPrefix } from "@/lib/push-bailout-client";
 import { loadTimedWakeSchedules, makeTimedWakeId, removeTimedWakeSchedule, saveTimedWakeSchedule, type TimedWakeSchedule } from "@/lib/timed-wake-storage";
 import { IDLE_RECONNECT_MAX_CONSECUTIVE, loadIdleReconnectRules, removeIdleReconnectRule, upsertIdleReconnectRule, type IdleReconnectRule } from "@/lib/idle-reconnect-storage";
+import {
+    ALL_ROAMING_ACTIVITIES,
+    CHARACTER_ROAMING_UPDATED_EVENT,
+    DEFAULT_ROAMING_ACTIVITIES,
+    ROAMING_ACTIVITY_LABELS,
+    ROAMING_DEFAULT_MAX_CONSECUTIVE,
+    loadCharacterRoamingRules,
+    removeCharacterRoamingRule,
+    toggleCharacterRoamingRule,
+    upsertCharacterRoamingRule,
+    type CharacterRoamingRule,
+    type RoamingActivityKind,
+} from "@/lib/character-roaming-storage";
+import { runCharacterRoamingRuleNow } from "@/lib/character-roaming-service";
 import { addChatContact, createOrGetSession } from "@/lib/chat-storage";
 import { kvGet, kvSet, kvRemove } from "@/lib/kv-db";
 import { formatWalletAmount, getWalletBalance, loadWalletState, WALLET_UPDATED_EVENT } from "@/lib/wallet-storage";
@@ -457,7 +471,7 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
                             <Satellite size={18} className="text-[var(--c-icon)] opacity-70" strokeWidth={1.25}/>
                             <div className="flex flex-col flex-1 text-left gap-0.5">
                                 <span className="ts-14 font-semibold text-[var(--c-text-title)]">离线推送与定时消息</span>
-                                <span className="ts-11 text-[var(--c-text)] opacity-70">关掉后台也能收到推送、安静时段、定时主动消息</span>
+                                <span className="ts-11 text-[var(--c-text)] opacity-70">离线推送、安静时段、定时消息、角色后台自主活动</span>
                             </div>
                             <ChevronRight size={16} className="text-[var(--c-icon)] opacity-50" />
                         </button>
@@ -1252,6 +1266,7 @@ function OfflinePushSettingsPage({ onBack }: { onBack: () => void }) {
     const [quietEnd, setQuietEnd] = useState(storedQuiet ? `${storedQuiet[3].padStart(2, "0")}:${storedQuiet[4]}` : "08:00");
     const [timedSchedules, setTimedSchedules] = useState<TimedWakeSchedule[]>([]);
     const [idleRules, setIdleRules] = useState<IdleReconnectRule[]>([]);
+    const [roamingRules, setRoamingRules] = useState<CharacterRoamingRule[]>([]);
     const [tmMode, setTmMode] = useState<"idle" | "once">("idle");
     const [tmCharId, setTmCharId] = useState("");
     const [tmValue, setTmValue] = useState("60");
@@ -1261,9 +1276,18 @@ function OfflinePushSettingsPage({ onBack }: { onBack: () => void }) {
     const [tmHint, setTmHint] = useState<string | null>(null);
     const [tmBusy, setTmBusy] = useState(false);
 
+    const [roamCharId, setRoamCharId] = useState("");
+    const [roamValue, setRoamValue] = useState("5");
+    const [roamUnit, setRoamUnit] = useState<"minute" | "hour">("minute");
+    const [roamMaxConsecutive, setRoamMaxConsecutive] = useState(String(ROAMING_DEFAULT_MAX_CONSECUTIVE));
+    const [roamActivities, setRoamActivities] = useState<RoamingActivityKind[]>(() => [...DEFAULT_ROAMING_ACTIVITIES]);
+    const [roamHint, setRoamHint] = useState<string | null>(null);
+    const [roamTestingId, setRoamTestingId] = useState<string | null>(null);
+
     const refreshTimedSchedules = () => {
         setTimedSchedules(loadTimedWakeSchedules().slice().sort((a, b) => a.fireAt - b.fireAt));
         setIdleRules(loadIdleReconnectRules().slice().sort((a, b) => a.createdAt - b.createdAt));
+        setRoamingRules(loadCharacterRoamingRules().slice().sort((a, b) => a.createdAt - b.createdAt));
     };
 
     useEffect(() => {
@@ -1271,6 +1295,11 @@ function OfflinePushSettingsPage({ onBack }: { onBack: () => void }) {
         setPersonalCloudActive(isPersonalPushCloudActive());
         void getOfflinePushState().then(setOfflinePushState);
         refreshTimedSchedules();
+        const onRoamingUpdated = () => {
+            setRoamingRules(loadCharacterRoamingRules().slice().sort((a, b) => a.createdAt - b.createdAt));
+        };
+        window.addEventListener(CHARACTER_ROAMING_UPDATED_EVENT, onRoamingUpdated);
+        return () => window.removeEventListener(CHARACTER_ROAMING_UPDATED_EVENT, onRoamingUpdated);
     }, []);
 
     const handleOfflinePushToggle = async (enabled: boolean) => {
@@ -1388,6 +1417,50 @@ function OfflinePushSettingsPage({ onBack }: { onBack: () => void }) {
         removeTimedWakeSchedule(schedule.id);
         cancelBailoutKey(`timedwake:${schedule.id}`);
         refreshTimedSchedules();
+    };
+
+    const toggleRoamActivityOption = (kind: RoamingActivityKind) => {
+        setRoamActivities(prev => (
+            prev.includes(kind)
+                ? prev.filter(item => item !== kind)
+                : [...prev, kind]
+        ));
+    };
+
+    const handleCreateRoamingRule = () => {
+        if (!roamCharId) { setRoamHint("请选择角色。"); return; }
+        const amount = Number(roamValue);
+        if (!Number.isFinite(amount) || amount <= 0) { setRoamHint("请填写有效的活动间隔。"); return; }
+        const totalMinutes = Math.max(1, Math.round(amount * (roamUnit === "hour" ? 60 : 1)));
+        if (totalMinutes > 72 * 60) { setRoamHint("活动间隔最长 72 小时。"); return; }
+        if (roamActivities.length === 0) { setRoamHint("请至少勾选一项允许的活动。"); return; }
+        const maxConsecNum = Math.max(1, Math.min(50, Math.round(Number(roamMaxConsecutive) || ROAMING_DEFAULT_MAX_CONSECUTIVE)));
+        const rule: CharacterRoamingRule = {
+            id: `roam_${roamCharId}_${Date.now().toString(36)}`,
+            characterId: roamCharId,
+            enabled: true,
+            intervalMinutes: totalMinutes,
+            activities: [...roamActivities],
+            maxConsecutive: maxConsecNum,
+            consecutiveCount: 0,
+            createdAt: Date.now(),
+        };
+        upsertCharacterRoamingRule(rule);
+        setRoamHint(`已保存：每隔 ${amount}${roamUnit === "hour" ? "小时" : "分钟"} 自主活动一次（挂机上限 ${maxConsecNum} 次）。`);
+        refreshTimedSchedules();
+    };
+
+    const handleTestRoamingRule = async (rule: CharacterRoamingRule) => {
+        if (roamTestingId) return;
+        setRoamTestingId(rule.id);
+        setRoamHint("正在立即执行一次后台活动...");
+        try {
+            const res = await runCharacterRoamingRuleNow(rule, { manual: true });
+            setRoamHint(res.ok ? `执行完成：${res.summary}` : `未完成：${res.error || "未知原因"}`);
+        } finally {
+            setRoamTestingId(null);
+            refreshTimedSchedules();
+        }
     };
 
     const formatFireAt = (fireAt: number) => {
@@ -1639,6 +1712,156 @@ function OfflinePushSettingsPage({ onBack }: { onBack: () => void }) {
                                             <span className="menu-desc" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>固定时间后主动来找你</span>
                                         </div>
                                         <button className="ui-btn ui-btn-outline py-1 px-3 ts-12" style={{ whiteSpace: "nowrap", color: "var(--c-danger)" }} onClick={() => handleDeleteTimedMsg(schedule)}>删除</button>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </>
+                )}
+
+                <p className="menu-group-desc mx-2">角色后台活动（不打扰私聊）</p>
+                <div className="menu-group">
+                    <div className="menu-item">
+                        <ProfileSettingsIcon icon={User} color={BINDING_ACCENTS.identity} />
+                        <div className="menu-label-group">
+                            <span className="menu-label">角色</span>
+                        </div>
+                        <div className="menu-right">
+                            <select
+                                className="text-right border-none outline-none ts-13 text-[var(--c-text)] bg-transparent"
+                                value={roamCharId}
+                                onChange={e => setRoamCharId(e.target.value)}
+                            >
+                                <option value="">选择角色...</option>
+                                {loadCharacters().map(character => (
+                                    <option key={character.id} value={character.id}>{character.name}</option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
+                    <div className="menu-item">
+                        <ProfileSettingsIcon icon={Clock} color={BINDING_ACCENTS.voice} />
+                        <div className="menu-label-group">
+                            <span className="menu-label">活动频率</span>
+                            <span className="menu-desc">每隔多久在后台自主活动一次</span>
+                        </div>
+                        <div className="menu-right flex items-center gap-1 ts-13">
+                            <input
+                                type="number"
+                                min={1}
+                                className="w-[56px] text-right border-none outline-none ts-13 text-[var(--c-text)] bg-transparent"
+                                value={roamValue}
+                                onChange={e => setRoamValue(e.target.value)}
+                            />
+                            <select
+                                className="border-none outline-none ts-13 text-[var(--c-text)] bg-transparent"
+                                value={roamUnit}
+                                onChange={e => setRoamUnit(e.target.value as "minute" | "hour")}
+                            >
+                                <option value="minute">分钟</option>
+                                <option value="hour">小时</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div className="menu-item">
+                        <ProfileSettingsIcon icon={SlidersHorizontal} color={BINDING_ACCENTS.memory} />
+                        <div className="menu-label-group">
+                            <span className="menu-label">挂机连续上限</span>
+                            <span className="menu-desc">未操作页面时最多连跑几次，点亮/操作后自动清零</span>
+                        </div>
+                        <div className="menu-right flex items-center gap-1 ts-13">
+                            <input
+                                type="number"
+                                min={1}
+                                max={50}
+                                className="w-[48px] text-right border-none outline-none ts-13 text-[var(--c-text)] bg-transparent"
+                                value={roamMaxConsecutive}
+                                onChange={e => setRoamMaxConsecutive(e.target.value)}
+                            />
+                            <span className="ts-13 opacity-70">次</span>
+                        </div>
+                    </div>
+                    <div className="menu-item" style={{ alignItems: "stretch", flexDirection: "column", gap: 10 }}>
+                        <div className="menu-label-group">
+                            <span className="menu-label">允许去哪里活动</span>
+                            <span className="menu-desc">到点从已勾选项中随机挑一项（无可用群聊或工具时自动跳过该项）</span>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                            {ALL_ROAMING_ACTIVITIES.map(kind => {
+                                const active = roamActivities.includes(kind);
+                                return (
+                                    <button
+                                        key={kind}
+                                        type="button"
+                                        onClick={() => toggleRoamActivityOption(kind)}
+                                        className={`px-3 py-1.5 rounded-full ts-12 font-medium transition-colors border ${
+                                            active
+                                                ? "bg-[var(--c-success)] text-white border-transparent"
+                                                : "bg-transparent text-[var(--c-text)] opacity-65 border-[color-mix(in_srgb,var(--c-card-border)_60%,transparent)]"
+                                        }`}
+                                    >
+                                        {ROAMING_ACTIVITY_LABELS[kind]}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+                    <div className="menu-item" style={{ alignItems: "stretch", flexDirection: "column", gap: 8 }}>
+                        <button className="ui-btn ui-btn-soft-action w-full" onClick={handleCreateRoamingRule}>
+                            保存后台活动规则
+                        </button>
+                    </div>
+                </div>
+                <p className="menu-group-desc mx-2">
+                    {roamHint || "网页挂在后台或闲置时按间隔自动运行（自动避开上方安静时段），不会往你和 TA 的私聊发消息。同一角色再次保存会更新原规则。"}
+                </p>
+
+                {roamingRules.length > 0 && (
+                    <>
+                        <p className="menu-group-desc mx-2">后台活动规则</p>
+                        <div className="menu-group">
+                            {roamingRules.map(rule => {
+                                const charName = loadCharacters().find(c => c.id === rule.characterId)?.name ?? "未知角色";
+                                const hours = Math.floor(rule.intervalMinutes / 60);
+                                const minutes = rule.intervalMinutes % 60;
+                                const intervalLabel = `${hours ? `${hours}小时` : ""}${minutes ? `${minutes}分钟` : hours ? "" : "0分钟"}`;
+                                const actLabels = rule.activities.map(k => ROAMING_ACTIVITY_LABELS[k]).join(" / ");
+                                const testing = roamTestingId === rule.id;
+                                return (
+                                    <div key={rule.id} className="menu-item" style={{ alignItems: "stretch", flexDirection: "column", gap: 8 }}>
+                                        <div className="flex items-center justify-between gap-2">
+                                            <div className="menu-label-group" style={{ minWidth: 0, flex: 1 }}>
+                                                <span className="menu-label">
+                                                    {charName} · 每 {intervalLabel}（已连跑 {rule.consecutiveCount}/{rule.maxConsecutive}）
+                                                </span>
+                                                <span className="menu-desc" style={{ wordBreak: "break-word" }}>
+                                                    场地：{actLabels}
+                                                    {rule.lastSummary ? ` · 最近：${rule.lastSummary}` : ""}
+                                                </span>
+                                            </div>
+                                            <Toggle
+                                                checked={rule.enabled}
+                                                onChange={checked => { toggleCharacterRoamingRule(rule.id, checked); refreshTimedSchedules(); }}
+                                            />
+                                        </div>
+                                        <div className="flex items-center justify-end gap-2">
+                                            <button
+                                                type="button"
+                                                className="ui-btn ui-btn-outline py-1 px-3 ts-12"
+                                                disabled={Boolean(roamTestingId)}
+                                                onClick={() => void handleTestRoamingRule(rule)}
+                                            >
+                                                {testing ? "执行中..." : "立即活动一次"}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="ui-btn ui-btn-outline py-1 px-3 ts-12"
+                                                style={{ whiteSpace: "nowrap", color: "var(--c-danger)" }}
+                                                onClick={() => { removeCharacterRoamingRule(rule.id); refreshTimedSchedules(); }}
+                                            >
+                                                删除
+                                            </button>
+                                        </div>
                                     </div>
                                 );
                             })}

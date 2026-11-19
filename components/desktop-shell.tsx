@@ -7,6 +7,7 @@ import { registerBackLayer, setBackBaseHandler } from "@/lib/back-navigation";
 import { startDiaryEntryTimerService, stopDiaryEntryTimerService } from "@/lib/diary-entry-timer-service";
 import { startDiaryReplyService, stopDiaryReplyService } from "@/lib/diary-reply-service";
 import { startCalendarChatService, stopCalendarChatService } from "@/lib/calendar-chat-service";
+import { startCharacterRoamingService, stopCharacterRoamingService } from "@/lib/character-roaming-service";
 import { startFollowUpService, stopFollowUpService } from "@/lib/follow-up-service";
 import { startMomentsService, stopMomentsService } from "@/lib/moments-engine";
 import { bgTimerCleanup } from "@/lib/bg-timer";
@@ -2106,6 +2107,7 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
       startDiaryEntryTimerService();
       startDiaryReplyService();
       startCalendarChatService();
+      startCharacterRoamingService();
       const stopWeixinCloudRealtimeSync = startWeixinCloudRealtimeSync();
       servicesStarted = true;
       cleanupWeixinCloudRealtimeSync = stopWeixinCloudRealtimeSync;
@@ -2126,6 +2128,7 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
         stopDiaryEntryTimerService();
         stopDiaryReplyService();
         stopCalendarChatService();
+        stopCharacterRoamingService();
       }
       bgTimerCleanup();
     };

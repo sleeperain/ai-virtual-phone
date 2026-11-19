@@ -30,6 +30,7 @@ import { loadChatOfflineProjectionEntries } from "./chat-offline-storage";
 import { loadCheckPhoneProjectionEntries } from "./checkphone-storage";
 import { formatShoppingPaymentRequestHistory } from "./shopping-payment-request";
 import { loadCustomAppTimelineEntries } from "./custom-app-storage";
+import { loadRoamingTimelineEntries } from "./character-roaming-storage";
 import { formatReadingAnnotationMemo, loadReadingAnnotationMemos, readingMemoLabel, resolveReadingMemoKind } from "./reading-memory";
 import {
     canCharacterSeeMomentPost,
@@ -794,6 +795,27 @@ export function loadNativeTimeline(
             content: formatStoredPromptEventContent(customEntry.summary, {
                 label,
                 timestamp: customEntry.createdAt,
+                timeAware,
+                timestampOptions,
+            }),
+        });
+    }
+
+    // ── Character autonomous roaming tool actions ──
+    const roamingEntries = loadRoamingTimelineEntries(characterId, {
+        afterTimestamp: options?.afterTimestamp,
+    });
+    for (const roamEntry of roamingEntries) {
+        entries.push({
+            id: roamEntry.id,
+            sourceApp: "custom_app",
+            sourceDetail: "custom_app_event",
+            authorType: "character",
+            timestamp: roamEntry.timestamp,
+            customAppLabel: "自主活动",
+            content: formatStoredPromptEventContent(roamEntry.content, {
+                label: "自主活动",
+                timestamp: roamEntry.timestamp,
                 timeAware,
                 timestampOptions,
             }),
