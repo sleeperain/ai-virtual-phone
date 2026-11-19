@@ -3138,7 +3138,13 @@ async function executeMemoryManageTool(call: ToolCall, context?: ToolExecutionCo
             const rawType = cleanToolString(call.args.type, 20);
             const type = rawType === "core" || rawType === "long_term" ? rawType : "all";
             const limitRaw = Number(call.args.limit);
-            const outcome = await listMemoriesForCharacter(characterId, type, Number.isFinite(limitRaw) ? limitRaw : 15);
+            const query = cleanToolString(call.args.query ?? call.args.keyword ?? call.args.q, 120);
+            const outcome = await listMemoriesForCharacter(
+                characterId,
+                type,
+                Number.isFinite(limitRaw) ? limitRaw : 15,
+                query || undefined,
+            );
             return {
                 name: call.name,
                 success: outcome.ok,

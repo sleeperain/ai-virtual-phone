@@ -127,19 +127,19 @@ export async function runCoreMemoryPipeline(
         ? (stripMemoryStructuredSections(latestPrevSummary.content) || latestPrevSummary.content).trim()
         : "";
 
-    // 角色本人最近一轮反思里给出的修正版（并存方案）：只作为「定性表述」的参考意见，
-    // 不顶替上面那份系统总结——否则下一轮总结会拿角色自己的叙述当事实底座，越迭代越自我美化。
+    // 角色本人最近一轮反思与审校结论：只作为「性格、动机、关系定性」的校准参考，
+    // 不顶替上面那份系统总结——保证事实底座始终以客观长期记忆为准，同时吸纳角色的主观纠偏。
     const latestRefinedEntry = existingCoreEntries
         .filter(e =>
             e.metadata?.origin === "character_reflection"
-            && typeof e.metadata?.correctedContent === "string"
-            && String(e.metadata.correctedContent).trim()
             && !isEntrySuperseded(e)
             && !isEntryTrashed(e),
         )
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
     const refinedText = latestRefinedEntry
-        ? String(latestRefinedEntry.metadata?.correctedContent ?? "").trim()
+        ? (typeof latestRefinedEntry.metadata?.correctedContent === "string" && latestRefinedEntry.metadata.correctedContent.trim()
+            ? latestRefinedEntry.metadata.correctedContent.trim()
+            : (stripMemoryStructuredSections(latestRefinedEntry.content) || latestRefinedEntry.content).trim())
         : "";
 
     const { eventsText, earliest, latest } = formatted;

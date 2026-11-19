@@ -1,18 +1,16 @@
 // lib/memory-provenance.ts
-// 长期记忆的「原文溯源」与「疑似合并」后置校验
+// 长期记忆的「原文溯源」引擎：同时支持批次快照存档与手机原生时间线（聊天/事件历史）回溯。
 //
-// 背景：总结是「一批原始事件 → 拆成若干条长期记忆」，模型在拆条时经常把
-// 同一时段、同一场景发生的两件互不相干的事编成一条，并自己补出因果
-// （例如「打关卡」与「攒代币」本是两套机制，却被写成「打通关就能攒满代币」）。
-// 提示词能压制但压不死，所以这里做两件事：
-//
-// 1. 溯源：把这批拆条所依据的原始事件原文完整存档到独立 kv（不占记忆库空间），
-//    每条记忆记住自己的批次号，记忆库详情里可以回看「这条是从哪些原话里炼出来的」。
-// 2. 后置校验：用纯规则扫描每条新记忆，命中可疑特征就标一个「疑似合并」，
-//    让你在记忆库里一眼挑出来手动拆，不必逐条通读。
+// 设计原则：
+// 1. 新总结的记忆除了记录 provenanceBatchId 快照，还会记录 timeSpan / eventDate；
+// 2. 任何长期记忆（包括以前生成的旧记忆、或超过快照保留上限的记忆），只要手机本地的
+//    聊天/事件记录尚未清空，都能直接从原生时间线（loadNativeTimeline）里精准捞回当天的原始记录；
+// 3. 「溯源重总结」严格依赖本模块的 resolveMemoryProvenance：一旦返回空（即快照与原生历史均无原文），
+//    上层必须拒绝重总结，绝不对着可能写歪的旧记忆正文做无证据二次编造。
 
 import type { MemoryEntry } from "./memory-types";
 import { kvGet, kvSet, registerDynamicPrefix } from "./kv-db";
+import { loadNativeTimeline } from "./short-term-assembler";
 
 export const PROVENANCE_KV_PREFIX = "ai_phone_memory_provenance_";
 registerDynamicPrefix(PROVENANCE_KV_PREFIX);
@@ -21,8 +19,8 @@ registerDynamicPrefix(PROVENANCE_KV_PREFIX);
 const MAX_PROVENANCE_CHARS = 24000;
 /** 每批最多保留的原始事件条数 */
 const MAX_PROVENANCE_ENTRIES = 200;
-/** 存档保留批次数（按角色）：更早的批次自动清理，避免无限增长 */
-const MAX_PROVENANCE_BATCHES = 40;
+/** 存档保留批次数（按角色）：更早的批次自动回退走原生时间线查询 */
+const MAX_PROVENANCE_BATCHES = 50;
 
 export type ProvenanceEntry = {
     id: string;
@@ -41,6 +39,15 @@ export type ProvenanceBatch = {
     totalEntries: number;
     earliest: string;
     latest: string;
+    entries: ProvenanceEntry[];
+};
+
+export type ResolvedProvenance = {
+    source: "batch" | "timeline";
+    dayKey: string;
+    earliest: string;
+    latest: string;
+    totalEntries: number;
     entries: ProvenanceEntry[];
 };
 
@@ -70,12 +77,27 @@ function saveStore(characterId: string, store: ProvenanceStore): void {
     try {
         kvSet(batchStorageKey(characterId), JSON.stringify(store));
     } catch {
-        // 存档失败不影响记忆本身，静默跳过
+        // 存档失败不影响记忆本身，后续仍可通过原生时间线回溯
     }
 }
 
 export function createProvenanceBatchId(dayKey: string): string {
     return `prov_${dayKey}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+/** 原文条目 → 存档用的精简结构 */
+export function toProvenanceEntry(entry: {
+    id: string;
+    timestamp: string;
+    sourceApp: string;
+    content: string;
+}): ProvenanceEntry {
+    return {
+        id: entry.id,
+        timestamp: entry.timestamp,
+        sourceApp: entry.sourceApp,
+        content: String(entry.content ?? ""),
+    };
 }
 
 /**
@@ -128,7 +150,7 @@ export function loadProvenanceBatch(characterId: string, batchId: string): Prove
     return store.batches.find(b => b.batchId === batchId) ?? null;
 }
 
-/** 该角色的原文存档批次数量，用于设置页显示占用情况 */
+/** 该角色的原文存档批次数量 */
 export function countProvenanceBatches(characterId: string): number {
     return loadStore(characterId).batches.length;
 }
@@ -141,112 +163,117 @@ export function clearProvenanceBatches(characterId: string): void {
     } catch { /* ignore */ }
 }
 
-// ── 疑似合并的后置校验 ──────────────────────────────
+function toLocalDayKey(isoStr: string): string {
+    const d = new Date(isoStr);
+    if (isNaN(d.getTime())) return isoStr.slice(0, 10) || "";
+    const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
 
-/**
- * 强推断连词：这些词会把两件事「焊」成因果关系，是最典型的编造因果信号。
- * 只把它们计入可疑判定——「于是/所以/为了」这类叙述里本来就常用，人人都写，不算证据。
- */
-const STRONG_INFERENCE_CONNECTORS = /(?:通过|就能|才能|从而|导致|使得|达成|前提是|条件是|以便)/g;
-/** 弱因果连词：只作为辅助信息返回，不单独构成可疑 */
-const WEAK_CAUSAL_CONNECTORS = /(?:于是|因此|所以|顺便|借此|好在|为了)/g;
-/** 并列分隔符：一条记忆里出现多个分隔 + 篇幅明显偏长时才可疑 */
-const ENUM_SEPARATORS = /[；;]|、(?=.{4,})/g;
-
-export type MergeSuspicion = {
-    /** 是否命中可疑特征 */
-    suspect: boolean;
-    /** 命中的规则说明，供界面展示 */
-    reasons: string[];
-    /** 命中的因果连词（去重） */
-    connectors: string[];
-};
-
-/**
- * 规则扫描一条长期记忆正文，判断是否疑似把两件事合并成一条。
- * 纯启发式、不调模型。口径刻意保守：相关联的事被误标一下，用户可能真的去拆，
- * 把好记忆拆散比漏检糟糕得多，所以宁可漏检。
- */
-export function detectMergeSuspicion(content: string): MergeSuspicion {
-    const body = String(content || "").trim();
-    const reasons: string[] = [];
-    if (!body) return { suspect: false, reasons, connectors: [] };
-
-    const strong = Array.from(new Set(body.match(STRONG_INFERENCE_CONNECTORS) ?? []));
-    const weak = Array.from(new Set(body.match(WEAK_CAUSAL_CONNECTORS) ?? []));
-    const connectors = Array.from(new Set([...strong, ...weak]));
-
-    // 口径刻意保守：相关联的事（起因→经过→结果、同一场景的连续动作、有真实因果的约定）
-    // 本来就是一条好记忆，不该被标成「疑似合并」再被拆散。
-    // 1. 强推断连词本身就很可疑（「通过A就能B」「A是B的前提」几乎都是模型自己焊出来的），出现 2 个以上直接认定；
-    // 2. 出现 1 个强推断词 + 至少 1 个弱因果词，也认定（两层因果叠在一起）；
-    // 3. 弱因果词单独出现一律不认定——那是正常叙述，人人都会用。
-    if (strong.length >= 2) {
-        reasons.push(`含 ${strong.length} 个强推断词（${strong.slice(0, 4).join("、")}），原文未必有这层因果关系`);
-    } else if (strong.length === 1 && weak.length >= 1) {
-        reasons.push(`同时出现推断词「${strong[0]}」与「${weak[0]}」，像是把两件事焊成了因果`);
-    }
-
-    // 罗列多个动作且篇幅明显偏长：只有「；」这种明确分句、且分段够多时才可疑
-    const semicolons = (body.match(/[;；]/g) ?? []).length;
-    const separators = body.match(ENUM_SEPARATORS) ?? [];
-    if (semicolons >= 2 && body.length >= 90) {
-        reasons.push(`用分号罗列了 ${semicolons + 1} 段以上内容且篇幅偏长，可能混了几件事`);
-    } else if (separators.length >= 3 && body.length >= 140) {
-        reasons.push("顿号并列项过多且篇幅很长，可能混了几件事");
-    }
-
-    return { suspect: reasons.length > 0, reasons, connectors };
+function parseIsoSpan(rawSpan: unknown): { startIso: string; endIso: string } | null {
+    if (typeof rawSpan !== "string" || !rawSpan.includes("~")) return null;
+    const parts = rawSpan.split("~").map(s => s.trim());
+    if (parts.length !== 2) return null;
+    const [left, right] = parts;
+    // 只有完整的 ISO 时间戳（含 T 与时间）才用于精确时间窗切片；纯 YYYY-MM-DD 走按日匹配
+    if (!left.includes("T") || !right.includes("T")) return null;
+    const t1 = Date.parse(left);
+    const t2 = Date.parse(right);
+    if (!Number.isFinite(t1) || !Number.isFinite(t2) || t2 < t1) return null;
+    return { startIso: left, endIso: right };
 }
 
 /**
- * 判定规则版本号。规则一收紧，就要把旧版留下的标记全部作废——
- * 上一版几乎给所有带「所以/于是」的记忆都盖了「疑似合并」，那些标记不能继续驱动拆分。
+ * 统一解析某条记忆对应的原始事件记录（支持新旧所有记忆）：
+ * 1. 优先读取 metadata.provenanceBatchId 对应的批次快照；
+ * 2. 若无快照（例如此前总结的旧记忆，或快照已轮转过期），自动从手机原生时间线（loadNativeTimeline）
+ *    中按 metadata.timeSpan（精确起止时间戳）或 eventDate（所属本地自然日）回溯原始对话与事件；
+ * 3. 若快照与本地原生记录均已被清空、找不到任何对应原文，返回 null。
  */
-export const MERGE_SUSPECT_VERSION = 2;
+export function resolveMemoryProvenance(
+    characterId: string,
+    entry: MemoryEntry,
+): ResolvedProvenance | null {
+    if (!characterId || !entry) return null;
 
-/** 把可疑标记写进记忆元数据（只标不改正文，人工在记忆库里裁决） */
-export function withMergeSuspicionMetadata(
-    metadata: Record<string, unknown>,
-    suspicion: MergeSuspicion,
-): Record<string, unknown> {
-    if (!suspicion.suspect) {
-        const next = { ...metadata };
-        delete next.mergeSuspect;
-        delete next.mergeSuspectReasons;
-        delete next.mergeSuspectVersion;
-        return next;
+    // 1. 优先命中精确存档批次
+    const batchId = typeof entry.metadata?.provenanceBatchId === "string"
+        ? entry.metadata.provenanceBatchId.trim()
+        : "";
+    if (batchId) {
+        const batch = loadProvenanceBatch(characterId, batchId);
+        if (batch && batch.entries.length > 0) {
+            return {
+                source: "batch",
+                dayKey: batch.dayKey,
+                earliest: batch.earliest,
+                latest: batch.latest,
+                totalEntries: batch.totalEntries,
+                entries: batch.entries,
+            };
+        }
     }
+
+    // 2. 回退查询手机原生聊天与跨应用时间线（支持所有历史旧记忆）
+    const eventDateRaw = typeof entry.metadata?.eventDate === "string" ? entry.metadata.eventDate.trim() : "";
+    const targetDayKey = /^\d{4}-\d{2}-\d{2}$/.test(eventDateRaw)
+        ? eventDateRaw
+        : toLocalDayKey(entry.createdAt);
+
+    let timelineEntries: ReturnType<typeof loadNativeTimeline> = [];
+    try {
+        timelineEntries = loadNativeTimeline(characterId);
+    } catch {
+        return null;
+    }
+    if (timelineEntries.length === 0) return null;
+
+    const isoSpan = parseIsoSpan(entry.metadata?.timeSpan);
+    const sessionIds = Array.isArray(entry.metadata?.sourceSessionIds)
+        ? new Set((entry.metadata.sourceSessionIds as unknown[]).map(String).filter(Boolean))
+        : null;
+
+    let matched = isoSpan
+        ? timelineEntries.filter(item => item.timestamp >= isoSpan.startIso && item.timestamp <= isoSpan.endIso)
+        : [];
+
+    // 若精确 ISO 区间未命中（例如手改过日期或跨时区导入），按事件所属本地自然日匹配
+    if (matched.length === 0 && targetDayKey) {
+        const sameDay = timelineEntries.filter(item => toLocalDayKey(item.timestamp) === targetDayKey);
+        if (sessionIds && sessionIds.size > 0) {
+            const bySession = sameDay.filter(item => !item.sessionId || sessionIds.has(item.sessionId));
+            matched = bySession.length > 0 ? bySession : sameDay;
+        } else {
+            matched = sameDay;
+        }
+    }
+
+    if (matched.length === 0) return null;
+
+    const totalEntries = matched.length;
+    const earliest = matched[0].timestamp;
+    const latest = matched[matched.length - 1].timestamp;
+
+    // 控制单次返回的体积上限，防止超长聊天刷爆详情区或重总结上下文
+    const kept: ProvenanceEntry[] = [];
+    let totalChars = 0;
+    for (let i = matched.length - 1; i >= 0; i--) {
+        const item = toProvenanceEntry(matched[i]);
+        const size = item.content.length + 64;
+        if (totalChars + size > MAX_PROVENANCE_CHARS && kept.length > 0) break;
+        totalChars += size;
+        kept.unshift(item);
+        if (kept.length >= MAX_PROVENANCE_ENTRIES) break;
+    }
+
+    if (kept.length === 0) return null;
+
     return {
-        ...metadata,
-        mergeSuspect: true,
-        mergeSuspectReasons: suspicion.reasons,
-        mergeSuspectVersion: MERGE_SUSPECT_VERSION,
-    };
-}
-
-/**
- * 读取某条记忆的疑似合并标记。
- * 旧版规则（无版本号或版本号不符）留下的标记一律忽略，由界面按新规则重新检测。
- */
-export function readMergeSuspicion(entry: MemoryEntry): string[] {
-    if (entry.metadata?.mergeSuspectVersion !== MERGE_SUSPECT_VERSION) return [];
-    const raw = entry.metadata?.mergeSuspectReasons;
-    if (!Array.isArray(raw)) return entry.metadata?.mergeSuspect ? ["疑似混入了多件事"] : [];
-    return raw.map(String).filter(Boolean);
-}
-
-/** 原文条目 → 存档用的精简结构 */
-export function toProvenanceEntry(entry: {
-    id: string;
-    timestamp: string;
-    sourceApp: string;
-    content: string;
-}): ProvenanceEntry {
-    return {
-        id: entry.id,
-        timestamp: entry.timestamp,
-        sourceApp: entry.sourceApp,
-        content: String(entry.content ?? ""),
+        source: "timeline",
+        dayKey: targetDayKey || toLocalDayKey(earliest),
+        earliest,
+        latest,
+        totalEntries,
+        entries: kept,
     };
 }

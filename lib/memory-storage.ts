@@ -217,7 +217,7 @@ export async function getAllCharacterIdsWithMemories(): Promise<string[]> {
 
 export async function getMemoryCount(characterId: string): Promise<number> {
     const entries = await loadMemoryEntries(characterId);
-    return entries.length;
+    return entries.filter(e => typeof e.metadata?.trashedAt !== "string").length;
 }
 
 export async function getMemoryCountByType(
@@ -225,7 +225,7 @@ export async function getMemoryCountByType(
     type: MemoryEntry["type"],
 ): Promise<number> {
     const entries = await loadMemoryEntriesByType(characterId, type);
-    return entries.length;
+    return entries.filter(e => typeof e.metadata?.trashedAt !== "string").length;
 }
 
 // ── Config (localStorage for fast sync access) ──

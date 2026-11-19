@@ -31,11 +31,9 @@ import {
 
 import { loadBindingConfig, loadApiConfigs, resolveBinding } from "./settings-storage";
 import {
-    detectMergeSuspicion,
-    loadProvenanceBatch,
+    resolveMemoryProvenance,
     saveProvenanceBatch,
     toProvenanceEntry,
-    withMergeSuspicionMetadata,
 } from "./memory-provenance";
 import { isEntryTrashed, trashMemoryEntry } from "./memory-trash";
 
@@ -349,25 +347,20 @@ export async function runSummarizationPipeline(
         : rawSavedPrompt;
 
     // Enforce our core rules even when the user has a custom summarization prompt:
-    // 1. Split distinct topics with `---`
+    // 1. Split distinct topics with `---` and never fabricate causal links between independent events
     // 2. No dates/timestamps inside the memory body
     // 3. Output **重要性** and **检索关键词** at the end of each topic memory
-    const ruleEnforcement = `\n\n【硬性格式要求（最高优先级）】：\n1. **按独立话题拆条**：当天若包含多个互不相关的话题或事件，必须拆成多条独立记忆，每条之间用单独一行的 \`---\` 分隔。\n2. **记忆正文中严禁出现任何日期或具体时间**（如“10月23日”、“上午”、“18:03”等一律不写，系统会自动记录该记忆所属日期）。\n3. 每条记忆末尾必须各自单独输出两行：\n**重要性**：（1-10的整数）\n**检索关键词**：关键词1、关键词2、关键词3`;
-    if (!promptTemplate.includes("按独立话题拆条") && !promptTemplate.includes("按话题拆条")) {
+    const ruleEnforcement = `\n\n【硬性事实与格式要求（最高优先级）】：\n1. **按独立话题拆条，严禁强加因果**：同一天或同一场景中发生的多件互不相关的事、不同机制或独立话题，必须用单独一行的 \`---\` 拆成多条独立记忆；除非原始记录中明确写明了因果或前提关系，否则严禁将两件独立的事合并成一条，也严禁自行补出原文不存在的因果关联。\n2. **记忆正文中严禁出现任何日期或具体时间**（如“10月23日”、“上午”、“18:03”等一律不写，系统会自动记录该记忆所属日期）。\n3. 每条记忆末尾必须各自单独输出两行：\n**重要性**：（1-10的整数）\n**检索关键词**：关键词1、关键词2、关键词3`;
+    if (!promptTemplate.includes("严禁强加因果")) {
         promptTemplate += ruleEnforcement;
     }
-
-    // 禁止编造因果：模型拆条时最容易犯的错不是「话题判错」，而是为了让叙事通顺
-    // 自己补出「做了 A 就能达成 B」的因果。这类虚构因果一旦进了长期记忆，
-    // 之后每一轮对话角色都会当真事执行。所以这条独立于用户自定义提示词，始终追加。
-    const antiFabricationRule = `\n\n【禁止编造因果关系（同样最高优先级）】：\n1. **同一场景、同一时段发生的两件事，不等于同一件事。** 除非原始事件记录里【明确写明了】A 导致 B、或 A 是 B 的前提/步骤，否则绝不能把两件事写成一条，也绝不能补出“通过A就能达成B”“A是B的一部分”这类原文没写过的因果关系。\n2. **独立性测试**：若把两件事分开写成两条，各自仍然完整成立；而合并成一条时必须加上“因为/所以/顺便/就能”之类的连接词才读得通——那就必须拆开。\n3. **反例（错误）**：「用户在舞厅打关卡并攒代币，把关卡打通就能攒满代币」——打关卡与攒代币是两套独立机制，原文没有“打通关就能攒币”这个因果关系，正确做法是拆成两条：一条记打关卡，一条记攒代币，不解释二者关系。\n4. **不确定就分开写**：宁可拆成两条略有重叠的记忆，也不要把两件事合并成一条带因果的错误记忆。`;
-    promptTemplate += antiFabricationRule;
 
     const embeddingApiConfig = config.vectorRecallEnabled ? resolveAuxiliaryApiConfig("embeddingApiConfigId") : null;
     const canEmbed = Boolean(embeddingApiConfig && resolveEmbeddingModel(embeddingApiConfig));
 
-    // Load existing long-term entries for deduplication check
-    const existingLongTerm = await loadMemoryEntriesByType(characterId, "long_term");
+    // Load existing active long-term entries for deduplication check (exclude trashed entries!)
+    const existingLongTerm = (await loadMemoryEntriesByType(characterId, "long_term"))
+        .filter(e => !isEntryTrashed(e));
 
     let summarizedDayCount = 0;
     let savedEntryCount = 0;
@@ -506,14 +499,14 @@ export async function runSummarizationPipeline(
                 // 正文被换成新文本时，旧的划掉区间（按老正文下标算的）已经失效，必须一并清掉，
                 // 否则删除线会画到毫不相干的位置上。
                 const contentReplaced = mergedContent !== duplicate.content;
-                const mergedMetadata: Record<string, unknown> = withMergeSuspicionMetadata({
+                const mergedMetadata: Record<string, unknown> = {
                     ...(duplicate.metadata ?? {}),
                     eventDate: dayKey,
                     keywords: mergedKeywords,
                     // 合并进旧条目时同步刷新溯源指向，否则详情里看到的是上一批原文
                     provenanceBatchId,
                     ...(embedding ? { embeddingDim: embedding.length } : {}),
-                }, detectMergeSuspicion(topic.cleanBody));
+                };
                 if (contentReplaced) {
                     delete mergedMetadata[REVISION_META_KEYS.by];
                     delete mergedMetadata[REVISION_META_KEYS.at];
@@ -563,11 +556,6 @@ export async function runSummarizationPipeline(
                     // 这条记忆改写了哪条旧记忆：点进详情时能顺着找回去
                     ...(match && revision && revision.spans.length > 0 ? { revisesMemoryId: match.entry.id } : {}),
                     ...(embedding ? { embeddingDim: embedding.length } : {}),
-                    // 后置校验：命中可疑特征就标出来，等人工在记忆库里裁决要不要拆
-                    ...withMergeSuspicionMetadata(
-                        {},
-                        detectMergeSuspicion(topic.cleanBody),
-                    ),
                 },
             };
             await saveMemoryEntry(longTermEntry);
@@ -611,10 +599,11 @@ export async function runSummarizationPipeline(
     }
     resetEventCounter(characterId);
 
-    // Enforce long-term limit (only on long_term entries — never evict core memories!)
-    const allLongTerm = await loadMemoryEntriesByType(characterId, "long_term");
-    if (allLongTerm.length > config.maxLongTermEntries) {
-        const evictionSorted = [...allLongTerm].sort((a, b) => {
+    // Enforce long-term limit (only on active long_term entries — never count or evict trashed / core memories!)
+    const activeLongTerm = (await loadMemoryEntriesByType(characterId, "long_term"))
+        .filter(e => !isEntryTrashed(e));
+    if (activeLongTerm.length > config.maxLongTermEntries) {
+        const evictionSorted = [...activeLongTerm].sort((a, b) => {
             // 用「修订后的有效重要性」排序：已被改写的旧版本会先被淘汰，
             // 不会因为原始重要性高就赖在库里占额度。
             const impA = effectiveImportance(a, 0.8);
@@ -625,7 +614,7 @@ export async function runSummarizationPipeline(
             if (milestoneA !== milestoneB) return milestoneA - milestoneB;
             return a.createdAt.localeCompare(b.createdAt);
         });
-        const excess = evictionSorted.slice(0, allLongTerm.length - config.maxLongTermEntries);
+        const excess = evictionSorted.slice(0, activeLongTerm.length - config.maxLongTermEntries);
         await deleteMemoryEntries(excess.map(e => e.id));
     }
 
@@ -635,15 +624,18 @@ export async function runSummarizationPipeline(
     return { success: true };
 }
 
-/** 单次拆分最多允许的段数：超过就是过度拆分，宁可不拆 */
-const MAX_RESPLIT_BLOCKS = 3;
+/** 单次溯源重总结最多允许拆出的独立条数：防止模型把同一件事按句子切碎 */
+const MAX_RESPLIT_BLOCKS = 4;
 
 /**
- * 拆分重总结：只在一条长期记忆确实把几件互不相干的事硬凑成一条时，
- * 交给模型拆成最多 3 条独立记忆；原条目移入「最近删除」并可一键恢复。
- *
- * 判断口径刻意保守：同一件事的起因/经过/结果、同一场景的连续动作、有真实因果或
- * 前后依赖的细节都算「同一件事」，不拆。相关联的事件拆散比不拆错得多。
+ * 溯源重总结（拆分与因果纠偏）：
+ * 针对某条把互不相关的事揉在一起、或强加了虚假因果的长期记忆，回溯它对应的原始对话/事件记录重新提炼：
+ * 1. 【硬性铁律：无原文绝不总结】若无法追溯到任何原始事件记录（批次存档与本地原生历史均无对应原文），
+ *    立即拒绝重总结，绝不对着可能已经写歪的记忆正文二次脑补！
+ * 2. 若原文证明确实是两件或多件互不相关的独立事件/机制，拆成多条独立记忆入库；
+ *    若原本就是一件事但旧总结强加了原文不存在的因果或写错了事实，按原文纠正为准确的 1 条；
+ * 3. 新生成的条目当场补齐 Embedding 向量；原条目移入「最近删除」并记录 resplitInto，
+ *    一旦用户在回收站恢复原条目，新生成的派生条目会自动一并撤回，绝不留双份重复垃圾。
  */
 export async function resplitMergedMemory(
     characterId: string,
@@ -659,52 +651,50 @@ export async function resplitMergedMemory(
     const target = allLongTerm.find(e => e.id === entryId);
     if (!target) return { success: false, error: "找不到这条记忆，可能已被删除" };
     if (isEntryTrashed(target)) {
-        return { success: false, error: "这条记忆已在「最近删除」里，先恢复再拆分" };
+        return { success: false, error: "这条记忆已在「最近删除」里，请先恢复后再操作" };
     }
     if (isEntrySuperseded(target)) {
-        return { success: false, error: "这条记忆已被更新版本接替，先处理最新的那条" };
+        return { success: false, error: "这条记忆已被更新版本接替，请直接处理最新的那条记忆" };
     }
 
     const body = (stripMemoryStructuredSections(target.content) || target.content).trim();
     if (!body) return { success: false, error: "这条记忆正文为空" };
 
-    // 带上原始事件原文供核对：拆分时必须以原话为准，不能凭记忆内容二次推断
-    const batchId = typeof target.metadata?.provenanceBatchId === "string" ? target.metadata.provenanceBatchId : "";
-    const batch = batchId ? loadProvenanceBatch(characterId, batchId) : null;
-    const sourceText = batch && batch.entries.length > 0
-        ? batch.entries
-            .slice(-40)
-            .map(item => `- [${item.sourceApp}] ${item.content}`)
-            .join("\n")
-        : "";
+    // 铁律：必须追溯到原始对话/事件记录才允许重总结；无原文一律中止，绝不凭旧总结二次臆测
+    const provenance = resolveMemoryProvenance(characterId, target);
+    if (!provenance || provenance.entries.length === 0) {
+        return {
+            success: false,
+            error: "无法追溯到这条记忆对应的原始对话/事件记录，已中止重总结（防止无原文依据二次编造，如需调整请手动编辑）",
+        };
+    }
+
+    const sourceText = provenance.entries
+        .slice(-80)
+        .map(item => `- [${item.sourceApp}] ${item.content}`)
+        .join("\n");
 
     const prompt = [
-        "下面是一条长期记忆。请先判断它到底是「一件事」还是「几件互不相干的事被硬凑在一起」，再决定要不要拆。",
+        `你是一个严谨的记忆溯源纠偏与重总结助手。角色：${characterName || "角色"}。`,
+        "用户指出下方这条【待修正的旧记忆】存在总结偏差（例如：把同一时段互不相干的两件事揉在了一起、强加了原文不存在的因果关系、或者事实表述有误）。",
+        "请你**严格且唯一依据下方【原始对话/事件记录】**，对这条旧记忆涉及的内容进行重新核对、拆分或修正重总结。",
         "",
-        "记忆正文：",
+        "【待修正的旧记忆（仅用于定位它原本想记哪几件事，其中违背原文的因果或错误细节一律作废）】：",
         body,
         "",
-        sourceText
-            ? `对应的原始事件记录（核对事实用，严禁照抄，也严禁据此新增原话没有的因果）：\n${sourceText}`
-            : "（这条记忆没有可用的原始事件存档，请只依据上面正文里已经写明的事实判断，不要自行推断因果。）",
+        `【原始对话/事件记录（唯一事实依据，共 ${provenance.entries.length} 条）】：`,
+        sourceText,
         "",
-        "═══ 判断规则（先判断，再决定拆不拆）═══",
-        "1. 以下这些都属于「同一件事」，必须原样保留在同一条记忆里，严禁按句子切碎：",
-        "   - 同一件事的起因、经过、转折、结果；",
-        "   - 同一场景/同一场对话里连续发生的动作与反应；",
-        "   - 彼此有真实因果、前后依赖、或共同构成一个约定的细节（例如「约好周末去海边」和「为此开始查天气」，是一件事的两个环节）；",
-        "   - 一方做了一件事、另一方的回应与后续态度。",
-        "2. 只有一种情况才拆：这条记忆确实把两件互不相干的事硬凑成了一条，原文里根本不存在它们之间的关联，拆开后各自都能独立讲通，且拆开不会丢掉任何信息。",
-        "3. 拿不准就不要拆。宁可原样输出一条，也不要为了凑条数去拆；把相关联的事件拆散比不拆错得更离谱。",
+        "═══ 溯源重总结规则（最高优先级）═══",
+        "1. **只针对该旧记忆涉及的话题范围重总结**：原始记录中可能还包含当天其它已经单独建过记忆的无关话题，不要把其它无关话题重复总结进来，只核对并重写与这条旧记忆相关的内容。",
+        "2. **拆开互不相干的事，剔除虚构因果**：",
+        "   - 如果原始记录表明旧记忆把两件互不相关的事、两套独立机制或两个独立话题硬凑在了一起（例如同时聊了攒活动代币与打常驻关卡，二者在原文并无因果），必须用单独一行的 `---` 拆成多条独立记忆！",
+        "   - 严禁补出原文没明确说过的「通过A就能达成B / 做A是为了B」等因果关联。",
+        "3. **保留真正连贯的一件事**：如果原文确实是同一件事的起因、经过、回应与结果，不要按句子切碎；只需把旧记忆里编造的因果或失真表述按原文修正为准确的 1 条。",
+        "4. **写作规范**：使用第三人称描述，每条正文控制在 40-120 字左右，正文中严禁写入任何日期或具体时间字样。",
         "",
-        "═══ 写作要求 ═══",
-        "- 严禁补出原文没写过的因果（例如「通过A就能达成B」「A是B的步骤」）。原文没写的关联就不要写。",
-        "- 如果决定拆，最多拆成 3 条；超过 3 条说明这条记忆其实是一条完整的事，请改为原样输出 1 条。",
-        "- 不拆时把原文整理通顺输出一条即可，不要改写事实、不要删掉原有细节。",
-        "- 正文用第三人称，40-120 字，不得出现任何日期或时间。",
-        "",
-        "═══ 输出格式 ═══",
-        "多条之间用单独一行的 --- 分隔；每条末尾单独输出两行：",
+        "═══ 输出格式（不要输出思考过程或解释）═══",
+        "多条记忆之间用单独一行的 `---` 分隔；每条末尾必须各自单独输出两行：",
         "**重要性**：（1-10的整数）",
         "**检索关键词**：关键词1、关键词2、关键词3",
     ].join("\n");
@@ -712,119 +702,146 @@ export async function resplitMergedMemory(
     const result = await simpleLLMCall(
         apiConfig,
         [{ role: "user", content: prompt }],
-        { temperature: 0.2, label: `记忆拆分·${characterName || characterId}` },
+        { temperature: 0.2, label: `溯源重总结·${characterName || characterId}` },
     );
     if (!result.content) {
-        return { success: false, error: result.error || "拆分失败：模型没有返回内容" };
+        return { success: false, error: result.error || "重总结失败：模型没有返回内容" };
     }
 
     const blocks = splitMultiTopicSummaries(result.content);
-    const now = new Date().toISOString();
-    const dayKey = typeof target.metadata?.eventDate === "string" && target.metadata.eventDate.trim()
-        ? target.metadata.eventDate.trim()
-        : target.createdAt.slice(0, 10);
-
-    // 条数上限兜底：模型不听话把一条记忆炸成七八段碎片时，宁可不拆也不覆盖原文。
-    // 拆碎了相关联的事件，比保持原样糟得多。
     if (blocks.length > MAX_RESPLIT_BLOCKS) {
         return {
             success: false,
-            error: `模型想拆成 ${blocks.length} 段，超过 ${MAX_RESPLIT_BLOCKS} 段上限，已判定为过度拆分并保持原样。这条记忆可以直接手动编辑。`,
+            error: `模型输出了 ${blocks.length} 段（超过 ${MAX_RESPLIT_BLOCKS} 段上限），疑似把单件事过度切碎，已取消覆盖并保持原样`,
         };
     }
 
-    const createdIds: string[] = [];
-    for (let i = 0; i < blocks.length; i++) {
-        const block = blocks[i];
+    const dayKey = typeof target.metadata?.eventDate === "string" && target.metadata.eventDate.trim()
+        ? target.metadata.eventDate.trim()
+        : (provenance.dayKey || target.createdAt.slice(0, 10));
+
+    const parsedItems: Array<{
+        cleanBody: string;
+        keywords: string[];
+        importance: number;
+        embeddingInput: string;
+    }> = [];
+
+    for (const block of blocks) {
         const { keywords, importance } = extractMemoryStructuredMeta(block);
         const cleanBody = stripMemoryStructuredSections(block) || stripInlineMemoryTimeMarkers(block);
-        if (!cleanBody || cleanBody.length < 8) continue;
+        if (!cleanBody || cleanBody.length < 6) continue;
+        const resolvedKeywords = keywords.length > 0
+            ? keywords
+            : (Array.isArray(target.metadata?.keywords) ? (target.metadata?.keywords as unknown[]).map(String).filter(Boolean) : []);
+        const embeddingInput = resolvedKeywords.length > 0
+            ? `关键词：${resolvedKeywords.join("、")}\n${cleanBody}`
+            : cleanBody;
+        parsedItems.push({
+            cleanBody,
+            keywords: resolvedKeywords,
+            importance: importance ?? target.importance ?? 0.8,
+            embeddingInput,
+        });
+    }
 
-        const newId = `mem_lt_resplit_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 7)}`;
-        // 继承原条目的归属信息（事件日期、事件盒、溯源批次），但绝不继承「被拆过」的记录
+    if (parsedItems.length === 0) {
+        return { success: false, error: "未能从模型返回内容中解析出有效记忆，已保持原样" };
+    }
+
+    // 若只生成了 1 条且正文与原记忆完全一致，无需产生垃圾历史
+    if (parsedItems.length === 1 && parsedItems[0].cleanBody.trim() === body) {
+        return { success: false, error: "核对原文后内容与当前记忆一致，无需重总结" };
+    }
+
+    // 为重总结产出的新条目当场计算 Embedding 向量，确保向量召回立刻有效
+    const config = loadMemoryConfig();
+    const embeddingApiConfig = config.vectorRecallEnabled ? resolveAuxiliaryApiConfig("embeddingApiConfigId") : null;
+    const canEmbed = Boolean(embeddingApiConfig && resolveEmbeddingModel(embeddingApiConfig));
+    let embeddings: Array<number[] | null> = [];
+    if (canEmbed && embeddingApiConfig) {
+        try {
+            embeddings = await generateEmbeddingsBatch(
+                parsedItems.map(item => item.embeddingInput),
+                embeddingApiConfig,
+            );
+        } catch { /* ignore */ }
+    }
+
+    const nowMs = Date.now();
+    const nowIso = new Date(nowMs).toISOString();
+    const createdIds: string[] = [];
+
+    for (let i = 0; i < parsedItems.length; i++) {
+        const item = parsedItems[i];
+        const emb = embeddings[i] ?? undefined;
+        const newId = `mem_lt_resum_${nowMs}_${i}_${Math.random().toString(36).slice(2, 7)}`;
         const childMetadata: Record<string, unknown> = {
             ...(target.metadata ?? {}),
             eventDate: dayKey,
-            keywords: keywords.length > 0 ? keywords : (Array.isArray(target.metadata?.keywords) ? target.metadata?.keywords : []),
+            keywords: item.keywords,
             resplitFrom: entryId,
             topicSplitV2: true,
-            ...withMergeSuspicionMetadata({}, detectMergeSuspicion(cleanBody)),
+            ...(emb ? { embeddingDim: emb.length } : {}),
         };
         delete childMetadata.resplitInto;
         delete childMetadata.resplitDetachedBy;
+        delete childMetadata.mergeSuspect;
+        delete childMetadata.mergeSuspectReasons;
+        delete childMetadata.mergeSuspectVersion;
 
         const next: MemoryEntry = {
             id: newId,
             characterId,
             sourceApp: target.sourceApp,
             type: "long_term",
-            content: cleanBody,
-            importance: importance ?? target.importance ?? 0.8,
-            accessCount: 0,
-            createdAt: new Date(Date.now() + i).toISOString(),
-            updatedAt: new Date(Date.now() + i).toISOString(),
+            content: item.cleanBody,
+            embedding: emb,
+            importance: item.importance,
+            accessCount: i === 0 ? (target.accessCount ?? 0) : 0,
+            createdAt: new Date(nowMs + i).toISOString(),
+            updatedAt: new Date(nowMs + i).toISOString(),
             metadata: childMetadata,
         };
         await saveMemoryEntry(next);
         createdIds.push(newId);
     }
 
-    if (createdIds.length === 0) {
-        return { success: false, error: "拆分结果为空，已保持原样" };
-    }
-    // 只产出 1 条 = 模型判断「本来就是一件事」，一律保持原样：
-    // 既不拆、也不拿一段改写版去替换原条目（那会平白丢掉原文措辞）。
-    // 真要润色措辞，用编辑功能手动改，别让自动流程动用户的记忆。
-    if (createdIds.length === 1) {
-        await deleteMemoryEntries(createdIds);
-        return {
-            success: false,
-            error: "模型判断这条记忆本身没有合并多件事，已保持原样（如需改措辞请直接编辑这条记忆）",
-        };
-    }
-
-    // 原条目移进「最近删除」：不再以低权重半活着参与注入。
-    // 用户想回退时点「恢复」，detachResplitChildren 会把上面这批碎片直接删掉，回到拆分前。
+    // 原条目移入「最近删除」并记录 resplitInto：
+    // 若用户对重总结结果不满意，在「最近删除」里点「恢复」时会自动删除 createdIds 回到原状。
     await trashMemoryEntry(
         {
             ...target,
-            updatedAt: now,
+            updatedAt: nowIso,
             metadata: {
                 ...(target.metadata ?? {}),
-                // 记下它被拆成了哪几条，便于在回收站里顺着查
                 resplitInto: createdIds,
-                mergeSuspect: false,
             },
         },
-        { by: "user", reason: `已拆分为 ${createdIds.length} 条独立记忆` },
+        {
+            by: "user",
+            reason: createdIds.length > 1
+                ? `已溯源重总结并拆分为 ${createdIds.length} 条独立记忆`
+                : "已根据原始记录重新总结修正",
+        },
     );
 
     return { success: true, createdCount: createdIds.length, entryIds: createdIds };
 }
 
 /**
- * 由「拆分重总结」产生的碎片条目的识别特征：
- * metadata 上带 resplitFrom，或 id 处于 mem_lt_resplit_ 前缀（早先版本写下的）。
+ * 识别此前旧版「批量拆分」遗留的碎片条目（mem_lt_resplit_ 前缀），供用户按需一键移入回收站清理。
  */
-export function isResplitChild(entry: MemoryEntry): boolean {
-    if (String(entry.metadata?.resplitFrom ?? "").length > 0) return true;
+export function isLegacyResplitFragment(entry: MemoryEntry): boolean {
     return entry.id.startsWith("mem_lt_resplit_");
 }
 
-/**
- * 批量清理「拆分重总结」产生的碎片（必须由用户在记忆库工具栏点击才执行）。
- *
- * 早先版本的拆分把相关联的事件拆散了，库里会堆下大量碎片条目。
- * 这里把命中的碎片整批移入「最近删除」——先软删除，进回收站仍可恢复，
- * 确认不要了再由用户在回收站里「彻底删除」。
- * 只挑 isResplitChild 命中的条目，正常记忆一条都不碰。
- */
-export async function trashAllResplitChildren(
+export async function trashAllLegacyResplitFragments(
     entries: MemoryEntry[],
 ): Promise<{ count: number; ids: string[] }> {
-    const targets = entries.filter(entry => !isEntryTrashed(entry) && isResplitChild(entry));
+    const targets = entries.filter(entry => !isEntryTrashed(entry) && isLegacyResplitFragment(entry));
     for (const entry of targets) {
-        await trashMemoryEntry(entry, { by: "user", reason: "清理拆分产生的碎片" });
+        await trashMemoryEntry(entry, { by: "user", reason: "清理旧版拆分遗留碎片" });
     }
     return { count: targets.length, ids: targets.map(entry => entry.id) };
 }
@@ -876,8 +893,6 @@ function findNearDuplicateMemory(
     }
     return best;
 }
-
-import { deleteMemoryEntry } from "./memory-storage";
 
 export type CleanedManualMemoryDraft = {
     cleanBody: string;
@@ -991,7 +1006,16 @@ export async function cleanLegacyMemoryEntry(
     }
 
     if (drafts.length > 1) {
-        await deleteMemoryEntry(entry.id);
+        await trashMemoryEntry(
+            {
+                ...entry,
+                metadata: {
+                    ...(entry.metadata ?? {}),
+                    resplitInto: createdEntries.map(e => e.id),
+                },
+            },
+            { by: "user", reason: `旧长文本记忆已清洗拆分为 ${createdEntries.length} 条独立记忆` },
+        );
     }
 
     return { success: true, newEntries: createdEntries };
@@ -1009,7 +1033,7 @@ export async function runBatchCleanLegacyMemories(
     }
 ): Promise<{ success: boolean; processedCount: number; newTotalCount: number; error?: string }> {
     const targets = options?.targetEntries
-        ?? (await loadMemoryEntriesByType(characterId, "long_term")).filter(isLegacyUnorganizedMemory);
+        ?? (await loadMemoryEntriesByType(characterId, "long_term")).filter(e => !isEntryTrashed(e) && isLegacyUnorganizedMemory(e));
 
     if (targets.length === 0) {
         return { success: true, processedCount: 0, newTotalCount: 0 };

@@ -104,7 +104,7 @@ export async function retrieveCoreMemoriesForPrompt(
     characterId: string,
     config: MemoryConfig,
 ): Promise<MemoryEntry[]> {
-    const coreEntries = await loadMemoryEntriesByType(characterId, "core");
+    const coreEntries = filterRecallableEntries(await loadMemoryEntriesByType(characterId, "core"));
     if (coreEntries.length === 0) return [];
 
     // 角色反思与增量演进的核心记忆总结均只保留未被接替（或最新一轮）的条目参与对话注入：

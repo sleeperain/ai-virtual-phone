@@ -105,28 +105,43 @@ export async function trashMemoryEntry(
 
 /**
  * 从回收站恢复一条记忆：清掉删除标记，让它重新参与注入。
+ * 若该条记忆此前因「溯源重总结」被移入最近删除（metadata.resplitInto 存在），
+ * 恢复原记忆的同时会自动彻底删除当初由它派生出来的重总结子条目，避免原记忆与新条目双份重复注入。
  * 注意不清 previousContent —— 如果这条记忆同时带着「角色改过」的快照，
  * 恢复之后用户仍然可以再选择还原到修改前的版本。
  */
-export async function restoreTrashedEntry(entry: MemoryEntry): Promise<MemoryEntry> {
+export async function restoreTrashedEntry(entry: MemoryEntry): Promise<{ entry: MemoryEntry; removedDerivedCount: number }> {
     const metadata: Record<string, unknown> = { ...(entry.metadata ?? {}) };
+    const derivedIds = Array.isArray(metadata.resplitInto)
+        ? (metadata.resplitInto as unknown[]).map(String).filter(Boolean)
+        : [];
     delete metadata[TRASH_META_KEYS.at];
     delete metadata[TRASH_META_KEYS.by];
     delete metadata[TRASH_META_KEYS.reason];
+    delete metadata.resplitInto;
+
+    if (derivedIds.length > 0) {
+        await deleteMemoryEntries(derivedIds);
+    }
+
     const next: MemoryEntry = {
         ...entry,
         updatedAt: new Date().toISOString(),
         metadata,
     };
     await saveMemoryEntry(next);
-    return next;
+    return { entry: next, removedDerivedCount: derivedIds.length };
 }
 
 /**
  * 把一条记忆还原到「角色修改之前」的样子。
  * 正文、重要性、事件日期都回滚，并清掉快照键，避免重复还原。
+ * 调用方可在外部视情况为还原后的条目重算向量。
  */
-export async function revertCharacterEdit(entry: MemoryEntry): Promise<MemoryEntry | null> {
+export async function revertCharacterEdit(
+    entry: MemoryEntry,
+    rebuiltEmbedding?: number[],
+): Promise<MemoryEntry | null> {
     const snapshot = readEditSnapshot(entry);
     if (!snapshot) return null;
     const metadata: Record<string, unknown> = { ...(entry.metadata ?? {}) };
@@ -135,9 +150,13 @@ export async function revertCharacterEdit(entry: MemoryEntry): Promise<MemoryEnt
     delete metadata[TRASH_META_KEYS.previousEventDate];
     delete metadata[TRASH_META_KEYS.editedAt];
     if (snapshot.eventDate) metadata.eventDate = snapshot.eventDate;
+    if (rebuiltEmbedding && rebuiltEmbedding.length > 0) {
+        metadata.embeddingDim = rebuiltEmbedding.length;
+    }
     const next: MemoryEntry = {
         ...entry,
         content: snapshot.content,
+        ...(rebuiltEmbedding && rebuiltEmbedding.length > 0 ? { embedding: rebuiltEmbedding } : {}),
         importance: snapshot.importance ?? entry.importance,
         updatedAt: new Date().toISOString(),
         metadata,

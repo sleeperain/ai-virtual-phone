@@ -6,12 +6,15 @@
 // 2. 不提供硬删除：只能「弃用」，弃用后不再注入 Prompt，但会进「最近删除」等用户裁决；
 // 3. 用户手写的核心设定（origin=user_manual）只读，角色不能改也不能弃用；
 // 4. 改动前留快照（preEditContent），用户在回收站可一键还原；
-// 5. 单轮最多改 MEMORY_MANAGE_MAX_OPS 条，防止模型刷写。
+// 5. 修改长期记忆正文后自动重算 Embedding 向量，保证检索立刻按修正后的事实生效；
+// 6. 支持按关键词/日期搜索定位旧记忆，方便角色结合近期对话精准纠偏长线记忆。
 
 import type { MemoryEntry } from "./memory-types";
-import { loadMemoryEntriesByType, saveMemoryEntry } from "./memory-storage";
+import { loadMemoryConfig, loadMemoryEntriesByType, saveMemoryEntry } from "./memory-storage";
 import { isEntrySuperseded } from "./memory-revision";
-import { stripMemoryStructuredSections } from "./memory-summarizer";
+import { extractMemoryStructuredMeta, stripMemoryStructuredSections } from "./memory-summarizer";
+import { resolveAuxiliaryApiConfig } from "./settings-storage";
+import { generateEmbedding, resolveEmbeddingModel } from "./memory-embedding";
 import {
     TRASH_META_KEYS,
     isEntryTrashed,
@@ -48,18 +51,51 @@ function manageableEntries(entries: MemoryEntry[]): MemoryEntry[] {
     );
 }
 
-/**
- * 列表里必须给出真实 id：模型要靠它去调「查看记忆详情 / 修改记忆 / 弃用记忆」。
- * （早先版本只打印 M1、M2 这类序号，模型拿不到 id，后续动作全部无法执行。）
- */
 function labelOf(entry: MemoryEntry): string {
     return entry.id;
+}
+
+/** 按关键词（支持空格/顿号分词）与日期匹配并打分，帮助角色在成百上千条长期记忆里精准找到写偏的那条 */
+function filterAndRankByQuery(entries: MemoryEntry[], rawQuery?: string): MemoryEntry[] {
+    const q = (rawQuery ?? "").trim().toLowerCase();
+    if (!q) return entries;
+
+    const terms = q
+        .split(/[\s、，,；;|/]+/)
+        .map(t => t.trim())
+        .filter(Boolean);
+    if (terms.length === 0) return entries;
+
+    const scored: Array<{ entry: MemoryEntry; score: number }> = [];
+    for (const entry of entries) {
+        const body = bodyOf(entry).toLowerCase();
+        const kws = Array.isArray(entry.metadata?.keywords)
+            ? (entry.metadata.keywords as unknown[]).map(String).join(" ").toLowerCase()
+            : "";
+        const date = String(entry.metadata?.eventDate ?? entry.createdAt.slice(0, 10)).toLowerCase();
+        let score = 0;
+        if (body.includes(q) || kws.includes(q) || date.includes(q)) {
+            score += 5;
+        }
+        for (const term of terms) {
+            if (kws.includes(term)) score += 3;
+            if (body.includes(term)) score += 2;
+            if (date.includes(term)) score += 2;
+        }
+        if (score > 0) {
+            scored.push({ entry, score });
+        }
+    }
+
+    scored.sort((a, b) => b.score - a.score || b.entry.createdAt.localeCompare(a.entry.createdAt));
+    return scored.map(item => item.entry);
 }
 
 export async function listMemoriesForCharacter(
     characterId: string,
     type: "core" | "long_term" | "all",
     limit: number,
+    query?: string,
 ): Promise<MemoryManageOutcome> {
     const max = Math.max(1, Math.min(30, Math.floor(limit) || 15));
     const buckets: MemoryEntry[] = [];
@@ -72,16 +108,30 @@ export async function listMemoriesForCharacter(
     if (buckets.length === 0) {
         return { ok: true, text: "记忆库里暂时没有可以管理的记忆。" };
     }
-    const shown = buckets.slice(0, max);
+
+    const trimmedQuery = (query ?? "").trim();
+    const matched = trimmedQuery ? filterAndRankByQuery(buckets, trimmedQuery) : buckets;
+    if (matched.length === 0) {
+        return {
+            ok: true,
+            text: `没有搜到包含「${trimmedQuery}」的可管理记忆（共 ${buckets.length} 条记忆）。可以换个更简短的关键词再搜，或不传 query 查看最近记忆。`,
+        };
+    }
+
+    const shown = matched.slice(0, max);
     const lines = shown.map(e => {
         const kind = e.type === "core" ? "核心" : "长期";
         const date = String(e.metadata?.eventDate ?? e.createdAt.slice(0, 10));
         return `${labelOf(e)}｜${kind}｜${date}｜${clip(bodyOf(e), 160)}`;
     });
+    const header = trimmedQuery
+        ? `按关键词「${trimmedQuery}」搜到 ${matched.length} 条可管理记忆，展示前 ${shown.length} 条：`
+        : `共 ${buckets.length} 条可管理记忆，以下是最近 ${shown.length} 条：`;
+
     return {
         ok: true,
         text: [
-            `共 ${buckets.length} 条可管理记忆，以下是其中 ${shown.length} 条：`,
+            header,
             ...lines,
             "",
             "要修改或弃用某条，先按它行首的 id 调「查看记忆详情」读完整原文再动手；id 不要念给用户。",
@@ -141,7 +191,8 @@ export async function updateMemoryForCharacter(
         };
     }
 
-    const nextContent = typeof updates.content === "string" ? updates.content.trim() : "";
+    const rawNextContent = typeof updates.content === "string" ? updates.content.trim() : "";
+    const nextContent = rawNextContent ? (stripMemoryStructuredSections(rawNextContent) || rawNextContent).trim() : "";
     const hasContent = Boolean(nextContent);
     const hasImportance = typeof updates.importance === "number" && Number.isFinite(updates.importance);
     if (!hasContent && !hasImportance) {
@@ -151,17 +202,48 @@ export async function updateMemoryForCharacter(
         return { ok: false, text: `改写后的内容太长了（上限 ${MEMORY_MANAGE_MAX_CONTENT} 字），请压缩后再提交。` };
     }
 
+    // 长期记忆正文被角色修改时，自动重算 Embedding 向量，避免改了文字却还顶着旧语义向量
+    let nextEmbedding = target.embedding;
+    const existingKws = Array.isArray(target.metadata?.keywords)
+        ? (target.metadata.keywords as unknown[]).map(String).filter(Boolean)
+        : [];
+    const parsedMeta = hasContent ? extractMemoryStructuredMeta(rawNextContent) : { keywords: [] };
+    const finalKeywords = parsedMeta.keywords.length > 0 ? parsedMeta.keywords : existingKws;
+
+    if (hasContent && target.type === "long_term") {
+        try {
+            const cfg = loadMemoryConfig();
+            if (cfg.vectorRecallEnabled) {
+                const embeddingApiConfig = resolveAuxiliaryApiConfig("embeddingApiConfigId");
+                if (embeddingApiConfig && resolveEmbeddingModel(embeddingApiConfig)) {
+                    const embInput = finalKeywords.length > 0
+                        ? `关键词：${finalKeywords.join("、")}\n${nextContent}`
+                        : nextContent;
+                    const computed = await generateEmbedding(embInput, embeddingApiConfig);
+                    if (computed && computed.length > 0) {
+                        nextEmbedding = computed;
+                    }
+                }
+            }
+        } catch {
+            // 向量生成失败不阻塞记忆文本本身的保存
+        }
+    }
+
     const now = new Date().toISOString();
     const metadata: Record<string, unknown> = {
         ...(target.metadata ?? {}),
-        // 只在第一次改这条时留快照，避免多次修改把用户真正想要的原文覆盖掉
+        // 只在第一次改这条时留快照，避免多次修改把最初原文覆盖掉
         [TRASH_META_KEYS.previousContent]: target.metadata?.[TRASH_META_KEYS.previousContent] ?? target.content,
         [TRASH_META_KEYS.previousImportance]: target.metadata?.[TRASH_META_KEYS.previousImportance] ?? target.importance,
         [TRASH_META_KEYS.editedAt]: now,
+        ...(finalKeywords.length > 0 ? { keywords: finalKeywords } : {}),
+        ...(nextEmbedding && nextEmbedding.length > 0 ? { embeddingDim: nextEmbedding.length } : {}),
     };
     const next: MemoryEntry = {
         ...target,
         ...(hasContent ? { content: nextContent } : {}),
+        ...(nextEmbedding ? { embedding: nextEmbedding } : {}),
         ...(hasImportance ? { importance: Math.max(0.1, Math.min(1, updates.importance as number)) } : {}),
         updatedAt: now,
         metadata,
@@ -169,7 +251,7 @@ export async function updateMemoryForCharacter(
     await saveMemoryEntry(next);
     return {
         ok: true,
-        text: `已更新这条记忆。原内容已留快照，用户可以在记忆库的「最近删除」里看到并还原。`,
+        text: "已更新这条记忆（向量与快照已同步保存，用户可在记忆库的「最近删除」里随时对照或还原）。",
     };
 }
 

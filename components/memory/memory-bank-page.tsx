@@ -38,13 +38,15 @@ import {
     cleanLegacyMemoryEntry,
     runBatchCleanLegacyMemories,
     resplitMergedMemory,
+    isLegacyResplitFragment,
+    trashAllLegacyResplitFragments,
     type CleanedManualMemoryDraft,
 } from "@/lib/memory-summarizer";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { runCoreMemoryPipeline } from "@/lib/core-memory-builder";
-import { DEFAULT_REFLECTION_PROMPT, runCoreMemoryReflection, selectUnreadCoreTargets, type ReflectionScope } from "@/lib/core-memory-reflection";
+import { DEFAULT_REFLECTION_PROMPT, runCoreMemoryReflection, type ReflectionScope } from "@/lib/core-memory-reflection";
 import { resolveAuxiliaryApiConfig, resolveUserIdentity } from "@/lib/settings-storage";
 import {
     generateEmbedding,
@@ -63,15 +65,14 @@ import {
     sliceSupersededText,
 } from "@/lib/memory-revision";
 import {
-    detectMergeSuspicion,
-    readMergeSuspicion,
-    loadProvenanceBatch,
+    resolveMemoryProvenance,
 } from "@/lib/memory-provenance";
 import {
     TRASH_RETENTION_DAYS,
     buildTrashBucket,
     isEntryTrashed,
     permanentlyDeleteTrashed,
+    purgeExpiredTrashed,
     readEditSnapshot,
     readTrashActor,
     readTrashReason,
@@ -393,11 +394,9 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const [editingCorePrompt, setEditingCorePrompt] = useState<string | null>(null);
     const [editingEventBoxPrompt, setEditingEventBoxPrompt] = useState<string | null>(null);
     const [editingReflectionPrompt, setEditingReflectionPrompt] = useState<string | null>(null);
-    // 设置页用：这个角色有几条核心记忆还没被角色审校过。
-    // 反思会按「有未读 → 审校式模板 / 无未读 → 提炼式模板」自动切换，这里把实际生效情况显式告诉用户。
-    const [auditPending, setAuditPending] = useState<{ core: number; unread: number } | null>(null);
-    // 最近删除页里「彻底删除」的二次确认（这里删掉就真的没了）
+    // 最近删除页里「彻底删除」与「清空回收站」的二次确认（这里删掉就真的没了）
     const [confirmPurgeEntry, setConfirmPurgeEntry] = useState<MemoryEntry | null>(null);
+    const [confirmEmptyTrash, setConfirmEmptyTrash] = useState(false);
     /** 批量删除的二次确认：只移入回收站，不真删 */
     const [confirmClearAll, setConfirmClearAll] = useState<null | "core" | "long_term">(null);
     const [pickedCharId, setPickedCharId] = useState<string | null>(null);
@@ -405,12 +404,10 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const [memoryEditor, setMemoryEditor] = useState<MemoryEditorState | null>(null);
     const [savingMemory, setSavingMemory] = useState(false);
     const [embeddingAll, setEmbeddingAll] = useState(false);
-    /** 正在「拆分重总结」的条目 id：拆完把原条目降权、新条目入库 */
+    /** 正在「溯源重总结」的条目 id */
     const [resplittingEntryId, setResplittingEntryId] = useState<string | null>(null);
-    /** 批量拆分重总结：一次性处理所有「疑似合并」的长期记忆 */
-    const [batchResplitting, setBatchResplitting] = useState(false);
-    const [batchResplitProgress, setBatchResplitProgress] = useState("");
-    const [confirmBatchResplit, setConfirmBatchResplit] = useState<number | null>(null);
+    /** 一键将旧版遗留的拆分碎片移入回收站 */
+    const [cleaningFragments, setCleaningFragments] = useState(false);
     const [cleaningManualText, setCleaningManualText] = useState(false);
     const [cleaningAllLegacy, setCleaningAllLegacy] = useState(false);
     const [cleanLegacyProgress, setCleanLegacyProgress] = useState("");
@@ -533,12 +530,15 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         setLoading(true);
         try {
             await hydrateChatStorage();
-            const [core, lt] = await Promise.all([
+            const [rawCore, rawLt] = await Promise.all([
                 loadMemoryEntriesByType(charId, "core"),
                 loadMemoryEntriesByType(charId, "long_term"),
             ]);
-            // 只读加载：这里绝不删除、不清理任何东西。
-            // 任何删除都必须由用户在列表里明确点击触发，避免一次误判造成不可逆丢档。
+            // 自动清理在「最近删除」中已满 60 天（TRASH_RETENTION_DAYS）的过期条目；正常记忆一条都不碰
+            const purged = await purgeExpiredTrashed([...rawCore, ...rawLt]);
+            const purgedSet = purged.ids.length > 0 ? new Set(purged.ids) : null;
+            const core = purgedSet ? rawCore.filter(e => !purgedSet.has(e.id)) : rawCore;
+            const lt = purgedSet ? rawLt.filter(e => !purgedSet.has(e.id)) : rawLt;
             setCoreEntries(core);
             setLongTermEntries(lt);
             setBoxes(loadEventBoxes(charId));
@@ -583,25 +583,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             setEditingReflectionPrompt(null);
         }
     }, [view]);
-
-    // 设置页打开时统计「待角色审校」的核心记忆条数，用于显式提示当前生效的反思模板是哪一套
-    useEffect(() => {
-        if (view !== "settings" || !selectedCharId) {
-            setAuditPending(null);
-            return;
-        }
-        let cancelled = false;
-        (async () => {
-            try {
-                const core = await loadMemoryEntriesByType(selectedCharId, "core");
-                if (cancelled) return;
-                setAuditPending({ core: core.length, unread: selectUnreadCoreTargets(core).length });
-            } catch {
-                if (!cancelled) setAuditPending(null);
-            }
-        })();
-        return () => { cancelled = true; };
-    }, [view, selectedCharId]);
 
     // 切角色（或重新进入设置页）时，读取该角色已构建的思考倾向
     useEffect(() => {
@@ -673,11 +654,14 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const handleRestoreTrashed = async (entry: MemoryEntry) => {
         if (!selectedCharId) return;
         try {
-            // 恢复只做一件事：把这条记忆放回记忆库，不牵连、不删除其它条目。
-            await restoreTrashedEntry(entry);
+            const { removedDerivedCount } = await restoreTrashedEntry(entry);
             await loadDetailData(selectedCharId);
             loadCharacterList();
-            showNotice("已恢复，这条记忆会重新参与记忆注入");
+            showNotice(
+                removedDerivedCount > 0
+                    ? `已恢复原记忆，并自动撤回当初派生出的 ${removedDerivedCount} 条重总结条目`
+                    : "已恢复，这条记忆会重新参与记忆注入",
+            );
         } catch (err) {
             showNotice("恢复失败: " + String(err));
         }
@@ -686,18 +670,27 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const handleRestoreAllTrashed = async (entries: MemoryEntry[]) => {
         if (!selectedCharId || entries.length === 0) return;
         try {
+            // 若回收站里同时包含「原记忆」和它派生的子条目，恢复原记忆会自动撤掉子条目，这里跳过已撤掉的子条目
+            const removedIds = new Set<string>();
+            let restoredCount = 0;
             for (const entry of entries) {
+                if (removedIds.has(entry.id)) continue;
+                const derived = Array.isArray(entry.metadata?.resplitInto)
+                    ? (entry.metadata!.resplitInto as unknown[]).map(String)
+                    : [];
+                for (const cid of derived) removedIds.add(cid);
                 await restoreTrashedEntry(entry);
+                restoredCount += 1;
             }
             await loadDetailData(selectedCharId);
             loadCharacterList();
-            showNotice(`已恢复 ${entries.length} 条记忆`);
+            showNotice(`已恢复 ${restoredCount} 条记忆`);
         } catch (err) {
             showNotice("批量恢复失败: " + String(err));
         }
     };
 
-    /** 彻底删除：仅在「最近删除」里可用，执行后不可恢复 */
+    /** 彻底删除单条：仅在「最近删除」里可用，执行后不可恢复 */
     const handlePurgeTrashed = async (entry: MemoryEntry) => {
         if (!selectedCharId) return;
         try {
@@ -710,7 +703,24 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         }
     };
 
-    /** 拆分重总结：把一条合并错的记忆交给模型拆成多条独立记忆 */
+    /** 清空回收站：把当前角色「最近删除」中的所有已删除条目彻底删除 */
+    const handleEmptyTrash = async () => {
+        if (!selectedCharId) return;
+        const trashedIds = [...coreEntries, ...longTermEntries]
+            .filter(isEntryTrashed)
+            .map(e => e.id);
+        if (trashedIds.length === 0) return;
+        try {
+            await permanentlyDeleteTrashed(trashedIds);
+            await loadDetailData(selectedCharId);
+            loadCharacterList();
+            showNotice(`已彻底清空 ${trashedIds.length} 条已删除记忆`);
+        } catch (err) {
+            showNotice("清空回收站失败: " + String(err));
+        }
+    };
+
+    /** 溯源重总结：必须追溯到原始对话/事件记录才重新总结，无原文绝不编造 */
     const handleResplitEntry = async (entry: MemoryEntry) => {
         if (!selectedCharId || resplittingEntryId) return;
         setEntryMenuId(null);
@@ -720,76 +730,56 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             if (res.success) {
                 await loadDetailData(selectedCharId);
                 loadCharacterList();
-                showNotice(`已拆分为 ${res.createdCount} 条独立记忆，原条目已移入「最近删除」（恢复原条目会自动删掉这些碎片）`);
+                showNotice(
+                    (res.createdCount ?? 0) > 1
+                        ? `已按原文拆分为 ${res.createdCount} 条独立记忆并生成向量，原条目已移入「最近删除」（恢复原条目会自动撤回新条目）`
+                        : "已按原始对话记录重新总结修正并更新向量，原条目已移入「最近删除」",
+                );
             } else {
-                showNotice(res.error || "拆分失败");
+                showNotice(res.error || "溯源重总结失败");
             }
         } catch (err) {
-            showNotice("拆分出错: " + String(err));
+            showNotice("溯源重总结出错: " + String(err));
         } finally {
             setResplittingEntryId(null);
         }
     };
 
-    /**
-     * 某条长期记忆是否该判「疑似合并」。
-     * 事件盒总结不判（合并就是它的目的），其余长期记忆一律按规则扫一遍。
-     */
-    const isEntryMergeSuspect = (entry: MemoryEntry): boolean => {
-        if (entry.type !== "long_term" || isEntryBoxDigest(entry)) return false;
-        const stored = readMergeSuspicion(entry);
-        return stored.length > 0 || detectMergeSuspicion(entry.content).reasons.length > 0;
-    };
-
-    /**
-     * 批量拆分重总结：把所有「疑似合并」的长期记忆逐条交给模型拆开。
-     * 一条失败不影响后面的条目，最后汇总结果。
-     */
-    const handleBatchResplit = async (targets: MemoryEntry[]) => {
-        if (!selectedCharId || batchResplitting || targets.length === 0) return;
-        setConfirmBatchResplit(null);
-        setBatchResplitting(true);
-        setBatchResplitProgress(`0/${targets.length}`);
-        let ok = 0;
-        let created = 0;
-        const failures: string[] = [];
+    /** 清理此前旧版批量拆分遗留的 mem_lt_resplit_ 碎片（软删除进回收站，仍可恢复） */
+    const handleCleanLegacyFragments = async () => {
+        if (!selectedCharId || cleaningFragments) return;
+        setCleaningFragments(true);
         try {
-            for (let i = 0; i < targets.length; i++) {
-                const entry = targets[i];
-                setBatchResplitProgress(`${i + 1}/${targets.length}`);
-                try {
-                    const res = await resplitMergedMemory(selectedCharId, selectedChar?.name ?? "角色", entry.id);
-                    if (res.success) {
-                        ok += 1;
-                        created += res.createdCount ?? 0;
-                    } else {
-                        failures.push(res.error || "拆分失败");
-                    }
-                } catch (err) {
-                    failures.push(String(err));
-                }
-            }
+            const res = await trashAllLegacyResplitFragments(longTermEntries);
             await loadDetailData(selectedCharId);
             loadCharacterList();
-            const keptCount = targets.length - ok;
-            if (ok === 0) {
-                showNotice(failures[0] || "批量拆分失败：这些记忆都没被判定为需要拆分");
-            } else if (failures.length > 0) {
-                showNotice(`已拆分 ${ok}/${targets.length} 条（共生成 ${created} 条独立记忆），其余 ${keptCount} 条保持原样：${failures[0]}`);
-            } else {
-                showNotice(`已拆分 ${ok} 条疑似合并的记忆，共生成 ${created} 条独立记忆，原条目均移入「最近删除」`);
-            }
+            showNotice(res.count > 0 ? `已将 ${res.count} 条旧版拆分遗留碎片移入「最近删除」` : "没有需要清理的旧碎片");
+        } catch (err) {
+            showNotice("清理碎片出错: " + String(err));
         } finally {
-            setBatchResplitting(false);
-            setBatchResplitProgress("");
+            setCleaningFragments(false);
         }
     };
 
-    /** 把角色改过的记忆还原到修改前的内容 */
+    /** 把角色改过的记忆还原到修改前的内容（长期记忆自动同步重算向量） */
     const handleRevertCharacterEdit = async (entry: MemoryEntry) => {
         if (!selectedCharId) return;
         try {
-            const reverted = await revertCharacterEdit(entry);
+            const snapshot = readEditSnapshot(entry);
+            if (!snapshot) {
+                showNotice("这条记忆没有可还原的修改快照");
+                return;
+            }
+            let rebuiltEmbedding: number[] | undefined;
+            if (entry.type === "long_term" && config.vectorRecallEnabled) {
+                const kws = Array.isArray(entry.metadata?.keywords)
+                    ? (entry.metadata.keywords as unknown[]).map(String).filter(Boolean)
+                    : extractMemoryStructuredMeta(snapshot.content).keywords;
+                const cleanSnap = stripMemoryStructuredSections(snapshot.content) || snapshot.content;
+                const embInput = kws.length > 0 ? `关键词：${kws.join("、")}\n${cleanSnap}` : cleanSnap;
+                rebuiltEmbedding = await maybeBuildManualMemoryEmbedding("long_term", embInput);
+            }
+            const reverted = await revertCharacterEdit(entry, rebuiltEmbedding);
             if (!reverted) {
                 showNotice("这条记忆没有可还原的修改快照");
                 return;
@@ -1448,7 +1438,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             showNotice("请先在「设置 → 绑定配置 → 辅助 API 绑定」中配置向量检索 (Embedding) 模型");
             return;
         }
-        const missing = longTermEntries.filter(e => !isEntryVectorValid(e));
+        const missing = longTermEntries.filter(e => !isEntryTrashed(e) && !isEntryVectorValid(e));
         if (missing.length === 0) {
             showNotice("当前所有长期记忆均已生成有效向量");
             return;
@@ -1523,7 +1513,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
 
     const handleCleanAllLegacyMemories = async () => {
         if (!selectedCharId || cleaningAllLegacy || summarizing) return;
-        const legacyTargets = longTermEntries.filter(isLegacyUnorganizedMemory);
+        const legacyTargets = longTermEntries.filter(e => !isEntryTrashed(e) && isLegacyUnorganizedMemory(e));
         if (legacyTargets.length === 0) {
             showNotice("当前没有需要清洗的长文本旧记忆");
             return;
@@ -1562,7 +1552,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             setSearchScoreMap(null);
             return;
         }
-        const pool = activeTab === "core" ? coreEntries : longTermEntries;
+        const pool = (activeTab === "core" ? coreEntries : longTermEntries).filter(e => !isEntryTrashed(e));
         if (pool.length === 0 || searchingVectors) return;
         setSearchingVectors(true);
         try {
@@ -1891,11 +1881,9 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         const legacyUnorganizedCount = type === "long_term"
             ? entries.filter(isLegacyUnorganizedMemory).length
             : 0;
-        // 可批量拆分的疑似合并条数（被更新版本接替的旧条目跳过：它们本来就不该再参与拆分）
-        const mergeSuspectTargets = type === "long_term"
-            ? entries.filter(e => isEntryMergeSuspect(e) && !isEntrySuperseded(e))
-            : [];
-        const mergeSuspectCount = mergeSuspectTargets.length;
+        const legacyFragmentCount = type === "long_term"
+            ? entries.filter(isLegacyResplitFragment).length
+            : 0;
 
         // Filter or rank entries when search query is active
         const trimmedQ = searchQuery.trim().toLowerCase();
@@ -1941,18 +1929,18 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                     </span>
                                 </button>
                             )}
-                            {type === "long_term" && mergeSuspectCount > 0 && (
+                            {type === "long_term" && legacyFragmentCount > 0 && (
                                 <button
                                     className="mem-entry-add-btn"
-                                    onClick={() => setConfirmBatchResplit(mergeSuspectCount)}
-                                    disabled={batchResplitting || Boolean(resplittingEntryId)}
-                                    title="把所有「疑似合并」的长期记忆逐条交给模型重新拆分重总结：一条一件事分开入库，原条目移入「最近删除」"
+                                    onClick={() => void handleCleanLegacyFragments()}
+                                    disabled={cleaningFragments}
+                                    title="把此前旧版批量拆分产生的 mem_lt_resplit_ 碎片移入「最近删除」，随时可恢复"
                                 >
-                                    <Sparkles size={14} strokeWidth={1.8} />
+                                    <Trash2 size={14} strokeWidth={1.8} />
                                     <span>
-                                        {batchResplitting
-                                            ? `批量拆分中(${batchResplitProgress})...`
-                                            : `批量拆分重总结(${mergeSuspectCount})`}
+                                        {cleaningFragments
+                                            ? "清理中..."
+                                            : `清理旧拆分碎片(${legacyFragmentCount})`}
                                     </span>
                                 </button>
                             )}
@@ -2144,26 +2132,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                 已归档
                                             </span>
                                         )}
-                                        {(() => {
-                                            // 只有「长期记忆」判定是否混了多件事，核心记忆永远不判
-                                            // （核心记忆是提炼后的认知综述，本来就会涵盖多个层面）。
-                                            // 长期记忆这一侧不按来源排除：角色反思、核心综述的片段同样是长期记忆，
-                                            // 一样可能把几件事并成一条，全部交给用户顺手裁决；
-                                            // 唯一的例外是事件盒总结——合并本来就是它的目的。
-                                            if (type !== "long_term" || entryIsDigest) return null;
-                                            const stored = readMergeSuspicion(entry);
-                                            const live = stored.length > 0 ? stored : detectMergeSuspicion(entry.content).reasons;
-                                            if (live.length === 0) return null;
-                                            return (
-                                                <span
-                                                    className="mem-stat-pill"
-                                                    style={{ fontWeight: 700, borderRadius: 5, color: "var(--c-danger, #e5484d)" }}
-                                                    title={`疑似把多件事合并成了一条：${live.join("；")}。可点菜单里的「拆分重总结」单独处理，或用列表上方的「批量拆分疑似合并」一次全拆。`}
-                                                >
-                                                    疑似合并
-                                                </span>
-                                            );
-                                        })()}
                                         <span
                                             className={`mem-origin-badge ${isManualMemoryEntry(entry) ? "is-manual" : ""}`}
                                             style={{ borderRadius: 5 }}
@@ -2190,13 +2158,12 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                     {type === "long_term" && !entryIsDigest && (
                                                         <button
                                                             onClick={() => void handleResplitEntry(entry)}
-                                                            disabled={resplittingEntryId === entry.id || batchResplitting}
+                                                            disabled={Boolean(resplittingEntryId)}
+                                                            title="回溯原始对话/事件记录重新核对与总结（若已无原文记录将拒绝重总结，绝不二次臆测）"
                                                         >
                                                             <Sparkles size={13} />
                                                             <span>
-                                                                {batchResplitting
-                                                                    ? `批量拆分中(${batchResplitProgress})`
-                                                                    : resplittingEntryId === entry.id ? "拆分中..." : "拆分重总结"}
+                                                                {resplittingEntryId === entry.id ? "溯源总结中..." : "溯源重总结"}
                                                             </span>
                                                         </button>
                                                     )}
@@ -2333,30 +2300,34 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                         </div>
                                     )}
                                 </div>
-                                {/* 原文溯源：仅在展开时渲染，避免主列表被原文撑长 */}
-                                {isExpanded && (() => {
-                                    const batchId = typeof entry.metadata?.provenanceBatchId === "string"
-                                        ? entry.metadata.provenanceBatchId
-                                        : "";
-                                    if (!batchId) return null;
-                                    const batch = loadProvenanceBatch(selectedCharId!, batchId);
-                                    if (!batch) return null;
+                                {/* 原文溯源：仅在展开时渲染，同时兼容批次快照与手机原生历史时间线回溯 */}
+                                {isExpanded && type === "long_term" && !entryIsDigest && (() => {
+                                    const provenance = resolveMemoryProvenance(selectedCharId!, entry);
+                                    if (!provenance || provenance.entries.length === 0) {
+                                        return (
+                                            <div className="mem-superseded-note" style={{ display: "block" }} onClick={ev => ev.stopPropagation()}>
+                                                <div className="ts-11 text-secondary">
+                                                    原文溯源：未找到该日期对应的原始对话或事件记录（聊天记录可能已清理，不可执行溯源重总结）。
+                                                </div>
+                                            </div>
+                                        );
+                                    }
                                     return (
-                                        <div className="mem-superseded-note" style={{ display: "block" }}>
+                                        <div className="mem-superseded-note" style={{ display: "block" }} onClick={ev => ev.stopPropagation()}>
                                             <div className="ts-11 text-secondary" style={{ fontWeight: 600, marginBottom: 4 }}>
-                                                这条记忆是从 {batch.totalEntries} 条原始事件里总结出来的（{batch.earliest} ~ {batch.latest}）
-                                                {batch.entries.length < batch.totalEntries
-                                                    ? ` · 下面显示其中最近 ${batch.entries.length} 条`
+                                                原文溯源（共 {provenance.totalEntries} 条原始记录 · {provenance.dayKey}）
+                                                {provenance.entries.length < provenance.totalEntries
+                                                    ? ` · 展示最近 ${provenance.entries.length} 条`
                                                     : ""}
                                             </div>
                                             <div style={{ maxHeight: 260, overflowY: "auto" }}>
-                                                {batch.entries.map(item => (
+                                                {provenance.entries.map((item, idx) => (
                                                     <div
-                                                        key={item.id}
+                                                        key={`${item.id}_${idx}`}
                                                         className="ts-11"
                                                         style={{ padding: "3px 0", borderTop: "1px solid rgba(128,128,128,.15)" }}
                                                     >
-                                                        <span className="text-secondary" style={{ marginRight: 6 }}>{item.sourceApp}</span>
+                                                        <span className="text-secondary" style={{ marginRight: 6 }}>[{item.sourceApp}]</span>
                                                         <span style={{ whiteSpace: "pre-wrap", opacity: 0.85 }}>{item.content}</span>
                                                     </div>
                                                 ))}
@@ -2433,8 +2404,8 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                     {(resplitIntoCount > 0 || resplitFromId || resplitDetached) && (
                         <div className="ts-11 text-secondary" style={{ padding: "2px 0" }}>
                             {resplitIntoCount > 0
-                                ? `这条曾被拆成 ${resplitIntoCount} 条碎片：点「恢复」会直接删掉那些碎片，回到拆分前的样子。`
-                                : "由拆分产生：原记忆恢复后它会被自动删除；单独恢复它会和原记忆重复，一般不必恢复。"}
+                                ? `这条记忆曾派生出 ${resplitIntoCount} 条新总结：点「恢复」会自动撤掉那些新条目，干净回到替换前的原貌。`
+                                : "由重总结或拆分产生：恢复原记忆时它会被自动撤掉；单独恢复会与原记忆重复，一般不必恢复。"}
                         </div>
                     )}
                     <div
@@ -2511,13 +2482,22 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                     <>
                         <div className="mem-entry-toolbar mem-toolbar-row">
                             {trashed.length > 0 && (
-                                <button
-                                    className="mem-entry-add-btn"
-                                    onClick={() => void handleRestoreAllTrashed(trashed)}
-                                >
-                                    <RotateCcw size={15} strokeWidth={1.8} />
-                                    <span>全部恢复({trashed.length})</span>
-                                </button>
+                                <>
+                                    <button
+                                        className="mem-entry-add-btn"
+                                        onClick={() => void handleRestoreAllTrashed(trashed)}
+                                    >
+                                        <RotateCcw size={15} strokeWidth={1.8} />
+                                        <span>全部恢复({trashed.length})</span>
+                                    </button>
+                                    <button
+                                        className="mem-entry-clear-btn"
+                                        onClick={() => setConfirmEmptyTrash(true)}
+                                    >
+                                        <Trash2 size={15} strokeWidth={1.8} />
+                                        <span>清空回收站({trashed.length})</span>
+                                    </button>
+                                </>
                             )}
                         </div>
                         {trashed.length > 0 && (
@@ -2575,7 +2555,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                     ) : activeTab === "boxes" ? (
                         /* ── Event Boxes: 标题+日期同在分割线之上 + 支持一键批量总结 + 点击展开关联事件 ── */
                         (() => {
-                            const ungroupedCount = longTermEntries.filter(e => !getEntryBoxId(e) && !isEntryBoxDigest(e)).length;
+                            const ungroupedCount = longTermEntries.filter(e => !isEntryTrashed(e) && !getEntryBoxId(e) && !isEntryBoxDigest(e)).length;
                             const pendingSummarizeBoxCount = boxes.filter(b => {
                                 const { digestEntry, newEntries, allMemberEntries } = getBoxLayers(longTermEntries, b);
                                 return newEntries.length > 0 || (!digestEntry && allMemberEntries.length > 0);
@@ -3308,18 +3288,19 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                     );
                 })()}
 
-                {/* 批量拆分重总结：二次确认后再逐条调模型拆 */}
-                {confirmBatchResplit !== null && (
+                {/* 最近删除：清空回收站二次确认（不可恢复） */}
+                {confirmEmptyTrash && (
                     <ConfirmDialog
-                        title={`批量拆分 ${confirmBatchResplit} 条疑似合并的记忆？`}
-                        message="每一条都会单独调用一次模型判断：只有确实把互不相干的事硬凑成一条时才拆（最多 3 条），本来就是一件事的原样保留、不做改动。被拆的原条目会移入「最近删除」，可随时恢复。条数多时耗时较长，请不要离开页面。"
+                        title="彻底清空回收站？"
+                        message="将把该角色「最近删除」中的所有已删除记忆彻底清除，此操作不可恢复（仍在生效的正常记忆不受影响）。"
                         icon={AlertCircle}
-                        confirmLabel="开始拆分"
+                        variant="danger"
+                        confirmLabel="彻底清空"
                         cancelLabel="取消"
-                        onCancel={() => setConfirmBatchResplit(null)}
+                        onCancel={() => setConfirmEmptyTrash(false)}
                         onConfirm={() => {
-                            const targets = longTermEntries.filter(e => isEntryMergeSuspect(e) && !isEntrySuperseded(e));
-                            void handleBatchResplit(targets);
+                            setConfirmEmptyTrash(false);
+                            void handleEmptyTrash();
                         }}
                     />
                 )}
@@ -3497,7 +3478,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
 
                 {/* 事件盒内：从已有未归盒记忆中勾选添加 */}
                 {boxAddPickerOpen && activeBoxId && (() => {
-                    const available = longTermEntries.filter(e => !getEntryBoxId(e) && !isEntryBoxDigest(e));
+                    const available = longTermEntries.filter(e => !isEntryTrashed(e) && !getEntryBoxId(e) && !isEntryBoxDigest(e));
                     const selectedCount = Object.keys(boxAddSelectedIds).filter(id => boxAddSelectedIds[id]).length;
                     return (
                         <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={() => setBoxAddPickerOpen(false)}>
@@ -3652,12 +3633,12 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                     />
                 )}
 
-                {/* Confirm clear all long-term entries */}
+                {/* Confirm clear all long-term / core entries */}
                 {confirmClearAll && (
                     <ConfirmDialog
                         title="全部移入最近删除？"
                         message={
-                            activeTab === "core"
+                            confirmClearAll === "core"
                                 ? "该角色的核心记忆会全部移入「最近删除」，随时可以恢复；在「最近删除」里点「彻底删除」才真的删掉，超过 60 天也会自动清理。"
                                 : "该角色的长期记忆会全部移入「最近删除」，随时可以恢复；在「最近删除」里点「彻底删除」才真的删掉，超过 60 天也会自动清理。"
                         }
@@ -3665,10 +3646,11 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                         variant="danger"
                         confirmLabel="全部移入"
                         onConfirm={() => {
-                            handleClearEntries(activeTab === "core" ? "core" : "long_term");
-                            setConfirmClearAll(false);
+                            const targetType = confirmClearAll;
+                            setConfirmClearAll(null);
+                            void handleClearEntries(targetType);
                         }}
-                        onCancel={() => setConfirmClearAll(false)}
+                        onCancel={() => setConfirmClearAll(null)}
                     />
                 )}
             </div>
@@ -3961,7 +3943,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                     </div>
                                     <div className="modal-body modal-body-tight" data-ui="modal-body">
                                         <p className="ts-11 text-secondary" style={{ margin: "0 4px 8px" }}>
-                                            完整读取角色卡设定，以角色第一人称回看这段时间的事，会产生一次 API 调用。若这个角色已有「还没被角色读过」的核心记忆，本轮先做<b>审校</b>：核对系统整理得准不准，判定失真的修正版与原文并存入库；没有待审校内容时，则产出一条新的核心记忆。反思会参考上一次的结论，越用越连贯。
+                                            完整读取角色卡设定、系统整理的核心记忆总结与高权重事件脉络，让 TA 用第一人称审视并更新自己的核心认知（若系统总结有定性偏差，角色会在结论中按本心纠正，并供下一轮系统总结参考）。会产生一次 API 调用。
                                         </p>
                                         <div className="menu-group">
                                             {REFLECTION_SCOPE_OPTIONS.map(option => (
@@ -4393,25 +4375,8 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                             className="ui-textarea w-full min-h-[200px] ts-14 leading-relaxed resize-y"
                         />
                         <p className="ts-11 text-secondary" style={{ margin: 0 }}>
-                            反思用角色自己绑定的聊天 API；角色设定始终完整注入，改这里只调整反思的问法与写作要求。
+                            反思用角色自己绑定的聊天 API；角色设定、系统核心记忆沉淀与事实底稿始终完整注入，上方提示词即为实际生效的唯一模板（所见即所得）。角色在反思中的定性纠偏会自动同步给下一轮系统核心记忆总结参考。
                         </p>
-                        <p className="ts-11 text-secondary" style={{ margin: 0 }}>
-                            上面的文本框显示的是<b>默认提炼式模板</b>，只是给你编辑的底稿，不代表本次一定会用它。
-                            内置模板会按下面的条件自动切换：有「还没被角色读过」的核心记忆时用<b>审校式模板</b>（角色核对系统整理得准不准，输出【判断】/【问题】/【修正版】三段，判定失真的修正版会作为独立条目并存入库）；
-                            一条都没有时回退<b>提炼式模板</b>（输出一段连贯的认知结论）。
-                        </p>
-                        <p className="ts-11" style={{ margin: 0 }}>
-                            {isReflectionDefault
-                                ? "当前未自定义，使用内置模板并按上述条件自动切换。"
-                                : "当前已自定义：下面这段文本会覆盖两种内置模板，审校式模板不会自动生效——想用审校式请点「恢复默认」。"}
-                        </p>
-                        {auditPending ? (
-                            <p className="ts-11" style={{ margin: 0 }}>
-                                {auditPending.unread > 0
-                                    ? `本角色将走【审校式】：待审校 ${auditPending.unread} 条（核心记忆共 ${auditPending.core} 条）。`
-                                    : `本角色将走【提炼式】：暂无待审校核心记忆（核心记忆共 ${auditPending.core} 条）。`}
-                            </p>
-                        ) : null}
                         {isReflectionModified && (
                             <button
                                 onClick={handleSaveReflectionPrompt}
