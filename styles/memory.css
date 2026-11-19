@@ -162,6 +162,9 @@
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
+  /* 覆盖 .mem-entry-toolbar 的 center：内容超宽时居中会把左端挤出容器，
+     而且那个溢出区滑不回来（flex 居中溢出的老问题），必须靠左起排 */
+  justify-content: flex-start;
   gap: 8px;
   width: 100%;
   min-width: 0;
@@ -180,9 +183,16 @@
   height: 0;
 }
 
-/* 按钮按自身宽度排列，不压缩、不换行文字 */
+/* 按钮按自身宽度排列，不压缩、不换行文字。
+   flex-shrink 默认是 1，按钮多了会被压成几十像素宽、文字竖着折行，
+   截图里那种一坨黑块就是这么来的，所以这里显式锁死宽度 */
 .mem-entry-toolbar.mem-toolbar-row > * {
   flex: 0 0 auto;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.mem-entry-toolbar.mem-toolbar-row > * > span {
   white-space: nowrap;
 }
 
