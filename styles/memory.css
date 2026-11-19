@@ -168,12 +168,18 @@
   gap: 8px;
   width: 100%;
   min-width: 0;
+  /* 高度必须自己锁死：一旦 overflow 不是 visible，这个元素作为 flex item
+     的自动最小高度就变成 0，而父级是 flex 列（可收缩），行会被压成几像素高，
+     按钮被 overflow-y: hidden 裁掉——只露半截就是这么来的。
+     66px = 按钮本身 40px + 上下 padding（14 + 12） */
+  flex: 0 0 auto;
+  min-height: 66px;
+  padding: 14px 2px 12px;
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-x: contain;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
-  padding-bottom: 2px;
 }
 
 /* Safari / 部分安卓 WebView 的滚动条隐藏 */
