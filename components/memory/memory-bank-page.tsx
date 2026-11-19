@@ -38,8 +38,6 @@ import {
     cleanLegacyMemoryEntry,
     runBatchCleanLegacyMemories,
     resplitMergedMemory,
-    isResplitChild,
-    trashAllResplitChildren,
     type CleanedManualMemoryDraft,
 } from "@/lib/memory-summarizer";
 import ReactMarkdown from "react-markdown";
@@ -413,9 +411,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const [batchResplitting, setBatchResplitting] = useState(false);
     const [batchResplitProgress, setBatchResplitProgress] = useState("");
     const [confirmBatchResplit, setConfirmBatchResplit] = useState<number | null>(null);
-    /** 一键清理拆分碎片：先确认，再整批移入「最近删除」 */
-    const [confirmClearResplit, setConfirmClearResplit] = useState<number | null>(null);
-    const [clearingResplit, setClearingResplit] = useState(false);
     const [cleaningManualText, setCleaningManualText] = useState(false);
     const [cleaningAllLegacy, setCleaningAllLegacy] = useState(false);
     const [cleanLegacyProgress, setCleanLegacyProgress] = useState("");
@@ -787,25 +782,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         } finally {
             setBatchResplitting(false);
             setBatchResplitProgress("");
-        }
-    };
-
-    /** 一键清理拆分碎片：把 isResplitChild 命中的条目整批移入「最近删除」 */
-    const handleClearResplitChildren = async () => {
-        if (!selectedCharId || clearingResplit) return;
-        setConfirmClearResplit(null);
-        setClearingResplit(true);
-        try {
-            const res = await trashAllResplitChildren(longTermEntries);
-            await loadDetailData(selectedCharId);
-            loadCharacterList();
-            showNotice(res.count > 0
-                ? `已把 ${res.count} 条拆分碎片移入「最近删除」，可随时恢复或彻底删除`
-                : "没有找到拆分产生的碎片");
-        } catch (err) {
-            showNotice("清理拆分碎片失败: " + String(err));
-        } finally {
-            setClearingResplit(false);
         }
     };
 
@@ -1920,10 +1896,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             ? entries.filter(e => isEntryMergeSuspect(e) && !isEntrySuperseded(e))
             : [];
         const mergeSuspectCount = mergeSuspectTargets.length;
-        // 拆分重总结留下的碎片条数：可一键整批收进「最近删除」
-        const resplitChildCount = type === "long_term"
-            ? entries.filter(isResplitChild).length
-            : 0;
 
         // Filter or rank entries when search query is active
         const trimmedQ = searchQuery.trim().toLowerCase();
@@ -1946,7 +1918,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             <>
                 {entries.length > 0 && (
                     <>
-                        <div className="mem-entry-toolbar" style={{ flexWrap: "wrap" }}>
+                        <div className="mem-entry-toolbar mem-toolbar-row">
                             <button
                                 className="mem-entry-add-btn"
                                 onClick={() => openCreateMemoryEditor(type)}
@@ -1993,17 +1965,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                 >
                                     <Zap size={14} strokeWidth={1.8} />
                                     <span>{embeddingAll ? "向量化中..." : `补全向量(${missingVectorCount})`}</span>
-                                </button>
-                            )}
-                            {type === "long_term" && resplitChildCount > 0 && (
-                                <button
-                                    className="mem-entry-clear-btn"
-                                    onClick={() => setConfirmClearResplit(resplitChildCount)}
-                                    disabled={clearingResplit}
-                                    title="把「拆分重总结」产生的碎片整批移入「最近删除」，可恢复；正常记忆不受影响"
-                                >
-                                    <Trash2 size={15} strokeWidth={1.8} />
-                                    <span>{clearingResplit ? "清理中..." : `清理拆分碎片(${resplitChildCount})`}</span>
                                 </button>
                             )}
                             <button
@@ -2548,7 +2509,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                     </div>
                 ) : (
                     <>
-                        <div className="mem-entry-toolbar" style={{ flexWrap: "wrap" }}>
+                        <div className="mem-entry-toolbar mem-toolbar-row">
                             {trashed.length > 0 && (
                                 <button
                                     className="mem-entry-add-btn"
@@ -2629,7 +2590,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                         />
                                     )}
                                     {boxes.length > 0 && (
-                                        <div className="mem-entry-toolbar" style={{ flexWrap: "wrap" }}>
+                                        <div className="mem-entry-toolbar mem-toolbar-row">
                                             <button
                                                 className="mem-entry-add-btn"
                                                 onClick={() => setBoxDialog({ title: "", importance: 8, keywordsText: "" })}
@@ -3360,19 +3321,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                             const targets = longTermEntries.filter(e => isEntryMergeSuspect(e) && !isEntrySuperseded(e));
                             void handleBatchResplit(targets);
                         }}
-                    />
-                )}
-
-                {/* 清理拆分碎片：二次确认（移入最近删除，可恢复） */}
-                {confirmClearResplit !== null && (
-                    <ConfirmDialog
-                        title={`清理 ${confirmClearResplit} 条拆分碎片？`}
-                        message="这些是「拆分重总结」产生的碎片条目，会整批移入「最近删除」（可恢复，不会直接删库）。正常记忆一条都不受影响。"
-                        icon={AlertCircle}
-                        confirmLabel="移入最近删除"
-                        cancelLabel="取消"
-                        onCancel={() => setConfirmClearResplit(null)}
-                        onConfirm={() => void handleClearResplitChildren()}
                     />
                 )}
 

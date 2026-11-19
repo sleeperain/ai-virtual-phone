@@ -152,3 +152,37 @@
   scrollbar-width: thin;
 }
 
+/* ══════════════════════════════════════════
+   列表顶栏下方的操作按钮行：单行横滑
+   按钮多时不再折成两三排挤压列表，改为一行左右滑动浏览；
+   滚动条隐藏，露出半个按钮即提示还能继续滑
+   ══════════════════════════════════════════ */
+
+.mem-entry-toolbar.mem-toolbar-row {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding-bottom: 2px;
+}
+
+/* Safari / 部分安卓 WebView 的滚动条隐藏 */
+.mem-entry-toolbar.mem-toolbar-row::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* 按钮按自身宽度排列，不压缩、不换行文字 */
+.mem-entry-toolbar.mem-toolbar-row > * {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
