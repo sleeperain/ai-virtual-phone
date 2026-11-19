@@ -41,20 +41,28 @@ export const ROAMING_ACTIVITY_LABELS: Record<RoamingActivityKind, string> = {
     moments: "发朋友圈",
 };
 
-export const ROAMING_DEFAULT_MAX_CONSECUTIVE = 5;
+export const ROAMING_DEFAULT_MAX_CONSECUTIVE = 2;
+export const ROAMING_MIN_INTERVAL_MINUTES = 10;
+export const ROAMING_DEFAULT_DAILY_CAP = 8;
 
 export type CharacterRoamingRule = {
     id: string;
     characterId: string;
     enabled: boolean;
-    /** 活动间隔（分钟），1 分钟 ~ 72 小时 */
+    /** 活动间隔（分钟），10 分钟 ~ 72 小时 */
     intervalMinutes: number;
     /** 允许的活动类型池 */
     activities: RoamingActivityKind[];
-    /** 未操作手机期间最多连续触发次数（用户回到/操作页面后清零） */
+    /** 挂机期间最多连续触发次数（仅当页面再次从前台切入后台时才重新计数） */
     maxConsecutive: number;
     /** 当前已连续触发次数 */
     consecutiveCount: number;
+    /** 每日硬上限（防止全天烧光额度） */
+    dailyCap: number;
+    /** 今日已触发次数 */
+    dailyCount: number;
+    /** 今日计数所属日期（YYYY-MM-DD） */
+    dailyDate?: string;
     /** 上次触发时间戳（毫秒） */
     lastFiredAt?: number;
     /** 上次执行的活动描述 */
@@ -73,6 +81,14 @@ function isValidActivity(value: unknown): value is RoamingActivityKind {
     return typeof value === "string" && (ALL_ROAMING_ACTIVITIES as string[]).includes(value);
 }
 
+export function getLocalDateKey(nowMs = Date.now()): string {
+    const d = new Date(nowMs);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+}
+
 function normalizeRule(value: unknown): CharacterRoamingRule | null {
     if (!value || typeof value !== "object") return null;
     const raw = value as Partial<CharacterRoamingRule>;
@@ -88,7 +104,7 @@ function normalizeRule(value: unknown): CharacterRoamingRule | null {
 
     const maxConsecutiveRaw = Number(raw.maxConsecutive);
     const maxConsecutive = Number.isFinite(maxConsecutiveRaw) && maxConsecutiveRaw >= 1
-        ? Math.min(50, Math.round(maxConsecutiveRaw))
+        ? Math.min(10, Math.round(maxConsecutiveRaw))
         : ROAMING_DEFAULT_MAX_CONSECUTIVE;
 
     const consecutiveRaw = Number(raw.consecutiveCount);
@@ -96,14 +112,29 @@ function normalizeRule(value: unknown): CharacterRoamingRule | null {
         ? Math.min(maxConsecutive, Math.round(consecutiveRaw))
         : 0;
 
+    const dailyCapRaw = Number(raw.dailyCap);
+    const dailyCap = Number.isFinite(dailyCapRaw) && dailyCapRaw >= 1
+        ? Math.min(30, Math.round(dailyCapRaw))
+        : ROAMING_DEFAULT_DAILY_CAP;
+
+    const todayKey = getLocalDateKey();
+    const sameDay = raw.dailyDate === todayKey;
+    const dailyRaw = Number(raw.dailyCount);
+    const dailyCount = sameDay && Number.isFinite(dailyRaw) && dailyRaw >= 0
+        ? Math.min(dailyCap, Math.round(dailyRaw))
+        : 0;
+
     return {
         id: raw.id.trim(),
         characterId: raw.characterId.trim(),
         enabled: raw.enabled !== false,
-        intervalMinutes: Math.min(72 * 60, Math.max(1, Math.round(intervalMinutes))),
+        intervalMinutes: Math.min(72 * 60, Math.max(ROAMING_MIN_INTERVAL_MINUTES, Math.round(intervalMinutes))),
         activities,
         maxConsecutive,
         consecutiveCount,
+        dailyCap,
+        dailyCount,
+        dailyDate: todayKey,
         lastFiredAt: typeof raw.lastFiredAt === "number" && Number.isFinite(raw.lastFiredAt) ? raw.lastFiredAt : undefined,
         lastSummary: typeof raw.lastSummary === "string" && raw.lastSummary.trim() ? raw.lastSummary.trim().slice(0, 160) : undefined,
         createdAt: typeof raw.createdAt === "number" && Number.isFinite(raw.createdAt) ? raw.createdAt : Date.now(),
@@ -163,9 +194,15 @@ export function markCharacterRoamingFired(
     const rules = loadCharacterRoamingRules();
     const target = rules.find(item => item.id === id);
     if (!target) return;
+    const todayKey = getLocalDateKey(firedAtMs);
+    if (target.dailyDate !== todayKey) {
+        target.dailyDate = todayKey;
+        target.dailyCount = 0;
+    }
     target.lastFiredAt = firedAtMs;
     if (!options?.manual) {
         target.consecutiveCount = Math.min(target.maxConsecutive, target.consecutiveCount + 1);
+        target.dailyCount = Math.min(target.dailyCap, target.dailyCount + 1);
     }
     if (summary) target.lastSummary = summary.slice(0, 160);
     saveCharacterRoamingRules(rules);

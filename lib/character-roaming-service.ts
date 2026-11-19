@@ -48,19 +48,23 @@ import type {
 } from "./xiaohongshu-types";
 import {
     appendRoamingTimelineEntry,
-    CHARACTER_ROAMING_UPDATED_EVENT,
+    getLocalDateKey,
     loadCharacterRoamingRules,
     markCharacterRoamingFired,
     resetAllCharacterRoamingCounts,
+    ROAMING_ACTIVITY_LABELS,
+    ROAMING_MIN_INTERVAL_MINUTES,
     type CharacterRoamingRule,
     type RoamingActivityKind,
 } from "./character-roaming-storage";
 
-const POLL_INTERVAL_MS = 15_000;
-const USER_ACTIVITY_RESET_THROTTLE_MS = 20_000;
+const POLL_INTERVAL_MS = 30_000;
+/** 前台无操作超过该时长才视为空闲挂机；正在操作页面时绝不跑后台活动 */
+const IDLE_REQUIRED_MS = 3 * 60_000;
+const USER_INTERACTION_THROTTLE_MS = 5_000;
 
 let stopInterval: (() => void) | null = null;
-let lastUserResetAt = 0;
+let lastUserInteractionAt = Date.now();
 const firingRuleIds = new Set<string>();
 
 function notifyActivity(title: string, detail: string, avatar?: string): void {
@@ -371,10 +375,14 @@ async function runAutonomousToolsActivity(character: Character): Promise<string 
         virtualSession,
         [taskMessage],
         {
-            appId: "custom_app:character_roaming",
-            appTags: ["roaming", "autonomous_tools"],
+            // 必须使用 "chat" 作为 appId，否则 getEnabledTools("custom_app:...") 会把自定义 APP 共享工具过滤掉！
+            // 通过携带 "roaming" / "followup" 标签阻止挂私聊离线推送兜底单
+            appId: "chat",
+            appTags: ["roaming", "autonomous_tools", "followup"],
             toolsAllowed: true,
             forceEnableTools: true,
+            // 严控单次后台活动的工具循环上限为 2 轮（展开/调用 + 收尾），绝不允许连调 5~6 轮烧光额度
+            maxToolRoundsOverride: 2,
             skipEmptyGenerateGuard: true,
             promptProfile: {
                 id: "roaming_plain",
@@ -384,9 +392,6 @@ async function runAutonomousToolsActivity(character: Character): Promise<string 
             },
         },
         {
-            onToolNotice: (notice) => {
-                if (notice.trim()) executedNotices.push(notice.trim());
-            },
             onToolExecution: (results) => {
                 for (const r of results) {
                     if (r.success) {
@@ -398,16 +403,13 @@ async function runAutonomousToolsActivity(character: Character): Promise<string 
     );
 
     const summaryText = flattenCompletionResult(completion).replace(/\s+/g, " ").trim();
-    if (executedNotices.length === 0 && !summaryText) return null;
+    // 只有真正成功执行了至少 1 个工具才算有效成果（不把报错或空话当成功吞掉）
+    if (executedNotices.length === 0) return null;
 
-    const timelineSummary = executedNotices.length > 0
-        ? `${character.name}在后台自主活动：${Array.from(new Set(executedNotices)).join("；")}${summaryText ? `（${summaryText.slice(0, 120)}）` : ""}`
-        : `${character.name}在后台自主活动：${summaryText.slice(0, 160)}`;
+    const timelineSummary = `${character.name}在后台自主活动：${Array.from(new Set(executedNotices)).join("；")}${summaryText ? `（${summaryText.slice(0, 120)}）` : ""}`;
 
     appendRoamingTimelineEntry(character.id, timelineSummary);
-    return executedNotices.length > 0
-        ? `自主执行了动作（${executedNotices[0].slice(0, 32)}）`
-        : `完成了一次后台自主活动`;
+    return `自主执行了动作（${executedNotices[0].slice(0, 32)}）`;
 }
 
 // ── 5. 发朋友圈 ──
@@ -462,50 +464,58 @@ export async function runCharacterRoamingRuleNow(rule: CharacterRoamingRule, opt
         return { ok: false, error: "当前勾选的活动均不满足条件（如未加入群聊或未启用工具）。" };
     }
 
-    // 洗牌依次尝试，若某一项返回空（比如小红书未解析出内容），自动回退尝试池中下一项
-    const shuffled = [...candidates].sort(() => Math.random() - 0.5);
+    // 每次触发只随机抽 1 项执行，绝不在失败/空返回时把池里剩余几项挨个调一遍 LLM 连环烧额度！
+    const picked = candidates[Math.floor(Math.random() * candidates.length)];
+    const pickedLabel = ROAMING_ACTIVITY_LABELS[picked] || picked;
     firingRuleIds.add(rule.id);
+    // 先行落盘占位：更新 lastFiredAt / 连跑计数 / 今日计数，杜绝重入或失败风暴
+    markCharacterRoamingFired(rule.id, Date.now(), `正在执行「${pickedLabel}」...`, { manual: options?.manual });
 
     try {
-        let lastError: unknown = null;
-        for (const kind of shuffled) {
-            try {
-                const summary = await executeSingleActivity(character, kind);
-                if (summary) {
-                    markCharacterRoamingFired(rule.id, Date.now(), summary, { manual: options?.manual });
-                    notifyActivity(character.name, summary, character.avatar);
-                    return { ok: true, summary };
-                }
-            } catch (err) {
-                lastError = err;
-                console.warn(`[CharacterRoaming] ${character.name} activity "${kind}" failed:`, err);
-            }
+        const summary = await executeSingleActivity(character, picked);
+        if (summary) {
+            markCharacterRoamingFired(rule.id, Date.now(), summary, { manual: true });
+            notifyActivity(character.name, summary, character.avatar);
+            return { ok: true, summary };
         }
-        if (!options?.manual) {
-            // 避免因配置错误每 15 秒疯狂重试，失败也推进一次时间戳
-            markCharacterRoamingFired(rule.id, Date.now(), "上次尝试未产出内容");
-        }
-        return {
-            ok: false,
-            error: lastError instanceof Error ? lastError.message : "本次活动未生成有效内容。",
-        };
+        const emptyMsg = `上次「${pickedLabel}」未解析出有效内容（已停止，不再重试其他项）`;
+        markCharacterRoamingFired(rule.id, Date.now(), emptyMsg, { manual: true });
+        return { ok: false, error: emptyMsg };
+    } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.warn(`[CharacterRoaming] ${character.name} activity "${picked}" failed:`, err);
+        markCharacterRoamingFired(rule.id, Date.now(), `「${pickedLabel}」失败：${errMsg.slice(0, 80)}`, { manual: true });
+        return { ok: false, error: errMsg };
     } finally {
         firingRuleIds.delete(rule.id);
     }
 }
 
+function isEligibleBackgroundOrIdle(now: number): boolean {
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return true;
+    }
+    return now - lastUserInteractionAt >= IDLE_REQUIRED_MS;
+}
+
 function pollCharacterRoaming(): void {
     if (typeof window === "undefined") return;
+    if (firingRuleIds.size > 0) return;
     const now = Date.now();
     if (isWithinPushQuietHours(now)) return;
+    // 用户正在前台使用手机时绝不触发后台活动
+    if (!isEligibleBackgroundOrIdle(now)) return;
 
+    const todayKey = getLocalDateKey(now);
     const rules = loadCharacterRoamingRules();
     for (const rule of rules) {
         if (!rule.enabled) continue;
         if (firingRuleIds.has(rule.id)) continue;
         if (rule.consecutiveCount >= rule.maxConsecutive) continue;
+        const todayUsed = rule.dailyDate === todayKey ? rule.dailyCount : 0;
+        if (todayUsed >= rule.dailyCap) continue;
 
-        const intervalMs = Math.max(1, rule.intervalMinutes) * 60_000;
+        const intervalMs = Math.max(ROAMING_MIN_INTERVAL_MINUTES, rule.intervalMinutes) * 60_000;
         const baseline = rule.lastFiredAt ?? rule.createdAt;
         if (now - baseline < intervalMs) continue;
 
@@ -517,24 +527,27 @@ function pollCharacterRoaming(): void {
 
 function handleUserInteraction(): void {
     const now = Date.now();
-    if (now - lastUserResetAt < USER_ACTIVITY_RESET_THROTTLE_MS) return;
-    lastUserResetAt = now;
-    resetAllCharacterRoamingCounts();
+    if (now - lastUserInteractionAt < USER_INTERACTION_THROTTLE_MS) return;
+    lastUserInteractionAt = now;
 }
 
 function handleVisibilityChange(): void {
-    if (typeof document === "undefined" || document.visibilityState !== "visible") return;
-    resetAllCharacterRoamingCounts();
-    pollCharacterRoaming();
+    if (typeof document === "undefined") return;
+    if (document.visibilityState === "hidden") {
+        // 只有从前台真正切入后台挂机时，才重置本轮挂机连续计数（不再每次点屏幕都清零导致无限跑）
+        resetAllCharacterRoamingCounts();
+    } else {
+        lastUserInteractionAt = Date.now();
+    }
 }
 
 export function startCharacterRoamingService(): void {
     if (typeof window === "undefined" || stopInterval) return;
+    lastUserInteractionAt = Date.now();
     stopInterval = bgSetInterval(pollCharacterRoaming, POLL_INTERVAL_MS);
     document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("pointerdown", handleUserInteraction, { passive: true });
     window.addEventListener("keydown", handleUserInteraction, { passive: true });
-    window.addEventListener(CHARACTER_ROAMING_UPDATED_EVENT, pollCharacterRoaming);
 }
 
 export function stopCharacterRoamingService(): void {
@@ -546,5 +559,4 @@ export function stopCharacterRoamingService(): void {
     document.removeEventListener("visibilitychange", handleVisibilityChange);
     window.removeEventListener("pointerdown", handleUserInteraction);
     window.removeEventListener("keydown", handleUserInteraction);
-    window.removeEventListener(CHARACTER_ROAMING_UPDATED_EVENT, pollCharacterRoaming);
 }

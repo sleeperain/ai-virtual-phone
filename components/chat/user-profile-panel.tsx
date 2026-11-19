@@ -38,8 +38,11 @@ import {
     ALL_ROAMING_ACTIVITIES,
     CHARACTER_ROAMING_UPDATED_EVENT,
     DEFAULT_ROAMING_ACTIVITIES,
+    getLocalDateKey,
     ROAMING_ACTIVITY_LABELS,
+    ROAMING_DEFAULT_DAILY_CAP,
     ROAMING_DEFAULT_MAX_CONSECUTIVE,
+    ROAMING_MIN_INTERVAL_MINUTES,
     loadCharacterRoamingRules,
     removeCharacterRoamingRule,
     toggleCharacterRoamingRule,
@@ -1277,9 +1280,10 @@ function OfflinePushSettingsPage({ onBack }: { onBack: () => void }) {
     const [tmBusy, setTmBusy] = useState(false);
 
     const [roamCharId, setRoamCharId] = useState("");
-    const [roamValue, setRoamValue] = useState("5");
+    const [roamValue, setRoamValue] = useState("30");
     const [roamUnit, setRoamUnit] = useState<"minute" | "hour">("minute");
     const [roamMaxConsecutive, setRoamMaxConsecutive] = useState(String(ROAMING_DEFAULT_MAX_CONSECUTIVE));
+    const [roamDailyCap, setRoamDailyCap] = useState(String(ROAMING_DEFAULT_DAILY_CAP));
     const [roamActivities, setRoamActivities] = useState<RoamingActivityKind[]>(() => [...DEFAULT_ROAMING_ACTIVITIES]);
     const [roamHint, setRoamHint] = useState<string | null>(null);
     const [roamTestingId, setRoamTestingId] = useState<string | null>(null);
@@ -1431,22 +1435,27 @@ function OfflinePushSettingsPage({ onBack }: { onBack: () => void }) {
         if (!roamCharId) { setRoamHint("请选择角色。"); return; }
         const amount = Number(roamValue);
         if (!Number.isFinite(amount) || amount <= 0) { setRoamHint("请填写有效的活动间隔。"); return; }
-        const totalMinutes = Math.max(1, Math.round(amount * (roamUnit === "hour" ? 60 : 1)));
-        if (totalMinutes > 72 * 60) { setRoamHint("活动间隔最长 72 小时。"); return; }
+        const rawMinutes = Math.round(amount * (roamUnit === "hour" ? 60 : 1));
+        if (rawMinutes < ROAMING_MIN_INTERVAL_MINUTES) { setRoamHint(`为保护 API 额度，活动间隔至少 ${ROAMING_MIN_INTERVAL_MINUTES} 分钟。`); return; }
+        if (rawMinutes > 72 * 60) { setRoamHint("活动间隔最长 72 小时。"); return; }
         if (roamActivities.length === 0) { setRoamHint("请至少勾选一项允许的活动。"); return; }
-        const maxConsecNum = Math.max(1, Math.min(50, Math.round(Number(roamMaxConsecutive) || ROAMING_DEFAULT_MAX_CONSECUTIVE)));
+        const maxConsecNum = Math.max(1, Math.min(10, Math.round(Number(roamMaxConsecutive) || ROAMING_DEFAULT_MAX_CONSECUTIVE)));
+        const dailyCapNum = Math.max(1, Math.min(30, Math.round(Number(roamDailyCap) || ROAMING_DEFAULT_DAILY_CAP)));
         const rule: CharacterRoamingRule = {
             id: `roam_${roamCharId}_${Date.now().toString(36)}`,
             characterId: roamCharId,
             enabled: true,
-            intervalMinutes: totalMinutes,
+            intervalMinutes: rawMinutes,
             activities: [...roamActivities],
             maxConsecutive: maxConsecNum,
             consecutiveCount: 0,
+            dailyCap: dailyCapNum,
+            dailyCount: 0,
+            dailyDate: getLocalDateKey(),
             createdAt: Date.now(),
         };
         upsertCharacterRoamingRule(rule);
-        setRoamHint(`已保存：每隔 ${amount}${roamUnit === "hour" ? "小时" : "分钟"} 自主活动一次（挂机上限 ${maxConsecNum} 次）。`);
+        setRoamHint(`已保存：每隔 ${amount}${roamUnit === "hour" ? "小时" : "分钟"} 自主活动一次（单次挂机上限 ${maxConsecNum} 次，每日上限 ${dailyCapNum} 次）。`);
         refreshTimedSchedules();
     };
 
@@ -1766,17 +1775,35 @@ function OfflinePushSettingsPage({ onBack }: { onBack: () => void }) {
                     <div className="menu-item">
                         <ProfileSettingsIcon icon={SlidersHorizontal} color={BINDING_ACCENTS.memory} />
                         <div className="menu-label-group">
-                            <span className="menu-label">挂机连续上限</span>
-                            <span className="menu-desc">未操作页面时最多连跑几次，点亮/操作后自动清零</span>
+                            <span className="menu-label">单次挂机上限</span>
+                            <span className="menu-desc">切入后台期间最多连跑几次（1~10 次）</span>
                         </div>
                         <div className="menu-right flex items-center gap-1 ts-13">
                             <input
                                 type="number"
                                 min={1}
-                                max={50}
+                                max={10}
                                 className="w-[48px] text-right border-none outline-none ts-13 text-[var(--c-text)] bg-transparent"
                                 value={roamMaxConsecutive}
                                 onChange={e => setRoamMaxConsecutive(e.target.value)}
+                            />
+                            <span className="ts-13 opacity-70">次</span>
+                        </div>
+                    </div>
+                    <div className="menu-item">
+                        <ProfileSettingsIcon icon={SlidersHorizontal} color={BINDING_ACCENTS.preset} />
+                        <div className="menu-label-group">
+                            <span className="menu-label">每日总次数上限</span>
+                            <span className="menu-desc">当天累计触发硬上限，防烧额度（1~30 次）</span>
+                        </div>
+                        <div className="menu-right flex items-center gap-1 ts-13">
+                            <input
+                                type="number"
+                                min={1}
+                                max={30}
+                                className="w-[48px] text-right border-none outline-none ts-13 text-[var(--c-text)] bg-transparent"
+                                value={roamDailyCap}
+                                onChange={e => setRoamDailyCap(e.target.value)}
                             />
                             <span className="ts-13 opacity-70">次</span>
                         </div>
@@ -1826,13 +1853,14 @@ function OfflinePushSettingsPage({ onBack }: { onBack: () => void }) {
                                 const minutes = rule.intervalMinutes % 60;
                                 const intervalLabel = `${hours ? `${hours}小时` : ""}${minutes ? `${minutes}分钟` : hours ? "" : "0分钟"}`;
                                 const actLabels = rule.activities.map(k => ROAMING_ACTIVITY_LABELS[k]).join(" / ");
+                                const todayUsed = rule.dailyDate === getLocalDateKey() ? rule.dailyCount : 0;
                                 const testing = roamTestingId === rule.id;
                                 return (
                                     <div key={rule.id} className="menu-item" style={{ alignItems: "stretch", flexDirection: "column", gap: 8 }}>
                                         <div className="flex items-center justify-between gap-2">
                                             <div className="menu-label-group" style={{ minWidth: 0, flex: 1 }}>
                                                 <span className="menu-label">
-                                                    {charName} · 每 {intervalLabel}（已连跑 {rule.consecutiveCount}/{rule.maxConsecutive}）
+                                                    {charName} · 每 {intervalLabel}（连跑 {rule.consecutiveCount}/{rule.maxConsecutive} · 今日 {todayUsed}/{rule.dailyCap}）
                                                 </span>
                                                 <span className="menu-desc" style={{ wordBreak: "break-word" }}>
                                                     场地：{actLabels}

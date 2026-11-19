@@ -366,6 +366,8 @@ type ChatPromptBuildOptions = {
     activateAllWorldBooks?: boolean;
     toolsAllowed?: boolean;
     forceEnableTools?: boolean;
+    /** 单次生成工具循环轮数上限覆盖（如后台自主活动限制轮数，防止空跑烧额度） */
+    maxToolRoundsOverride?: number;
     /** 带着明确任务的后台生成（如日历提醒）：不追加「空生成续写」提示——
      *  那句提示要求「只续写一句、不要开启新事件」，会把这次的任务指令压掉 */
     skipEmptyGenerateGuard?: boolean;
@@ -2265,7 +2267,9 @@ async function generateNativeChatCompletion(
     const actionContext = { characterId: session.contactId, sessionId: session.id, sourceEngine: "chat" as const, signal: options?.signal };
     const expandableSourceKeys = new Set(enabledTools.filter(tool => !isNativeSingleTool(tool)).map(nativeToolSourceKey));
 
-    const maxToolRounds = getMaxToolRounds();
+    const maxToolRounds = typeof options?.maxToolRoundsOverride === "number" && options.maxToolRoundsOverride >= 1
+        ? Math.min(getMaxToolRounds(), Math.round(options.maxToolRoundsOverride))
+        : getMaxToolRounds();
     let askedAfterProposal = false;
     const onlineThinkingEnabled = preset?.online_thinking_enabled === true;
     const onlineThinkingTag = preset?.online_thinking_tag?.trim() || "thinking";
@@ -2736,7 +2740,9 @@ async function generateChatCompletionCore(
     const meta = { characterName: character.name, userName: userIdentity?.name };
     const actionContext = { characterId: session.contactId, sessionId: session.id, sourceEngine: "chat" as const, signal: options?.signal };
 
-    const maxToolRounds = getMaxToolRounds();
+    const maxToolRounds = typeof options?.maxToolRoundsOverride === "number" && options.maxToolRoundsOverride >= 1
+        ? Math.min(getMaxToolRounds(), Math.round(options.maxToolRoundsOverride))
+        : getMaxToolRounds();
     let askedAfterProposal = false;
     const onlineThinking = {
         enabled: preset?.online_thinking_enabled === true,
