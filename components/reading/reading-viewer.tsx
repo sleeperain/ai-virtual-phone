@@ -5039,53 +5039,89 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                                     aria-expanded={menuOpen}
                                                     onClick={(e) => {
                                                         e.stopPropagation();
-                                                        setActiveAnnotationId(menuOpen ? null : note.id);
+                                                        if (menuOpen) { setNoteMenu(null); return; }
+                                                        const btn = e.currentTarget as HTMLElement;
+                                                        const btnRect = btn.getBoundingClientRect();
+                                                        const card = btn.closest(".reading-floating-note-card") as HTMLElement | null;
+                                                        const cardRect = card?.getBoundingClientRect();
+                                                        const MENU_H = 98;
+                                                        const topInCard = cardRect ? btnRect.bottom - cardRect.top + 4 : 4;
+                                                        const placeAbove = cardRect ? topInCard + MENU_H > cardRect.height : false;
+                                                        setNoteMenu({
+                                                            note,
+                                                            placeAbove,
+                                                            top: placeAbove
+                                                                ? Math.max(4, btnRect.top - (cardRect?.top ?? 0) - 4 - MENU_H)
+                                                                : topInCard,
+                                                            right: cardRect ? Math.max(6, cardRect.right - btnRect.right) : 8,
+                                                        });
+                                                        setActiveAnnotationId(null);
                                                     }}
                                                 >
-                                                    <MoreHorizontal size={14} strokeWidth={2} />
+                                                    <MoreHorizontal size={13} strokeWidth={2} />
                                                 </button>
                                             </div>
                                             <span className="reading-floating-note-time">{stamp}</span>
                                         </div>
                                     </div>
-                                    {menuOpen && (
-                                        <div className="ctx-menu reading-annotation-menu" onClick={(e) => e.stopPropagation()}>
-                                            <button
-                                                className="ctx-menu-btn"
-                                                onClick={() => {
-                                                    setEditingAnnotation(note);
-                                                    setEditingText(note.content);
-                                                    setActiveAnnotationId(null);
-                                                    setFloatingNote(null);
-                                                }}
-                                            >
-                                                编辑
-                                            </button>
-                                            <button
-                                                className="ctx-menu-btn"
-                                                onClick={() => {
-                                                    copyToClipboard(note.content);
-                                                    setActiveAnnotationId(null);
-                                                }}
-                                            >
-                                                复制
-                                            </button>
-                                            <button
-                                                className="ctx-menu-btn ctx-menu-btn-danger"
-                                                onClick={() => {
-                                                    void handleDeleteReadingAnnotation(note.id);
-                                                    setFloatingNote(null);
-                                                }}
-                                            >
-                                                删除
-                                            </button>
-                                        </div>
-                                    )}
                                 </div>
                             </div>
                         );
                     })}
                 </div>
+                {noteMenu && (
+                    <div
+                        className="reading-note-menu"
+                        role="menu"
+                        aria-label="批注操作"
+                        style={{ top: noteMenu.top, right: noteMenu.right }}
+                        onClick={(e) => e.stopPropagation()}
+                        onPointerDown={(e) => e.stopPropagation()}
+                    >
+                        <button
+                            type="button"
+                            role="menuitem"
+                            className="reading-note-menu-item"
+                            onClick={() => {
+                                const target = noteMenu.note;
+                                setEditingAnnotation(target);
+                                setEditingText(target.content);
+                                closeFloatingNote();
+                            }}
+                        >
+                            <PenLine size={13} strokeWidth={1.8} />
+                            <span>修改批注</span>
+                        </button>
+                        <button
+                            type="button"
+                            role="menuitem"
+                            className="reading-note-menu-item"
+                            onClick={() => {
+                                copyToClipboard(noteMenu.note.content);
+                                setNoteMenu(null);
+                            }}
+                        >
+                            <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                            </svg>
+                            <span>复制</span>
+                        </button>
+                        <button
+                            type="button"
+                            role="menuitem"
+                            className="reading-note-menu-item reading-note-menu-item--danger"
+                            onClick={() => {
+                                const target = noteMenu.note;
+                                closeFloatingNote();
+                                void handleDeleteReadingAnnotation(target.id);
+                            }}
+                        >
+                            <Trash2 size={13} strokeWidth={1.8} />
+                            <span>删除</span>
+                        </button>
+                    </div>
+                )}
                 </div>
             )}
             {activeParagraphCommentModal && (() => {
