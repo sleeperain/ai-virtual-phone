@@ -358,30 +358,39 @@ export default function ReadingApp({ onClose }: Props) {
         // 悬浮批注卡：点🪶弹出，盖在正文上方，不参与排版。
         // 位置由阅读器算好写成内联 top/left，这里只管长相。
         [
+            /* 和正文同宽：左右各让出 16px（正文那层 px-4），居中摆放。
+               位置不能靠 translateX(-50%) + 锚点像素：手机壳整体 scale 过，
+               rect 拿到的是缩放后的尺寸，会和卡片自身布局宽度对不上。
+               卡片本体也绝对不能带 overflow —— 三角是从卡片外沿探出去的，
+               一裁就看不见了（第一版就是这么没影的），滚动交给内层。 */
             ".reading-floating-note-card {",
             "  position: absolute;",
             "  z-index: 60;",
             "  box-sizing: border-box;",
-            "  width: max-content;",
-            "  min-width: 200px;",
-            "  max-width: min(300px, calc(100vw - 56px));",
-            "  max-height: 46vh;",
-            "  overflow-y: auto;",
-            "  padding: 12px 14px;",
+            "  left: 16px;",
+            "  right: 16px;",
+            "  margin: 0 auto;",
             "  border-radius: 12px;",
             "  background: #ffffff;",
             "  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.14), 0 1px 3px rgba(0, 0, 0, 0.08);",
-            "  transform: translateX(-50%);",
+            "}",
+            ".reading-floating-note-scroll {",
+            "  max-height: 46vh;",
+            "  overflow-y: auto;",
+            "  padding: 12px 14px;",
+            "  border-radius: inherit;",
+            "  overscroll-behavior: contain;",
             "}",
             ".reading-floating-note-card--above {",
-            "  transform: translateX(-50%) translateY(-100%);",
+            "  transform: translateY(-100%);",
             "}",
             /* 贴边三角：指向那枚羽毛。上方的卡尖朝下，下方的卡尖朝上 */
             ".reading-floating-note-card::before,",
             ".reading-floating-note-card::after {",
             '  content: "";',
             "  position: absolute;",
-            "  left: 50%;",
+            /* 三角横向跟着那枚羽毛走（--reading-note-arrow 由阅读器按羽毛位置写进来） */
+            "  left: var(--reading-note-arrow, 50%);",
             "  width: 0;",
             "  height: 0;",
             "  pointer-events: none;",
@@ -494,13 +503,19 @@ export default function ReadingApp({ onClose }: Props) {
             "  color: rgba(0, 0, 0, 0.38);",
             "  font-variant-numeric: tabular-nums;",
             "}",
-            /* 长按 / ⋯ 弹出的编辑复制删除，贴在卡片下沿外侧 */
+            /* 长按 / ⋯ 弹出的编辑复制删除：就地展开在这条批注下面。
+               不能绝对定位到卡片外面——卡片外面不在可见区域里，第一版放外面
+               就等于「长按了但什么都没出现」。 */
+            ".reading-floating-note-item {",
+            "  position: relative;",
+            "}",
             ".reading-floating-note-item .reading-annotation-menu {",
-            "  position: absolute;",
-            "  right: 0;",
-            "  bottom: -6px;",
-            "  transform: translateY(100%);",
-            "  z-index: 70;",
+            "  position: static;",
+            "  margin-top: 8px;",
+            "  width: 100%;",
+            "  box-sizing: border-box;",
+            "  transform: none;",
+            "  animation: none;",
             "}",
         ].join("\n"),
     ].filter(Boolean).join("\n");

@@ -537,7 +537,10 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     const [floatingNote, setFloatingNote] = useState<{
         notes: ReadingAnnotation[];
         anchorTop: number;
-        anchorLeft: number;
+        /** 三角在卡片里的横向位置，用百分比表示（0-100）。
+         *  用百分比而不是像素：手机壳整体 scale 过，getBoundingClientRect
+         *  拿到的是缩放后的尺寸，像素值会和卡片自身的布局宽度对不上。 */
+        arrowPercent: number;
         anchorHeight: number;
         placeAbove: boolean;
     } | null>(null);
@@ -1890,11 +1893,16 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                         .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
                     // 下方空间不够放卡片（估 220px）就翻到上方
                     const placeAbove = rect.bottom + 220 > window.innerHeight && rect.top > 240;
+                    // 卡片和正文同宽（左右各留 16px），居中摆放；三角按羽毛的相对位置
+                    // 横向偏移，并夹住左右各 18px，免得尖角跑到圆角外面去。
+                    const featherCenter = rect.left - surfaceRect.left + rect.width / 2;
+                    const ratio = surfaceRect.width > 0 ? featherCenter / surfaceRect.width : 0.5;
+                    const arrowPercent = Math.min(92, Math.max(8, ratio * 100));
                     setActiveAnnotationId(null);
                     setFloatingNote({
                         notes: group.length > 0 ? group : [note],
                         anchorTop: rect.top - surfaceRect.top,
-                        anchorLeft: rect.left - surfaceRect.left + rect.width / 2,
+                        arrowPercent,
                         anchorHeight: rect.height,
                         placeAbove,
                     });
@@ -4979,11 +4987,13 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                         top: floatingNote.placeAbove
                             ? floatingNote.anchorTop - 8
                             : floatingNote.anchorTop + floatingNote.anchorHeight + 8,
-                        left: floatingNote.anchorLeft,
-                    }}
+                        // 三角横向位置交给 CSS 变量，卡片自身靠 left/right + margin:auto 居中
+                        ["--reading-note-arrow" as "--reading-note-arrow"]: `${floatingNote.arrowPercent}%`,
+                    } as CSSProperties}
                     onClick={(e) => e.stopPropagation()}
                     onPointerDown={(e) => e.stopPropagation()}
                 >
+                <div className="reading-floating-note-scroll">
                     {floatingNote.notes.map((note, index) => {
                         const isUser = note.authorType === "user";
                         const displayName = (isUser ? userDisplayName : note.characterName) || "TA";
@@ -5084,6 +5094,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                             </div>
                         );
                     })}
+                </div>
                 </div>
             )}
             {activeParagraphCommentModal && (() => {
