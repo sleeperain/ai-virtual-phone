@@ -872,144 +872,6 @@ export function ChatSettingsPanel({
     const isDateOnlyMode = Boolean(searchDateRange && !searchQuery.trim());
     const displayedSearchMessages = searchMode ? searchResults : searchHistoryMessages;
 
-    function HighlightSpan({ text, term }: { text: string; term: string }) {
-        if (!term) return <>{text}</>;
-        const safeTerm = term.replace(/[.*+?^${}()|[\]\\]/g, "\\    function HighlightSpan({ text, term }: { text: string; term: string }) {
-        if (!term) return <>{text}</>;
-        const safeTerm = term.replace(/[.*+?^${}()|[\]\\]/g, '\\    const searchMode = searchQuery.trim().length > 0 || Boolean(searchDateRange);
-    const isDateOnlyMode = Boolean(searchDateRange && !searchQuery.trim());
-    const displayedSearchMessages = searchMode ? searchResults : searchHistoryMessages;
-
-    const renderSearchMessage = (msg: ChatMessage, index: number) => {");
-        const parts = text.split(new RegExp(`(${safeTerm})`, "gi"));
-        return (
-            <>
-                {parts.map((part, i) =>
-                    part.toLowerCase() === term.toLowerCase()
-                        ? <span key={i} className="chat-search-highlight">{part}</span>
-                        : <span key={i}>{part}</span>
-                )}
-            </>
-        );
-    }
-
-    const renderSearchMessage = (msg: ChatMessage, index: number) => {
-        const resultRole = getSearchResultRole(msg);
-        const isSystemMessage = resultRole === "system";
-        const senderChar = session.isGroup && msg.senderCharacterId
-            ? characters.find(c => c.id === msg.senderCharacterId) || character
-            : character;
-
-        const senderName = msg.role === "user"
-            ? (userIdentity?.name || "我")
-            : (session.isGroup ? (msg.senderName || senderChar?.name || characterName) : characterName);
-
-        const prevMsg = index > 0 ? displayedSearchMessages[index - 1] : null;
-        const isSameDaySameSender = Boolean(
-            !isSystemMessage
-            && prevMsg
-            && getSearchResultRole(prevMsg) !== "system"
-            && getSearchSenderKey(prevMsg, session) === getSearchSenderKey(msg, session)
-            && getSearchMessageDayKey(prevMsg.createdAt) !== ""
-            && getSearchMessageDayKey(prevMsg.createdAt) === getSearchMessageDayKey(msg.createdAt)
-        );
-
-        const avatarKey = msg.role === "user" ? "self" : (msg.senderCharacterId || session.contactId);
-        const avatarUrl = avatarOverrides[avatarKey]
-            || (msg.role === "user" ? userIdentity?.avatarUrl : senderChar?.avatar);
-
-        const timeLabel = formatSearchMessageTime(msg.createdAt);
-
-        if (isSystemMessage) {
-            const sysText = msg.mediaType === "poke"
-                ? getChatMessagePreview(msg)
-                : getSearchResultText(msg);
-            return (
-                <div
-                    key={msg.id}
-                    role="button"
-                    tabIndex={0}
-                    className="chat-search-history-item chat-search-history-item-system"
-                    onClick={() => jumpToSearchMessage(msg.id)}
-                    onKeyDown={e => {
-                        if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            jumpToSearchMessage(msg.id);
-                        }
-                    }}
-                >
-                    <div className="chat-search-history-avatar chat-search-history-avatar-placeholder" aria-hidden="true" />
-                    <div className="chat-search-history-main">
-                        <div className="chat-search-history-meta">
-                            <span className="chat-search-history-name">系统消息</span>
-                            <span className="chat-search-history-time">{timeLabel}</span>
-                        </div>
-                        <div className="chat-search-history-body chat-search-history-body-system">
-                            {sysText}
-                        </div>
-                    </div>
-                </div>
-            );
-        }
-
-        return (
-            <div
-                key={msg.id}
-                role="button"
-                tabIndex={0}
-                className="chat-search-history-item"
-                data-msg-id={msg.id}
-                onClick={() => jumpToSearchMessage(msg.id)}
-                onKeyDown={e => {
-                    if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        jumpToSearchMessage(msg.id);
-                    }
-                }}
-            >
-                <div
-                    className={`chat-search-history-avatar ${isSameDaySameSender ? "chat-search-history-avatar-placeholder" : ""}`}
-                    aria-hidden={isSameDaySameSender ? "true" : undefined}
-                >
-                    {!isSameDaySameSender && (
-                        avatarUrl ? (
-                            <img src={avatarUrl} alt="" />
-                        ) : (
-                            <ChatFallbackAvatar />
-                        )
-                    )}
-                </div>
-                <div className="chat-search-history-main">
-                    <div className="chat-search-history-meta">
-                        <span className="chat-search-history-name">{senderName}</span>
-                        <span className="chat-search-history-time">{timeLabel}</span>
-                    </div>
-                    <div className="chat-search-history-body">
-                        <MessageBubble
-                            msg={msg}
-                            charName={senderChar?.name}
-                            userName={userIdentity?.name || "你"}
-                            groupSize={session.isGroup ? (session.participantIds?.length || 0) + (session.isSpectator ? 0 : 1) : undefined}
-                            characterId={msg.senderCharacterId || session.contactId}
-                            defaultTranslationExpanded={session.collapseBilingualTranslation !== false ? false : true}
-                        />
-                    </div>
-                </div>
-            </div>
-        );
-    };');
-        const parts = text.split(new RegExp(`(${safeTerm})`, 'gi'));
-        return (
-            <>
-                {parts.map((part, i) =>
-                    part.toLowerCase() === term.toLowerCase()
-                        ? <span key={i} className="chat-search-highlight">{part}</span>
-                        : <span key={i}>{part}</span>
-                )}
-            </>
-        );
-    }
-
     const renderSearchMessage = (msg: ChatMessage, index: number) => {
         const resultRole = getSearchResultRole(msg);
         const isSystemMessage = resultRole === "system";
@@ -1038,6 +900,23 @@ export function ChatSettingsPanel({
         const timeLabel = formatSearchMessageTime(msg.createdAt);
         const highlightTerm = searchQuery.trim();
 
+        const highlight = (text: string): React.ReactNode => {
+            if (!highlightTerm) return text;
+            const termLower = highlightTerm.toLowerCase();
+            const idx = text.toLowerCase().indexOf(termLower);
+            if (idx === -1) return text;
+            const before = text.slice(0, idx);
+            const match = text.slice(idx, idx + highlightTerm.length);
+            const after = text.slice(idx + highlightTerm.length);
+            return (
+                <>
+                    {before}
+                    <span className="chat-search-highlight">{match}</span>
+                    {highlight(after)}
+                </>
+            );
+        };
+
         if (isSystemMessage) {
             const sysText = msg.mediaType === "poke"
                 ? getChatMessagePreview(msg)
@@ -1063,7 +942,7 @@ export function ChatSettingsPanel({
                             <span className="chat-search-history-time">{timeLabel}</span>
                         </div>
                         <div className="chat-search-history-body chat-search-history-body-system">
-                            {highlightTerm ? <HighlightSpan text={sysText} term={highlightTerm} /> : sysText}
+                            {highlightTerm ? highlight(sysText) : sysText}
                         </div>
                     </div>
                 </div>
@@ -1109,7 +988,7 @@ export function ChatSettingsPanel({
                                     <div className="chat-search-history-quote-preview">{msg.mediaData.quotePreview}</div>
                                 )}
                                 {highlightTerm
-                                    ? <HighlightSpan text={msg.content} term={highlightTerm} />
+                                    ? highlight(msg.content)
                                     : msg.content}
                             </>
                         ) : (
