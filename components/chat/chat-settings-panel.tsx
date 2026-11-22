@@ -185,7 +185,8 @@ import {
 import { ChatFallbackAvatar } from "./chat-fallback-avatar";
 import { NightSideTabs, useNightDraft } from "@/components/ui/night-side-tabs";
 import { NIGHT_SET_ID, defaultEditSet, getNightBinding, lookSetName, nightSlotKeys, setNightBinding, useNightRevision } from "@/lib/night-mode";
-import { MessageBubble, isStandaloneHtmlPreviewContent } from "./message-bubble";
+import { MessageBubble } from "./message-bubble";
+import { useChatAvatarOverrides } from "./use-chat-avatar-overrides";
 import { ScreenEffectSettingsModal } from "./screen-effect-settings-modal";
 
 type ChatSettingsPanelProps = {
@@ -289,6 +290,54 @@ function getSearchHaystack(msg: ChatMessage): string {
         clipSearchText(msg.mediaData?.giftName),
         clipSearchText(msg.senderName),
     ].filter(Boolean).join("\n");
+}
+
+const SEARCH_WEEKDAY_NAMES = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
+
+function padSearchTimeTwo(n: number): string {
+    return n < 10 ? `0${n}` : `${n}`;
+}
+
+function getSearchMessageDayKey(dateStr: string): string {
+    const d = new Date(dateStr);
+    if (Number.isNaN(d.getTime())) return "";
+    return `${d.getFullYear()}-${padSearchTimeTwo(d.getMonth() + 1)}-${padSearchTimeTwo(d.getDate())}`;
+}
+
+function formatSearchMessageTime(dateStr: string): string {
+    const date = new Date(dateStr);
+    if (Number.isNaN(date.getTime())) return "";
+
+    const now = new Date();
+    const hhmm = `${padSearchTimeTwo(date.getHours())}:${padSearchTimeTwo(date.getMinutes())}`;
+
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const msgDayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+    const dayDiff = Math.round((todayStart - msgDayStart) / 86400000);
+
+    if (dayDiff <= 0) {
+        return hhmm;
+    }
+    if (dayDiff === 1) {
+        return `昨天 ${hhmm}`;
+    }
+    if (dayDiff >= 2 && dayDiff <= 7) {
+        return `${SEARCH_WEEKDAY_NAMES[date.getDay()]} ${hhmm}`;
+    }
+
+    const mm = padSearchTimeTwo(date.getMonth() + 1);
+    const dd = padSearchTimeTwo(date.getDate());
+    return `${mm}/${dd} ${hhmm}`;
+}
+
+function getSearchSenderKey(msg: ChatMessage, session: ChatSession): string {
+    const role = getSearchResultRole(msg);
+    if (role === "system") return "__system__";
+    if (role === "user") return "self";
+    if (session.isGroup) {
+        return msg.senderCharacterId || `name:${msg.senderName || "assistant"}`;
+    }
+    return session.contactId || "assistant";
 }
 
 function ChatInfoIcon({ icon: Icon, color }: { icon: LucideIcon; color: string }) {
@@ -759,6 +808,8 @@ export function ChatSettingsPanel({
         }
     };
 
+    const avatarOverrides = useChatAvatarOverrides(session.avatarOverrides);
+
     const jumpToSearchMessage = (messageId: string) => {
         if (onJumpToMessage) {
             onJumpToMessage(messageId);
@@ -767,109 +818,114 @@ export function ChatSettingsPanel({
         onClose();
     };
 
-    const renderSearchMessage = (msg: ChatMessage) => {
+    const searchMode = submittedSearchQuery.trim().length > 0;
+    const displayedSearchMessages = searchMode ? searchResults : searchHistoryMessages;
+
+    const renderSearchMessage = (msg: ChatMessage, index: number) => {
         const resultRole = getSearchResultRole(msg);
+        const isSystemMessage = resultRole === "system";
         const senderChar = session.isGroup && msg.senderCharacterId
             ? characters.find(c => c.id === msg.senderCharacterId) || character
             : character;
+
         const senderName = msg.role === "user"
-            ? "我"
+            ? (userIdentity?.name || "我")
             : (session.isGroup ? (msg.senderName || senderChar?.name || characterName) : characterName);
-        const isSystemMessage = resultRole === "system";
-        const isStandaloneHtmlPreview = !msg.mediaType && isStandaloneHtmlPreviewContent(msg.content);
-        const isMediaBubble = (msg.mediaType && SEARCH_MEDIA_BUBBLE_TYPES.has(msg.mediaType)) || isStandaloneHtmlPreview;
-        const bubbleRole = msg.role === "user" ? "user" : "assistant";
+
+        const prevMsg = index > 0 ? displayedSearchMessages[index - 1] : null;
+        const isSameDaySameSender = Boolean(
+            !isSystemMessage
+            && prevMsg
+            && getSearchResultRole(prevMsg) !== "system"
+            && getSearchSenderKey(prevMsg, session) === getSearchSenderKey(msg, session)
+            && getSearchMessageDayKey(prevMsg.createdAt) !== ""
+            && getSearchMessageDayKey(prevMsg.createdAt) === getSearchMessageDayKey(msg.createdAt)
+        );
+
+        const avatarKey = msg.role === "user" ? "self" : (msg.senderCharacterId || session.contactId);
+        const avatarUrl = avatarOverrides[avatarKey]
+            || (msg.role === "user" ? userIdentity?.avatarUrl : senderChar?.avatar);
+
+        const timeLabel = formatSearchMessageTime(msg.createdAt);
+
+        if (isSystemMessage) {
+            const sysText = msg.mediaType === "poke"
+                ? getChatMessagePreview(msg)
+                : getSearchResultText(msg);
+            return (
+                <div
+                    key={msg.id}
+                    role="button"
+                    tabIndex={0}
+                    className="chat-search-history-item chat-search-history-item-system"
+                    onClick={() => jumpToSearchMessage(msg.id)}
+                    onKeyDown={e => {
+                        if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            jumpToSearchMessage(msg.id);
+                        }
+                    }}
+                >
+                    <div className="chat-search-history-avatar chat-search-history-avatar-placeholder" aria-hidden="true" />
+                    <div className="chat-search-history-main">
+                        <div className="chat-search-history-meta">
+                            <span className="chat-search-history-name">系统消息</span>
+                            <span className="chat-search-history-time">{timeLabel}</span>
+                        </div>
+                        <div className="chat-search-history-body chat-search-history-body-system">
+                            {sysText}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
 
         return (
-            <div key={msg.id} className="flex flex-col gap-2">
-                <div className="flex justify-center">
-                    <span className="chat-sys-msg py-[2px] px-2 rounded select-none">
-                        {new Date(msg.createdAt).toLocaleString(undefined, { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                    </span>
+            <div
+                key={msg.id}
+                role="button"
+                tabIndex={0}
+                className="chat-search-history-item"
+                data-msg-id={msg.id}
+                onClick={() => jumpToSearchMessage(msg.id)}
+                onKeyDown={e => {
+                    if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        jumpToSearchMessage(msg.id);
+                    }
+                }}
+            >
+                <div
+                    className={`chat-search-history-avatar ${isSameDaySameSender ? "chat-search-history-avatar-placeholder" : ""}`}
+                    aria-hidden={isSameDaySameSender ? "true" : undefined}
+                >
+                    {!isSameDaySameSender && (
+                        avatarUrl ? (
+                            <img src={avatarUrl} alt="" />
+                        ) : (
+                            <ChatFallbackAvatar />
+                        )
+                    )}
                 </div>
-                {isSystemMessage ? (
-                    <div className="chat-msg-wrapper" data-role="system">
-                        <div
-                            role="button"
-                            tabIndex={0}
-                            className="chat-sys-msg relative cursor-pointer"
-                            onClick={() => jumpToSearchMessage(msg.id)}
-                            onKeyDown={e => {
-                                if (e.key === "Enter" || e.key === " ") {
-                                    e.preventDefault();
-                                    jumpToSearchMessage(msg.id);
-                                }
-                            }}
-                        >
-                            {msg.mediaType === "poke"
-                                ? <MessageBubble msg={msg} charName={senderChar?.name} userName={userIdentity?.name || "你"} characterId={msg.senderCharacterId || session.contactId} />
-                                : getSearchResultText(msg)}
-                        </div>
+                <div className="chat-search-history-main">
+                    <div className="chat-search-history-meta">
+                        <span className="chat-search-history-name">{senderName}</span>
+                        <span className="chat-search-history-time">{timeLabel}</span>
                     </div>
-                ) : (
-                    <div className="chat-msg-wrapper" data-role={resultRole}>
-                        {resultRole === "assistant" && (
-                            <div className="chat-msg-avatar w-[40px] h-[40px] rounded-[20px] bg-[var(--c-page-body-bg)] shrink-0 flex items-center justify-center overflow-hidden">
-                                {senderChar?.avatar ? (
-                                    <img src={senderChar.avatar} className="w-full h-full object-cover" alt="" />
-                                ) : (
-                                    <ChatFallbackAvatar />
-                                )}
-                            </div>
-                        )}
-                        <div className={`chat-msg-content-wrap flex flex-col min-w-0 max-w-[70%] ${isStandaloneHtmlPreview ? "chat-msg-content-wrap-html" : ""}`}>
-                            {session.isGroup && msg.role !== "user" && (
-                                <span className="chat-group-sender-name">
-                                    {senderName}
-                                    {msg.senderCharacterId && (session.participantIds || []).includes(msg.senderCharacterId) && (() => {
-                                        const role = getGroupRole(session, msg.senderCharacterId);
-                                        if (role === "owner") return <span className="chat-role-badge chat-role-badge-owner">群主</span>;
-                                        if (role === "admin") return <span className="chat-role-badge chat-role-badge-admin">管理员</span>;
-                                        return null;
-                                    })()}
-                                </span>
-                            )}
-                            <div
-                                role="button"
-                                tabIndex={0}
-                                onClick={() => jumpToSearchMessage(msg.id)}
-                                onKeyDown={e => {
-                                    if (e.key === "Enter" || e.key === " ") {
-                                        e.preventDefault();
-                                        jumpToSearchMessage(msg.id);
-                                    }
-                                }}
-                                className={`chat-bubble-role-${bubbleRole} ${isMediaBubble ? "chat-bubble-media" : ""} ${isStandaloneHtmlPreview ? "chat-bubble-html-preview" : ""} ${msg.mediaType === "music_share" ? "chat-bubble-music-share" : ""} ${msg.mediaType === "gift" || msg.mediaType === "image" || isStandaloneHtmlPreview ? "rounded-none" : "rounded-md"} break-words relative cursor-pointer select-none`}
-                                data-ui={bubbleRole === "user" ? "bubble-user" : "bubble-bot"}
-                                data-msg-id={msg.id}
-                            >
-                                <MessageBubble
-                                    msg={msg}
-                                    charName={senderChar?.name}
-                                    userName={userIdentity?.name || "你"}
-                                    groupSize={session.isGroup ? (session.participantIds?.length || 0) + (session.isSpectator ? 0 : 1) : undefined}
-                                    characterId={msg.senderCharacterId || session.contactId}
-                                    defaultTranslationExpanded={session.collapseBilingualTranslation !== false ? false : true}
-                                />
-                            </div>
-                        </div>
-                        {resultRole === "user" && (
-                            <div className="chat-msg-avatar w-[40px] h-[40px] rounded-[20px] bg-[var(--c-page-body-bg)] shrink-0 flex items-center justify-center overflow-hidden">
-                                {userIdentity?.avatarUrl ? (
-                                    <img src={userIdentity.avatarUrl} alt="Me" className="w-full h-full object-cover rounded-[20px]" />
-                                ) : (
-                                    <ChatFallbackAvatar />
-                                )}
-                            </div>
-                        )}
+                    <div className="chat-search-history-body">
+                        <MessageBubble
+                            msg={msg}
+                            charName={senderChar?.name}
+                            userName={userIdentity?.name || "你"}
+                            groupSize={session.isGroup ? (session.participantIds?.length || 0) + (session.isSpectator ? 0 : 1) : undefined}
+                            characterId={msg.senderCharacterId || session.contactId}
+                            defaultTranslationExpanded={session.collapseBilingualTranslation !== false ? false : true}
+                        />
                     </div>
-                )}
+                </div>
             </div>
         );
     };
-
-    const searchMode = submittedSearchQuery.trim().length > 0;
-    const displayedSearchMessages = searchMode ? searchResults : searchHistoryMessages;
 
     return (
         <PageShell title="聊天信息" onBack={onClose} className="absolute inset-0 z-[100]">
@@ -1734,7 +1790,7 @@ export function ChatSettingsPanel({
                                 <Search size={20} strokeWidth={2.1} />
                             </button>
                         </div>
-                        <div className="flex flex-col gap-4 px-4 pb-4">
+                        <div className="px-4 pb-4">
                             {!searchMode && searchHistoryMessages.length === 0 && (
                                 <div className="ui-empty">
                                     <span className="menu-desc">暂无聊天记录</span>
@@ -1750,11 +1806,15 @@ export function ChatSettingsPanel({
                                     <span className="menu-desc">无相关聊天记录</span>
                                 </div>
                             )}
-                            {displayedSearchMessages.map(renderSearchMessage)}
+                            {displayedSearchMessages.length > 0 && (
+                                <div className="chat-search-history-list">
+                                    {displayedSearchMessages.map((msg, idx) => renderSearchMessage(msg, idx))}
+                                </div>
+                            )}
                             {!searchMode && searchHasMore && (
                                 <button
                                     type="button"
-                                    className="ui-btn ui-btn-ghost ui-btn-bordered-ghost w-full"
+                                    className="ui-btn ui-btn-ghost ui-btn-bordered-ghost w-full mt-3"
                                     onClick={loadMoreSearchHistory}
                                 >
                                     查看更多消息
