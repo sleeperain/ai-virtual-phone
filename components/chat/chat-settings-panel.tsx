@@ -874,9 +874,24 @@ export function ChatSettingsPanel({
 
     function HighlightSpan({ text, term }: { text: string; term: string }) {
         if (!term) return <>{text}</>;
+        const safeTerm = term.replace(/[.*+?^${}()|[\]\\]/g, "\\    function HighlightSpan({ text, term }: { text: string; term: string }) {
+        if (!term) return <>{text}</>;
         const safeTerm = term.replace(/[.*+?^${}()|[\]\\]/g, '\\    const searchMode = searchQuery.trim().length > 0 || Boolean(searchDateRange);
     const isDateOnlyMode = Boolean(searchDateRange && !searchQuery.trim());
     const displayedSearchMessages = searchMode ? searchResults : searchHistoryMessages;
+
+    const renderSearchMessage = (msg: ChatMessage, index: number) => {");
+        const parts = text.split(new RegExp(`(${safeTerm})`, "gi"));
+        return (
+            <>
+                {parts.map((part, i) =>
+                    part.toLowerCase() === term.toLowerCase()
+                        ? <span key={i} className="chat-search-highlight">{part}</span>
+                        : <span key={i}>{part}</span>
+                )}
+            </>
+        );
+    }
 
     const renderSearchMessage = (msg: ChatMessage, index: number) => {
         const resultRole = getSearchResultRole(msg);
