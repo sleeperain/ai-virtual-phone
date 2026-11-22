@@ -1313,6 +1313,19 @@ export function ChatSettingsPanel({
                     </>
                 </div>
 
+                {/* Advanced */}
+                <div className="menu-group">
+                    <KeyboardAutoSendDebounceItem sessionId={session.id} />
+                    <button className="menu-item" onClick={() => setEditingCSS(true)}>
+                        <ChatInfoIcon icon={Code} color={BINDING_ACCENTS.embedding} />
+                        <div className="menu-label-group"><span className="menu-label">自定义 CSS 样式</span></div>
+                        <div className="menu-right">
+                            {customCSS && <span className="menu-desc mr-1">已设置</span>}
+                            <ChevronRight size={16} />
+                        </div>
+                    </button>
+                </div>
+
                 {/* Backgrounds & UI */}
                 <div className="menu-group">
                     <label className="menu-item">
@@ -1404,19 +1417,6 @@ export function ChatSettingsPanel({
                         </div>
                         <input type="file" accept="image/*" onChange={e => handleImageUpload(e, setVoiceBackground, "voiceBackground")} className="hidden" />
                     </label>
-                </div>
-
-                {/* Advanced */}
-                <div className="menu-group">
-                    <KeyboardAutoSendDebounceItem sessionId={session.id} />
-                    <button className="menu-item" onClick={() => setEditingCSS(true)}>
-                        <ChatInfoIcon icon={Code} color={BINDING_ACCENTS.embedding} />
-                        <div className="menu-label-group"><span className="menu-label">自定义 CSS 样式</span></div>
-                        <div className="menu-right">
-                            {customCSS && <span className="menu-desc mr-1">已设置</span>}
-                            <ChevronRight size={16} />
-                        </div>
-                    </button>
                 </div>
 
                 {/* Destructive Actions */}
