@@ -9,7 +9,12 @@ import {
     getLastCoreSummarizedTimestamp,
     setLastCoreSummarizedTimestamp,
 } from "./memory-storage";
-import { resolveSummarizationApiConfig, stripMemoryStructuredSections } from "./memory-summarizer";
+import {
+    resolveSummarizationApiConfig,
+    stripMemoryStructuredSections,
+    buildCharacterSummaryProfile,
+    injectCharacterProfileIntoPrompt,
+} from "./memory-summarizer";
 import { simpleLLMCall } from "./api-helpers";
 import { filterRecallableEntries, isEntryBoxDigest } from "./memory-event-boxes";
 import { isEntryTrashed } from "./memory-trash";
@@ -33,7 +38,7 @@ type CoreTimelineItem = {
     sourceSessionIds: string[];
 };
 
-/** 判断是否为自动/手动提炼的「核心记忆总结」（排除角色反思与用户手动置顶的纯设定条目） */
+/** 判断是否为自动/手动提炼的「核心记忆总结」（排除用户手动置顶的纯设定条目与已废弃旧条目） */
 export function isAutoCoreSummaryEntry(entry: MemoryEntry): boolean {
     if (entry.type !== "core") return false;
     const origin = String(entry.metadata?.origin ?? "");
@@ -127,47 +132,32 @@ export async function runCoreMemoryPipeline(
         ? (stripMemoryStructuredSections(latestPrevSummary.content) || latestPrevSummary.content).trim()
         : "";
 
-    // 角色本人最近一轮反思与审校结论：只作为「性格、动机、关系定性」的校准参考，
-    // 不顶替上面那份系统总结——保证事实底座始终以客观长期记忆为准，同时吸纳角色的主观纠偏。
-    const latestRefinedEntry = existingCoreEntries
-        .filter(e =>
-            e.metadata?.origin === "character_reflection"
-            && !isEntrySuperseded(e)
-            && !isEntryTrashed(e),
-        )
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-    const refinedText = latestRefinedEntry
-        ? (typeof latestRefinedEntry.metadata?.correctedContent === "string" && latestRefinedEntry.metadata.correctedContent.trim()
-            ? latestRefinedEntry.metadata.correctedContent.trim()
-            : (stripMemoryStructuredSections(latestRefinedEntry.content) || latestRefinedEntry.content).trim())
-        : "";
-
     const { eventsText, earliest, latest } = formatted;
     const latestCursorTs = entries.reduce((max, item) => (item.timestamp > max ? item.timestamp : max), entries[0].timestamp);
-    const promptTemplate = config.coreMemoryPrompt?.trim() || DEFAULT_CORE_MEMORY_PROMPT;
+    const charProfile = buildCharacterSummaryProfile(characterId, characterName);
+    let promptTemplate = config.coreMemoryPrompt?.trim() || DEFAULT_CORE_MEMORY_PROMPT;
+    // 清理旧版自定义模板里遗留的 {{previousRefined}} 角色反思段落
+    promptTemplate = promptTemplate
+        .replace(/\n*角色本人对上一轮的修正意见[^\n]*\n\{\{previousRefined\}\}\n*/gi, "\n")
+        .replace(/\{\{previousRefined\}\}/gi, "");
+
     const hasPreviousPlaceholder = /\{\{previous\}\}/i.test(promptTemplate);
-    const hasRefinedPlaceholder = /\{\{previousRefined\}\}/i.test(promptTemplate);
 
-    // 模板没写 {{previousRefined}} 时，把角色修正意见并到上一轮总结后面（而不是前面），
-    // 保证模型先看到系统事实基线，再看角色对它的异议。
-    const previousWithRefined = refinedText
-        ? `${previousText}${previousText ? "\n\n" : ""}【角色本人对上一版的修正意见（只采纳其定性判断；其中若有长期记忆不支持的说法，一律以系统总结为准）】\n${refinedText}`
-        : previousText;
-
-    // 若用户自定义提示词里没写 {{previous}} 占位符，自动把上一轮核心记忆总结拼在 {{events}} 顶部，
-    // 兼容「如果长期记忆记录中已包含上一轮核心记忆总结，将其作为基础进行增量更新」的写法。
-    const eventsWithOptionalPrev = (!hasPreviousPlaceholder && previousWithRefined)
-        ? `【上一轮核心记忆总结（待增量验证与更新）】\n${previousWithRefined}\n\n【本周期新增长期记忆与事件盒总结】\n${eventsText}`
+    // 若用户自定义提示词里没写 {{previous}} 占位符，自动把上一轮核心记忆总结拼在 {{events}} 顶部
+    const eventsWithOptionalPrev = (!hasPreviousPlaceholder && previousText)
+        ? `【上一轮核心记忆总结（待增量验证与更新）】\n${previousText}\n\n【本周期新增长期记忆与事件盒总结】\n${eventsText}`
         : eventsText;
 
-    const prompt = promptTemplate
-        .replace(/\{\{char\}\}/gi, characterName)
-        .replace(/\{\{earliest\}\}/gi, earliest)
-        .replace(/\{\{latest\}\}/gi, latest)
-        .replace(/\{\{previous\}\}/gi, (hasRefinedPlaceholder ? previousText : previousWithRefined) || "（首次提炼，尚无上一轮核心记忆总结）")
-        .replace(/\{\{previousRefined\}\}/gi, refinedText || "（角色尚未对核心记忆提出修正）")
-        .replace(/\{\{events\}\}/gi, eventsWithOptionalPrev)
-        .replace(/\{\{longTermMemories\}\}/gi, eventsWithOptionalPrev);
+    const prompt = injectCharacterProfileIntoPrompt(
+        promptTemplate
+            .replace(/\{\{char\}\}/gi, characterName)
+            .replace(/\{\{earliest\}\}/gi, earliest)
+            .replace(/\{\{latest\}\}/gi, latest)
+            .replace(/\{\{previous\}\}/gi, previousText || "（首次提炼，尚无上一轮核心记忆总结）")
+            .replace(/\{\{events\}\}/gi, eventsWithOptionalPrev)
+            .replace(/\{\{longTermMemories\}\}/gi, eventsWithOptionalPrev),
+        charProfile,
+    );
 
     const result = await simpleLLMCall(
         apiConfig,

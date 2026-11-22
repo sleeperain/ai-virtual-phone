@@ -1,7 +1,7 @@
 "use client";
 
 import { Component, useState, useEffect, useCallback, useRef, type CSSProperties, type ReactNode } from "react";
-import { Trash2, Zap, Clock, Users, Archive, Folder, AlertCircle, Search, Brain, FileText, MoreHorizontal, Plus, Edit3, X, Check, ChevronLeft, ChevronRight, Filter, SlidersHorizontal, Sparkles, Heart, RotateCcw, History, type LucideIcon } from "lucide-react";
+import { Trash2, Zap, Clock, Users, Archive, Folder, AlertCircle, Search, Brain, FileText, MoreHorizontal, Plus, Edit3, X, Check, ChevronLeft, ChevronRight, Filter, SlidersHorizontal, Sparkles, RotateCcw, History, type LucideIcon } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { MemoryTimeline } from "./memory-timeline";
 import { Toggle } from "@/components/ui/form";
@@ -46,7 +46,6 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { runCoreMemoryPipeline } from "@/lib/core-memory-builder";
-import { DEFAULT_REFLECTION_PROMPT, runCoreMemoryReflection, type ReflectionScope } from "@/lib/core-memory-reflection";
 import { resolveAuxiliaryApiConfig, resolveUserIdentity } from "@/lib/settings-storage";
 import {
     generateEmbedding,
@@ -105,14 +104,6 @@ import {
     type MemoryEventBox,
     type SmartBoxSuggestion,
 } from "@/lib/memory-event-boxes";
-import {
-    buildThinkingTendency,
-    isTendencyStale,
-    loadThinkingTendency,
-    saveThinkingTendency,
-    type ThinkingTendency,
-} from "@/lib/memory-cognition";
-
 type MemoryView = "list" | "detail" | "settings";
 type MemoryTab = "short" | "shared" | "long" | "boxes" | "core" | "trash";
 type MemoryBudgetKey = "shortTermTokenBudget" | "coreMemoryTokenBudget" | "longTermTokenBudget";
@@ -156,19 +147,6 @@ const SUMMARIZE_RANGE_OPTIONS: Array<{ value: SummarizeRange; label: string; des
     { value: 30, label: "最近 30 天" },
     { value: "all", label: "全部历史" },
 ];
-
-/** 角色视角反思的回看范围（默认近 30 天）。 */
-const REFLECTION_SCOPE_OPTIONS: Array<{ value: ReflectionScope; label: string; desc?: string }> = [
-    { value: "recent7", label: "最近 7 天", desc: "只看最近一周的事，反思更聚焦" },
-    { value: "recent30", label: "最近 30 天", desc: "默认范围，兼顾近期动向与旧事" },
-    { value: "all", label: "全部长期记忆", desc: "从最早的记忆一路想到现在" },
-];
-
-const REFLECTION_API_SOURCE_LABELS: Record<string, string> = {
-    character: "角色绑定 API",
-    auxiliary: "记忆总结辅助 API",
-    global: "全局默认 API",
-};
 
 type MemorySourceKey = keyof NonNullable<MemoryConfig["shortTermAllowedSources"]>;
 
@@ -382,18 +360,9 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const [loading, setLoading] = useState(false);
     const [summarizing, setSummarizing] = useState(false);
     const [rebuildingCore, setRebuildingCore] = useState(false);
-    const [reflectingCore, setReflectingCore] = useState(false);
-    const [reflectionScopeOpen, setReflectionScopeOpen] = useState(false);
-    const [lastReflection, setLastReflection] = useState<{
-        content: string;
-        round: number;
-        apiSourceLabel: string;
-        model?: string;
-    } | null>(null);
     const [editingPrompt, setEditingPrompt] = useState<string | null>(null);
     const [editingCorePrompt, setEditingCorePrompt] = useState<string | null>(null);
     const [editingEventBoxPrompt, setEditingEventBoxPrompt] = useState<string | null>(null);
-    const [editingReflectionPrompt, setEditingReflectionPrompt] = useState<string | null>(null);
     // 最近删除页里「彻底删除」与「清空回收站」的二次确认（这里删掉就真的没了）
     const [confirmPurgeEntry, setConfirmPurgeEntry] = useState<MemoryEntry | null>(null);
     const [confirmEmptyTrash, setConfirmEmptyTrash] = useState(false);
@@ -443,17 +412,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const [smartSuggestions, setSmartSuggestions] = useState<SmartBoxSuggestion[]>([]);
     const [smartSelected, setSmartSelected] = useState<Record<string, boolean>>({});
     const [smartBusy, setSmartBusy] = useState(false);
-
-    // ── 记忆认知：思考倾向 ──
-    const [tendency, setTendency] = useState<ThinkingTendency | null>(null);
-    const [buildingTendency, setBuildingTendency] = useState(false);
-    /** 构建完成后弹出的数值评估（只读展示，改值走「思考倾向」条目的编辑弹窗） */
-    const [tendencyResult, setTendencyResult] = useState<ThinkingTendency | null>(null);
-    const [tendencyEdit, setTendencyEdit] = useState<{
-        brooding: number;
-        reflection: number;
-        acuity: number;
-    } | null>(null);
 
     // 「放入事件盒」模块：事件盒选项区最多显示三行，超出上下滑动。
     // 行高由 chip 实测得出（不同主题/字号下不写死），量不到就整段展开不滚。
@@ -580,16 +538,8 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             setEditingPrompt(null);
             setEditingCorePrompt(null);
             setEditingEventBoxPrompt(null);
-            setEditingReflectionPrompt(null);
         }
     }, [view]);
-
-    // 切角色（或重新进入设置页）时，读取该角色已构建的思考倾向
-    useEffect(() => {
-        setTendency(selectedCharId ? loadThinkingTendency(selectedCharId) : null);
-        setTendencyResult(null);
-        setTendencyEdit(null);
-    }, [selectedCharId, view]);
 
     // 量出「放入事件盒」里单个 chip 的高度，把列表滚动区的最大高度压到三行以内
     useEffect(() => {
@@ -1028,7 +978,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     /** 智能识别相关记忆归盒（只归入事件盒，绝不自动批量总结） */
     const handleRunSmartBoxSuggest = async () => {
         if (!selectedCharId || smartBusy) return;
-        const ungrouped = longTermEntries.filter(e => !getEntryBoxId(e) && !isEntryBoxDigest(e));
+        const ungrouped = longTermEntries.filter(e => !isEntryTrashed(e) && !getEntryBoxId(e) && !isEntryBoxDigest(e));
         if (ungrouped.length < 2 && boxes.length === 0) {
             showNotice("当前未归盒的长期记忆不足 2 条，可先手动新建事件盒");
             return;
@@ -1172,7 +1122,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         setRebuildingCore(true);
         try {
             const lastCoreSummarizedAt = getLastCoreSummarizedTimestamp(selectedCharId);
-            const longTermEntries = await loadMemoryEntriesByType(selectedCharId, "long_term");
+            const longTermEntries = (await loadMemoryEntriesByType(selectedCharId, "long_term")).filter(e => !isEntryTrashed(e));
             const pendingLongTermCount = longTermEntries.filter(entry =>
                 !lastCoreSummarizedAt || entry.createdAt > lastCoreSummarizedAt
             ).length;
@@ -1199,86 +1149,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         } finally {
             setRebuildingCore(false);
         }
-    };
-
-    /**
-     * 角色视角反思：以角色本人第一人称重看近期事件，写一条只属于这个角色的核心记忆。
-     * 与「重建」互不影响——重建走记忆总结辅助 API 的第三人称归纳，反思走角色绑定的 API。
-     */
-    const handleCharacterReflection = async (scope: ReflectionScope) => {
-        if (!selectedCharId || reflectingCore) return;
-        setReflectionScopeOpen(false);
-        setReflectingCore(true);
-        try {
-            const result = await runCoreMemoryReflection(selectedCharId, scope, selectedChar?.name ?? "");
-            if (result.success && result.content) {
-                setLastReflection({
-                    content: result.content,
-                    round: result.round ?? 1,
-                    apiSourceLabel: REFLECTION_API_SOURCE_LABELS[result.apiSource ?? "global"] ?? "未知 API",
-                    model: result.model,
-                });
-                showNotice(`角色反思完成（第 ${result.round ?? 1} 轮），已写入核心记忆`);
-                void loadDetailData(selectedCharId);
-                loadCharacterList();
-            } else {
-                showNotice(result.error || "角色反思失败");
-            }
-        } catch (err) {
-            console.error("[MemoryBank] Character reflection failed:", err);
-            showNotice("角色反思失败: " + String(err));
-        } finally {
-            setReflectingCore(false);
-        }
-    };
-
-    // ── 记忆认知：思考倾向的构建与手改 ──
-    const handleBuildTendency = async () => {
-        if (!selectedCharId || buildingTendency) return;
-        setBuildingTendency(true);
-        try {
-            const result = await buildThinkingTendency(selectedCharId, selectedChar?.name ?? "");
-            if (result.success && result.tendency) {
-                setTendency(result.tendency);
-                setTendencyResult(result.tendency);
-                showNotice("思考倾向已构建");
-            } else {
-                showNotice(result.error || "思考倾向构建失败");
-            }
-        } catch (err) {
-            console.error("[MemoryBank] Tendency build failed:", err);
-            showNotice("思考倾向构建失败: " + String(err));
-        } finally {
-            setBuildingTendency(false);
-        }
-    };
-
-    const openTendencyEditor = () => {
-        setTendencyEdit({
-            brooding: tendency?.brooding ?? 5,
-            reflection: tendency?.reflection ?? 5,
-            acuity: tendency?.acuity ?? 5,
-        });
-    };
-
-    const handleSaveTendencyEdit = () => {
-        if (!selectedCharId || !tendencyEdit) return;
-        const now = new Date().toISOString();
-        const saved = saveThinkingTendency({
-            characterId: selectedCharId,
-            brooding: tendencyEdit.brooding,
-            reflection: tendencyEdit.reflection,
-            acuity: tendencyEdit.acuity,
-            createdAt: tendency?.createdAt ?? now,
-            updatedAt: now,
-            source: "user",
-            model: tendency?.model,
-            // 保留原快照：手改不该被当成「人设已更新」
-            personaSnapshot: tendency?.personaSnapshot,
-        });
-        setTendency(saved);
-        setTendencyEdit(null);
-        showNotice("思考倾向已保存");
     };
 
     const saveBudget = (key: MemoryBudgetKey, value: number) => {
@@ -1354,7 +1224,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         showNotice("核心记忆提示词已恢复默认");
     };
 
-    // 事件盒 / 角色反思提示词：存空串表示跟随内置默认；恢复默认时将 editing 状态置回 null，输入框立刻显示内置默认全文
+    // 事件盒提示词：存空串表示跟随内置默认；恢复默认时将 editing 状态置回 null，输入框立刻显示内置默认全文
     const handleSaveEventBoxPrompt = () => {
         if (editingEventBoxPrompt === null) return;
         const trimmed = editingEventBoxPrompt.trim();
@@ -1372,25 +1242,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         setConfig(next);
         saveMemoryConfig(next);
         showNotice("事件盒提示词已恢复默认");
-    };
-
-    const handleSaveReflectionPrompt = () => {
-        if (editingReflectionPrompt === null) return;
-        const trimmed = editingReflectionPrompt.trim();
-        const stored = (!trimmed || trimmed === DEFAULT_REFLECTION_PROMPT) ? "" : editingReflectionPrompt;
-        const next = { ...config, reflectionPrompt: stored };
-        setEditingReflectionPrompt(null);
-        setConfig(next);
-        saveMemoryConfig(next);
-        showNotice("角色反思提示词已保存");
-    };
-
-    const handleResetReflectionPrompt = () => {
-        setEditingReflectionPrompt(null);
-        const next = { ...config, reflectionPrompt: "" };
-        setConfig(next);
-        saveMemoryConfig(next);
-        showNotice("角色反思提示词已恢复默认");
     };
 
     const createManualMemoryId = (type: MemoryEntry["type"]) => (
@@ -1873,8 +1724,8 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
 
     const renderMemoryEntries = (type: MemoryEntry["type"], allEntries: MemoryEntry[], emptyText: string) => {
         const label = type === "core" ? "核心记忆" : "长期记忆";
-        // 已删除的记忆只在「最近删除」里出现，不混在主列表里
-        const entries = allEntries.filter(e => !isEntryTrashed(e));
+        // 已删除的记忆只在「最近删除」里出现；已移除的角色反思旧条目不再在核心记忆页展示
+        const entries = allEntries.filter(e => !isEntryTrashed(e) && e.metadata?.origin !== "character_reflection");
         const missingVectorCount = type === "long_term"
             ? entries.filter(e => !isEntryVectorValid(e)).length
             : 0;
@@ -2105,15 +1956,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                 匹配度 {Math.round(Math.min(1, matchScore) * 100)}%
                                             </span>
                                         )}
-                                        {entry.metadata?.origin === "character_reflection" && (
-                                            <span
-                                                className="mem-stat-pill"
-                                                title={`角色视角反思${entry.metadata?.reflectionRound ? ` · 第 ${String(entry.metadata.reflectionRound)} 轮` : ""}`}
-                                                style={{ fontWeight: 700, borderRadius: 5 }}
-                                            >
-                                                角色反思
-                                            </span>
-                                        )}
                                         {entryIsDigest && (
                                             <span
                                                 className="mem-stat-pill"
@@ -2213,15 +2055,13 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                 {isSuperseded && (
                                     <div className="mem-superseded-note">
                                         <span>
-                                            {entry.metadata?.origin === "character_reflection"
-                                                ? "已被新一轮反思接替（仅保留作历史记录）"
-                                                : entry.metadata?.origin === "core_summary"
-                                                    ? "已被新一轮核心记忆总结演进接替（仅保留作历史记录）"
-                                                    : "已被后来的记忆更正"}
+                                            {entry.metadata?.origin === "core_summary"
+                                                ? "已被新一轮核心记忆总结演进接替（仅保留作历史记录）"
+                                                : "已被后来的记忆更正"}
                                             {typeof revisionRatio === "number" && revisionRatio > 0
                                                 ? ` · 改动约 ${Math.round(revisionRatio * 100)}%`
                                                 : ""}
-                                            {entry.metadata?.origin !== "character_reflection" && entry.metadata?.origin !== "core_summary" && revisionWeight < 1
+                                            {entry.metadata?.origin !== "core_summary" && revisionWeight < 1
                                                 ? ` · 检索权重 ${Math.round(revisionWeight * 100)}%`
                                                 : ""}
                                         </span>
@@ -2237,11 +2077,9 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                     scrollToAndFlash(`mem-entry-card-${revisionSourceId}`, revisionSourceId);
                                                 }}
                                             >
-                                                {entry.metadata?.origin === "character_reflection"
-                                                    ? "查看最新反思"
-                                                    : entry.metadata?.origin === "core_summary"
-                                                        ? "查看最新总结"
-                                                        : "查看新版本"}
+                                                {entry.metadata?.origin === "core_summary"
+                                                    ? "查看最新总结"
+                                                    : "查看新版本"}
                                             </button>
                                         )}
                                     </div>
@@ -3666,16 +3504,11 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         const isCoreModified = currentCorePrompt !== (config.coreMemoryPrompt ?? DEFAULT_CORE_MEMORY_PROMPT);
         const isCoreDefault = (config.coreMemoryPrompt ?? DEFAULT_CORE_MEMORY_PROMPT) === DEFAULT_CORE_MEMORY_PROMPT;
 
-        // 这两项：空串 = 跟随内置默认，编辑框里直接显示默认全文，方便对照修改
+        // 空串 = 跟随内置默认，编辑框里直接显示默认全文，方便对照修改
         const savedEventBoxPrompt = (config.eventBoxSummaryPrompt ?? "").trim();
         const currentEventBoxPrompt = editingEventBoxPrompt ?? (savedEventBoxPrompt || DEFAULT_EVENT_BOX_SUMMARY_PROMPT);
         const isEventBoxModified = currentEventBoxPrompt !== (savedEventBoxPrompt || DEFAULT_EVENT_BOX_SUMMARY_PROMPT);
         const isEventBoxDefault = !savedEventBoxPrompt || savedEventBoxPrompt === DEFAULT_EVENT_BOX_SUMMARY_PROMPT;
-
-        const savedReflectionPrompt = (config.reflectionPrompt ?? "").trim();
-        const currentReflectionPrompt = editingReflectionPrompt ?? (savedReflectionPrompt || DEFAULT_REFLECTION_PROMPT);
-        const isReflectionModified = currentReflectionPrompt !== (savedReflectionPrompt || DEFAULT_REFLECTION_PROMPT);
-        const isReflectionDefault = !savedReflectionPrompt || savedReflectionPrompt === DEFAULT_REFLECTION_PROMPT;
 
         return (
             <div className="page-menu memory-settings-menu">
@@ -3711,7 +3544,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                     <button
                                         className="ui-btn ui-btn-outline py-1 px-3 ts-12"
                                         onClick={handleManualRebuildCore}
-                                        disabled={rebuildingCore || reflectingCore}
+                                        disabled={rebuildingCore}
                                     >
                                         <Archive size={12} className="mr-1" />
                                         {rebuildingCore ? "处理中..." : "重建"}
@@ -3737,173 +3570,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                             </div>
                         </div>
 
-                        {/* 记忆认知：思考倾向 + 近期事件反思 */}
-                        <p className="menu-group-desc mx-2">记忆认知</p>
-                        <div className="menu-group">
-                            <div className="menu-item">
-                                <MemorySettingsIcon icon={Brain} color={BINDING_ACCENTS.memory} />
-                                <button
-                                    type="button"
-                                    className="menu-label-group"
-                                    style={{
-                                        background: "none",
-                                        border: "none",
-                                        padding: 0,
-                                        textAlign: "left",
-                                        font: "inherit",
-                                        color: "inherit",
-                                        flex: 1,
-                                        minWidth: 0,
-                                        cursor: "pointer",
-                                    }}
-                                    onClick={openTendencyEditor}
-                                    title="查看并手动调整思考倾向的数值与表现"
-                                >
-                                    <span className="menu-label">思考倾向</span>
-                                    <span className="menu-desc">
-                                        {tendency
-                                            ? `沉思 ${tendency.brooding} · 反思 ${tendency.reflection} · 情绪 ${tendency.acuity}，点击可编辑`
-                                            : "尚未构建，点右侧「构建」按角色设定推导"}
-                                        {isTendencyStale(tendency, selectedChar) ? "（角色设定已改动，建议重建）" : ""}
-                                    </span>
-                                </button>
-                                <div className="menu-right">
-                                    <button
-                                        className="ui-btn ui-btn-outline py-1 px-3 ts-12"
-                                        onClick={() => void handleBuildTendency()}
-                                        disabled={buildingTendency || reflectingCore}
-                                        title="按角色设定推导反思时的思考习惯，产出三个评估数值与行为规则"
-                                    >
-                                        <Sparkles size={12} className="mr-1" />
-                                        {buildingTendency ? "处理中..." : "构建"}
-                                    </button>
-                                </div>
-                            </div>
-                            <div className="menu-item">
-                                <MemorySettingsIcon icon={Heart} color={BINDING_ACCENTS.voice} />
-                                <div className="menu-label-group">
-                                    <span className="menu-label">近期事件反思</span>
-                                    <span className="menu-desc">让 TA 用自己的视角回看近期事件</span>
-                                </div>
-                                <div className="menu-right">
-                                    <button
-                                        className="ui-btn ui-btn-outline py-1 px-3 ts-12"
-                                        onClick={() => setReflectionScopeOpen(true)}
-                                        disabled={reflectingCore || rebuildingCore}
-                                        title="完整读取角色设定，以角色第一人称反思近期事件，生成一条角色视角的核心记忆"
-                                    >
-                                        <Heart size={12} className="mr-1" />
-                                        {reflectingCore ? "处理中..." : "反思"}
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* 思考倾向：构建完成后的数值评估 */}
-                        {tendencyResult ? (
-                            <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={() => setTendencyResult(null)}>
-                                <div className="modal-sheet" data-ui="modal-sheet" onClick={event => event.stopPropagation()}>
-                                    <div className="modal-header" data-ui="modal-header">
-                                        <button className="modal-header-btn modal-header-btn-muted" onClick={() => setTendencyResult(null)}><X size={18} /></button>
-                                        <h3 className="modal-title">思考倾向评估</h3>
-                                        <span style={{ width: 44 }} />
-                                    </div>
-                                    <div className="modal-body modal-body-tight" data-ui="modal-body">
-                                        <div className="g-card" style={{ padding: 12, gap: 8 }}>
-                                            {([
-                                                { label: "沉思倾向", value: tendencyResult.brooding, desc: "越高越容易在情绪里越想越窄" },
-                                                { label: "反思倾向", value: tendencyResult.reflection, desc: "越高越能把纠结转成理解" },
-                                                { label: "情绪锐度", value: tendencyResult.acuity, desc: "越高情绪越直接、越强烈" },
-                                            ] as const).map(item => (
-                                                <div key={item.label} className="flex items-center justify-between ts-12" style={{ gap: 10 }}>
-                                                    <span>{item.label}</span>
-                                                    <span className="text-secondary ts-11" style={{ marginLeft: "auto" }}>{item.desc}</span>
-                                                    <strong>{item.value}/10</strong>
-                                                </div>
-                                            ))}
-                                        </div>
-                                        <p className="ts-11 text-secondary" style={{ margin: "8px 4px 0" }}>
-                                            已保存。只有这三个数会进反思提示词，用来校准语气轻重，不写进正文；点「思考倾向」条目可随时调整。
-                                        </p>
-                                        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                                            <button
-                                                className="ui-btn ui-btn-outline mem-edit-save-btn"
-                                                style={{ flex: 1 }}
-                                                onClick={() => {
-                                                    setTendencyResult(null);
-                                                    openTendencyEditor();
-                                                }}
-                                            >
-                                                <Edit3 size={14} className="mr-1" /> 编辑
-                                            </button>
-                                            <button
-                                                className="ui-btn ui-btn-primary mem-edit-save-btn"
-                                                style={{ flex: 1 }}
-                                                onClick={() => setTendencyResult(null)}
-                                            >
-                                                关闭
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        ) : null}
-
-                        {/* 思考倾向：编辑弹窗 */}
-                        {tendencyEdit ? (
-                            <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={() => setTendencyEdit(null)}>
-                                <div className="modal-sheet mem-edit-sheet" data-ui="modal-sheet" onClick={event => event.stopPropagation()}>
-                                    <div className="modal-header" data-ui="modal-header">
-                                        <button className="modal-header-btn modal-header-btn-muted" onClick={() => setTendencyEdit(null)}>
-                                            <X size={18} />
-                                        </button>
-                                        <h3 className="modal-title">思考倾向</h3>
-                                        <button
-                                            className="modal-header-btn modal-header-btn-action"
-                                            onClick={handleSaveTendencyEdit}
-                                        >
-                                            <Check size={18} />
-                                        </button>
-                                    </div>
-                                    <div className="modal-body mem-edit-body" data-ui="modal-body">
-                                        {([
-                                            { key: "brooding" as const, label: "沉思倾向", desc: "越高越容易在情绪里越想越窄" },
-                                            { key: "reflection" as const, label: "反思倾向", desc: "越高越能把纠结转成理解" },
-                                            { key: "acuity" as const, label: "情绪锐度", desc: "越高情绪越直接、越强烈" },
-                                        ]).map(item => (
-                                            <div className="mem-edit-field-row" key={item.key}>
-                                                <label className="mem-edit-field-label">
-                                                    {item.label}：{tendencyEdit[item.key]}/10
-                                                </label>
-                                                <input
-                                                    type="range"
-                                                    min={1}
-                                                    max={10}
-                                                    step={1}
-                                                    value={tendencyEdit[item.key]}
-                                                    onChange={e => {
-                                                        const value = Number(e.target.value);
-                                                        setTendencyEdit(prev => prev ? { ...prev, [item.key]: value } : prev);
-                                                    }}
-                                                    className="ui-slider"
-                                                />
-                                                <span className="ts-11 text-secondary">{item.desc}</span>
-                                            </div>
-                                        ))}
-                                        <p className="ts-11 text-secondary" style={{ margin: "2px 4px 0" }}>
-                                            这里只有刻度，不写文字描述——描述会被模型当成素材搬进反思正文里。
-                                        </p>
-                                        <button
-                                            className="ui-btn ui-btn-primary mem-edit-save-btn"
-                                            onClick={handleSaveTendencyEdit}
-                                        >
-                                            保存思考倾向
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        ) : null}
-
                         {summarizeRangeOpen ? (
                             <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={() => setSummarizeRangeOpen(false)}>
                                 <div className="modal-sheet" data-ui="modal-sheet" onClick={event => event.stopPropagation()}>
@@ -3928,62 +3594,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                 </button>
                                             ))}
                                         </div>
-                                    </div>
-                                </div>
-                            </div>
-                        ) : null}
-
-                        {reflectionScopeOpen ? (
-                            <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={() => setReflectionScopeOpen(false)}>
-                                <div className="modal-sheet" data-ui="modal-sheet" onClick={event => event.stopPropagation()}>
-                                    <div className="modal-header" data-ui="modal-header">
-                                        <button className="modal-header-btn modal-header-btn-muted" onClick={() => setReflectionScopeOpen(false)}><X size={18} /></button>
-                                        <h3 className="modal-title">选择反思范围</h3>
-                                        <span style={{ width: 44 }} />
-                                    </div>
-                                    <div className="modal-body modal-body-tight" data-ui="modal-body">
-                                        <p className="ts-11 text-secondary" style={{ margin: "0 4px 8px" }}>
-                                            完整读取角色卡设定、系统整理的核心记忆总结与高权重事件脉络，让 TA 用第一人称审视并更新自己的核心认知（若系统总结有定性偏差，角色会在结论中按本心纠正，并供下一轮系统总结参考）。会产生一次 API 调用。
-                                        </p>
-                                        <div className="menu-group">
-                                            {REFLECTION_SCOPE_OPTIONS.map(option => (
-                                                <button
-                                                    key={option.value}
-                                                    type="button"
-                                                    className="menu-item w-full text-left"
-                                                    onClick={() => void handleCharacterReflection(option.value)}
-                                                >
-                                                    <div className="menu-label-group">
-                                                        <span className="menu-label">{option.label}</span>
-                                                        {option.desc ? <span className="menu-desc">{option.desc}</span> : null}
-                                                    </div>
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        ) : null}
-
-                        {lastReflection ? (
-                            <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={() => setLastReflection(null)}>
-                                <div className="modal-sheet" data-ui="modal-sheet" onClick={event => event.stopPropagation()}>
-                                    <div className="modal-header" data-ui="modal-header">
-                                        <button className="modal-header-btn modal-header-btn-muted" onClick={() => setLastReflection(null)}><X size={18} /></button>
-                                        <h3 className="modal-title">角色反思 · 第 {lastReflection.round} 轮</h3>
-                                        <span style={{ width: 44 }} />
-                                    </div>
-                                    <div className="modal-body modal-body-tight" data-ui="modal-body">
-                                        <div className="g-card ts-12 leading-[1.75] mem-markdown-body chat-markdown" style={{ padding: 12 }}>
-                                            <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-                                                {lastReflection.content}
-                                            </ReactMarkdown>
-                                        </div>
-                                        <p className="ts-11 text-secondary" style={{ margin: "8px 4px 0" }}>
-                                            来源：{lastReflection.apiSourceLabel}
-                                            {lastReflection.model ? ` · ${lastReflection.model}` : ""}
-                                            ，已作为一条核心记忆写入当前角色，可在「核心」页查看或编辑。
-                                        </p>
                                     </div>
                                 </div>
                             </div>
@@ -4347,46 +3957,6 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                     </div>
                 </div>
 
-                {/* 角色反思提示词编辑器 */}
-                <p className="menu-group-desc mx-2">角色反思提示词</p>
-                <div className="menu-group">
-                    <div className="menu-item">
-                        <MemorySettingsIcon icon={Heart} color={BINDING_ACCENTS.voice} />
-                        <div className="menu-label-group">
-                            <span className="menu-label">核心记忆角色反思提示词</span>
-                            <span className="menu-desc">
-                                变量：{"{{char}}"} 角色、{"{{user}}"} 用户、{"{{persona}}"} 角色设定、{"{{tendency}}"} 思考倾向刻度、
-                                {"{{earliest}}"} 起始时间、{"{{latest}}"} 结束时间、{"{{coreMemories}}"} 核心记忆沉淀、
-                                {"{{events}}"} 长期记忆与事件盒、{"{{transient}}"} 即时片段、{"{{previous}}"} 上次反思
-                            </span>
-                        </div>
-                        {!isReflectionDefault && (
-                            <div className="menu-right">
-                                <button onClick={handleResetReflectionPrompt} className="menu-label menu-label-danger ts-12 underline">
-                                    恢复默认
-                                </button>
-                            </div>
-                        )}
-                    </div>
-                    <div className="px-4 pb-4 flex flex-col gap-3">
-                        <textarea
-                            value={currentReflectionPrompt}
-                            onChange={e => setEditingReflectionPrompt(e.target.value)}
-                            className="ui-textarea w-full min-h-[200px] ts-14 leading-relaxed resize-y"
-                        />
-                        <p className="ts-11 text-secondary" style={{ margin: 0 }}>
-                            反思用角色自己绑定的聊天 API；角色设定、系统核心记忆沉淀与事实底稿始终完整注入，上方提示词即为实际生效的唯一模板（所见即所得）。角色在反思中的定性纠偏会自动同步给下一轮系统核心记忆总结参考。
-                        </p>
-                        {isReflectionModified && (
-                            <button
-                                onClick={handleSaveReflectionPrompt}
-                                className="ui-btn ui-btn-primary p-2.5 w-full"
-                            >
-                                <Heart size={14} className="mr-1.5" /> 保存反思提词配置
-                            </button>
-                        )}
-                    </div>
-                </div>
             </div>
         );
     }

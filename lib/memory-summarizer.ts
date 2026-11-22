@@ -29,13 +29,81 @@ import {
     REVISION_META_KEYS,
 } from "./memory-revision";
 
-import { loadBindingConfig, loadApiConfigs, resolveBinding } from "./settings-storage";
+import { loadBindingConfig, loadApiConfigs, resolveBinding, resolveUserIdentity } from "./settings-storage";
+import { loadCharacters } from "./character-storage";
 import {
     resolveMemoryProvenance,
     saveProvenanceBatch,
     toProvenanceEntry,
 } from "./memory-provenance";
 import { isEntryTrashed, trashMemoryEntry } from "./memory-trash";
+
+/**
+ * 提取角色的基础身份与人称代词提示，专门提供给长期记忆、事件盒与核心记忆总结 Prompt，
+ * 彻底杜绝模型在只看到角色名字（尤其古风/中性名）时把男性角色默认写成「她」的问题。
+ */
+export function buildCharacterSummaryProfile(characterId: string, fallbackName?: string): string {
+    const char = loadCharacters().find(c => c.id === characterId);
+    const charName = char?.name?.trim() || fallbackName?.trim() || "角色";
+    const userIdentity = resolveUserIdentity(characterId);
+    const userName = userIdentity?.name?.trim() || "";
+
+    if (!char) {
+        return `角色名称：${charName}（若不确定性别，请直接称呼名字「${charName}」，勿随意假设为「她」）`;
+    }
+
+    const tagsText = Array.isArray(char.tags) ? char.tags.map(t => String(t).trim()).filter(Boolean).join("、") : "";
+    const rawPersona = [char.briefPersona, char.persona, char.personality, tagsText].filter(Boolean).join("\n");
+
+    let pronounHint = "";
+    // 优先匹配显式性别字段或明确男女性别描述
+    const explicitMale = /(?:性别\s*[：:是为]?\s*男|(?:\b|[^女])男性|男生|少年|男人|青年男|公子|先生|少爷|兄长|哥哥|男友|丈夫|老公|帝王|将军|师尊.*男|人称\s*[：:]?\s*他)/.test(rawPersona)
+        || (rawPersona.includes("他") && !rawPersona.includes("她"));
+    const explicitFemale = /(?:性别\s*[：:是为]?\s*女|(?:\b|[^男])女性|女生|少女|女人|小姐|姑娘|姐姐|妹妹|女友|妻子|老婆|人称\s*[：:]?\s*她)/.test(rawPersona)
+        || (rawPersona.includes("她") && !rawPersona.includes("他"));
+
+    if (explicitMale && !explicitFemale) {
+        pronounHint = `性别与代词铁律：「${charName}」是**男性角色**，总结中指代「${charName}」时**必须统一使用第三人称「他」或直接称呼「${charName}」，绝对严禁写成「她」**！`;
+    } else if (explicitFemale && !explicitMale) {
+        pronounHint = `性别与代词铁律：「${charName}」是**女性角色**，总结中指代「${charName}」时使用「她」或直接称呼「${charName}」。`;
+    } else {
+        // 统计人设里「他」与「她」出现频次做辅助判断
+        const heCount = (rawPersona.match(/他/g) ?? []).length;
+        const sheCount = (rawPersona.match(/她/g) ?? []).length;
+        if (heCount >= sheCount + 2) {
+            pronounHint = `性别与代词铁律：「${charName}」为**男性角色**，指代「${charName}」时**必须使用「他」或直接写名字「${charName}」，严禁误写为「她」**！`;
+        } else if (sheCount >= heCount + 2) {
+            pronounHint = `性别与代词铁律：「${charName}」为**女性角色**，指代「${charName}」时请使用「她」或直接写名字「${charName}」。`;
+        } else {
+            pronounHint = `代词规范：请严格按下方设定判断「${charName}」的性别代词；若无法100%确认性别，请直接称呼名字「${charName}」，切勿盲目默认使用「她」。`;
+        }
+    }
+
+    const snippetSource = (char.briefPersona?.trim() || char.persona?.trim() || "").replace(/\s+/g, " ").slice(0, 260);
+    const lines: string[] = [pronounHint];
+    if (tagsText) lines.push(`角色标签：${tagsText}`);
+    if (snippetSource) lines.push(`角色设定摘要：${snippetSource}${snippetSource.length >= 260 ? "…" : ""}`);
+    if (userName) lines.push(`互动对象（用户）名称：${userName}`);
+    return lines.join("\n");
+}
+
+/**
+ * 将角色基本信息注入任意总结模板：若模板含 {{charProfile}} 则原地替换，
+ * 若用户使用了旧版自定义模板未写 {{charProfile}}，则自动补充在「角色：XXX」行下方或模板开头。
+ */
+export function injectCharacterProfileIntoPrompt(
+    prompt: string,
+    charProfile: string,
+): string {
+    if (!charProfile.trim()) return prompt.replace(/\{\{charProfile\}\}/gi, "");
+    if (/\{\{charProfile\}\}/i.test(prompt)) {
+        return prompt.replace(/\{\{charProfile\}\}/gi, charProfile);
+    }
+    if (/角色\s*[：:][^\n]*/.test(prompt)) {
+        return prompt.replace(/(角色\s*[：:][^\n]*)/, `$1\n${charProfile}`);
+    }
+    return `【角色身份与代词基准】\n${charProfile}\n\n${prompt}`;
+}
 
 /** Per-character lock to prevent concurrent summarization. */
 const summarizingSet = new Set<string>();
@@ -346,12 +414,11 @@ export async function runSummarizationPipeline(
         ? DEFAULT_SUMMARIZATION_PROMPT
         : rawSavedPrompt;
 
+    const charProfile = buildCharacterSummaryProfile(characterId, characterName);
+
     // Enforce our core rules even when the user has a custom summarization prompt:
-    // 1. Split distinct topics with `---` and never fabricate causal links between independent events
-    // 2. No dates/timestamps inside the memory body
-    // 3. Output **重要性** and **检索关键词** at the end of each topic memory
-    const ruleEnforcement = `\n\n【硬性事实与格式要求（最高优先级）】：\n1. **按独立话题拆条，严禁强加因果**：同一天或同一场景中发生的多件互不相关的事、不同机制或独立话题，必须用单独一行的 \`---\` 拆成多条独立记忆；除非原始记录中明确写明了因果或前提关系，否则严禁将两件独立的事合并成一条，也严禁自行补出原文不存在的因果关联。\n2. **记忆正文中严禁出现任何日期或具体时间**（如“10月23日”、“上午”、“18:03”等一律不写，系统会自动记录该记忆所属日期）。\n3. 每条记忆末尾必须各自单独输出两行：\n**重要性**：（1-10的整数）\n**检索关键词**：关键词1、关键词2、关键词3`;
-    if (!promptTemplate.includes("严禁强加因果")) {
+    const ruleEnforcement = `\n\n【硬性事实与格式要求（最高优先级）】：\n1. **严格核对角色性别代词与玩笑边界**：严格依据角色设定使用正确的「他/她」（男性角色严禁写成「她」）；凡是调侃、玩笑、打比方、假设（如“调侃他扮作某人也没人看出”），必须写明是“调侃/开玩笑”，严禁脱离语境改写成“曾经真实做过某事”！\n2. **按独立话题拆条，严禁强加因果**：同一天或同一场景中发生的多件互不相关的事、不同机制或独立话题，必须用单独一行的 \`---\` 拆成多条独立记忆；除非原始记录中明确写明了因果或前提关系，否则严禁将两件独立的事合并成一条，也严禁自行补出原文不存在的因果关联。\n3. **记忆正文中严禁出现任何日期或具体时间**（如“10月23日”、“上午”、“18:03”等一律不写，系统会自动记录该记忆所属日期）。\n4. 每条记忆末尾必须各自单独输出两行：\n**重要性**：（1-10的整数）\n**检索关键词**：关键词1、关键词2、关键词3`;
+    if (!promptTemplate.includes("假戏真做") && !promptTemplate.includes("玩笑边界")) {
         promptTemplate += ruleEnforcement;
     }
 
@@ -375,11 +442,14 @@ export async function runSummarizationPipeline(
         if (!formatted) continue;
 
         const { eventsText, earliest, latest } = formatted;
-        const summaryPrompt = promptTemplate
-            .replace(/\{\{char\}\}/gi, characterName)
-            .replace(/\{\{earliest\}\}/gi, dayKey)
-            .replace(/\{\{latest\}\}/gi, dayKey)
-            .replace(/\{\{events\}\}/gi, eventsText);
+        const summaryPrompt = injectCharacterProfileIntoPrompt(
+            promptTemplate
+                .replace(/\{\{char\}\}/gi, characterName)
+                .replace(/\{\{earliest\}\}/gi, dayKey)
+                .replace(/\{\{latest\}\}/gi, dayKey)
+                .replace(/\{\{events\}\}/gi, eventsText),
+            charProfile,
+        );
 
         let result = await simpleLLMCall(
             apiConfig,
@@ -674,24 +744,29 @@ export async function resplitMergedMemory(
         .map(item => `- [${item.sourceApp}] ${item.content}`)
         .join("\n");
 
+    const charProfile = buildCharacterSummaryProfile(characterId, characterName);
+
     const prompt = [
         `你是一个严谨的记忆溯源纠偏与重总结助手。角色：${characterName || "角色"}。`,
-        "用户指出下方这条【待修正的旧记忆】存在总结偏差（例如：把同一时段互不相干的两件事揉在了一起、强加了原文不存在的因果关系、或者事实表述有误）。",
+        charProfile,
+        "",
+        "用户指出下方这条【待修正的旧记忆】存在总结偏差（例如：人称代词性别写错、把玩笑调侃写成了真实发生过的往事、把互不相干的两件事揉在了一起、或强加了虚假因果）。",
         "请你**严格且唯一依据下方【原始对话/事件记录】**，对这条旧记忆涉及的内容进行重新核对、拆分或修正重总结。",
         "",
-        "【待修正的旧记忆（仅用于定位它原本想记哪几件事，其中违背原文的因果或错误细节一律作废）】：",
+        "【待修正的旧记忆（仅用于定位它原本想记哪几件事，其中违背原文的因果、错误代词或失真细节一律作废）】：",
         body,
         "",
         `【原始对话/事件记录（唯一事实依据，共 ${provenance.entries.length} 条）】：`,
         sourceText,
         "",
         "═══ 溯源重总结规则（最高优先级）═══",
-        "1. **只针对该旧记忆涉及的话题范围重总结**：原始记录中可能还包含当天其它已经单独建过记忆的无关话题，不要把其它无关话题重复总结进来，只核对并重写与这条旧记忆相关的内容。",
-        "2. **拆开互不相干的事，剔除虚构因果**：",
-        "   - 如果原始记录表明旧记忆把两件互不相关的事、两套独立机制或两个独立话题硬凑在了一起（例如同时聊了攒活动代币与打常驻关卡，二者在原文并无因果），必须用单独一行的 `---` 拆成多条独立记忆！",
+        "1. **核对性别代词与玩笑语境**：严格使用正确的性别代词（男性角色必须用「他」，严禁写成「她」）；若原文只是调侃、开玩笑、假设或打比方，必须明确写出“调侃/打趣”，严禁写成真实发生过的往事！",
+        "2. **只针对该旧记忆涉及的话题范围重总结**：原始记录中可能还包含当天其它已经单独建过记忆的无关话题，不要把其它无关话题重复总结进来，只核对并重写与这条旧记忆相关的内容。",
+        "3. **拆开互不相干的事，剔除虚构因果**：",
+        "   - 如果原始记录表明旧记忆把两件互不相关的事、两套独立机制或两个独立话题硬凑在了一起，必须用单独一行的 `---` 拆成多条独立记忆！",
         "   - 严禁补出原文没明确说过的「通过A就能达成B / 做A是为了B」等因果关联。",
-        "3. **保留真正连贯的一件事**：如果原文确实是同一件事的起因、经过、回应与结果，不要按句子切碎；只需把旧记忆里编造的因果或失真表述按原文修正为准确的 1 条。",
-        "4. **写作规范**：使用第三人称描述，每条正文控制在 40-120 字左右，正文中严禁写入任何日期或具体时间字样。",
+        "4. **保留真正连贯的一件事**：如果原文确实是同一件事的起因、经过、回应与结果，不要按句子切碎；只需把旧记忆里错误的代词、编造的因果或失真表述按原文修正为准确的 1 条。",
+        "5. **写作规范**：使用第三人称描述，每条正文控制在 40-120 字左右，正文中严禁写入任何日期或具体时间字样。",
         "",
         "═══ 输出格式（不要输出思考过程或解释）═══",
         "多条记忆之间用单独一行的 `---` 分隔；每条末尾必须各自单独输出两行：",
@@ -1085,10 +1160,14 @@ export async function cleanAndSplitManualMemoryText(
         : toLocalDayKey(new Date().toISOString());
     const fallbackYear = Number(fallbackDate.slice(0, 4)) || new Date().getFullYear();
 
-    const prompt = DEFAULT_MANUAL_TEXT_CLEAN_PROMPT
-        .replace(/\{\{char\}\}/gi, characterName || "角色")
-        .replace(/\{\{eventDate\}\}/gi, fallbackDate)
-        .replace(/\{\{content\}\}/gi, trimmed);
+    const charProfile = buildCharacterSummaryProfile(characterId, characterName);
+    const prompt = injectCharacterProfileIntoPrompt(
+        DEFAULT_MANUAL_TEXT_CLEAN_PROMPT
+            .replace(/\{\{char\}\}/gi, characterName || "角色")
+            .replace(/\{\{eventDate\}\}/gi, fallbackDate)
+            .replace(/\{\{content\}\}/gi, trimmed),
+        charProfile,
+    );
 
     let result = await simpleLLMCall(
         apiConfig,

@@ -42,11 +42,12 @@ function isUserManual(entry: MemoryEntry): boolean {
     return String(entry.metadata?.origin ?? "") === "user_manual";
 }
 
-/** 当前可被角色管理的记忆：排除已弃用、已被接替、用户手写的核心设定 */
+/** 当前可被角色管理的记忆：排除已弃用、已被接替、已移除的角色反思旧条目、用户手写的核心设定 */
 function manageableEntries(entries: MemoryEntry[]): MemoryEntry[] {
     return entries.filter(entry =>
         !isEntryTrashed(entry)
         && !isEntrySuperseded(entry)
+        && entry.metadata?.origin !== "character_reflection"
         && !(entry.type === "core" && isUserManual(entry)),
     );
 }

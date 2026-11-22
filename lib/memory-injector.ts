@@ -150,12 +150,10 @@ export function formatCoreMemories(memories: MemoryEntry[]): string {
         const eventDate = resolveEntryDateKey(entry);
         const cleanBody = (stripMemoryStructuredSections(entry.content) || entry.content).replace(/\s*\n+\s*/g, " ").trim();
         const origin = entry.metadata?.origin;
-        let prefix = `[${eventDate}]`;
-        if (origin === "character_reflection") {
-            prefix = `[${eventDate}｜我近期的内心反思与应对打算]`;
-        } else if (origin === "core_summary") {
-            prefix = `[${eventDate}｜近期认知与成长沉淀]`;
-        }
+        if (origin === "character_reflection") continue;
+        const prefix = origin === "core_summary"
+            ? `[${eventDate}｜近期认知与成长沉淀]`
+            : `[${eventDate}]`;
         lines.push(`- ${prefix} ${cleanBody}`);
     }
     return lines.join("\n");

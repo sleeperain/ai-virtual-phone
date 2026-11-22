@@ -37,8 +37,6 @@ export type MemoryConfig = {
     vnSummaryPrompt: string;                // user-editable prompt for VN chapter summarization
     /** 事件盒总结提示词：留空则使用内置 DEFAULT_EVENT_BOX_SUMMARY_PROMPT */
     eventBoxSummaryPrompt?: string;
-    /** 角色反思提示词：留空则使用内置 DEFAULT_REFLECTION_PROMPT */
-    reflectionPrompt?: string;
     shortTermAllowedSources?: {
         chat?: boolean;
         group_chat?: boolean;
@@ -63,20 +61,24 @@ export type MemorySearchResult = {
 
 /**
  * Default summarization prompt template.
- * Placeholders: {{char}}, {{earliest}}, {{latest}}, {{events}}
+ * Placeholders: {{char}}, {{charProfile}}, {{earliest}}, {{latest}}, {{events}}
  */
-export const DEFAULT_SUMMARIZATION_PROMPT = `你是一个记忆整理助手。请将以下同一天内发生的事件记录，按「独立话题/事件」拆分为 1 至多条高价值的长期记忆（支持 Markdown 格式）。
+export const DEFAULT_SUMMARIZATION_PROMPT = `你是一个严谨的记忆整理助手。请将以下同一天内发生的事件记录，按「独立话题/事件」拆分为 1 至多条高价值的长期记忆（支持 Markdown 格式）。
 
 角色：{{char}}
+{{charProfile}}
 
 事件记录：
 {{events}}
 
 严格要求：
-1. **按话题拆条（严禁混杂、严禁强加因果）**：如果当天发生了多件互不相关的独立事件、不同机制或不同话题（哪怕发生在同一时段或同一场景下），必须拆分成多条独立记忆，每条记忆之间用单独一行的 \`---\` 分隔。除非原始事件记录中明确写明了因果或前提关系，否则严禁把两件独立的事合并成一条，也严禁自行脑补「做A是为了B / 通过A就能达成B」等原文没有的关联！
-2. **正文中严禁写入任何日期或具体时间**（如“10月23日”、“上午”、“18:03”、“傍晚”等一律不要写，系统会自动记录该记忆发生的日期）。
-3. **精炼高价值内容**：使用第三人称描述{{char}}和用户之间的互动，保留关键事实、承诺、情感与关系变化、用户个人偏好/经历与核心观点结论；跳过无意义的寒暄流水账。单条记忆正文控制在 40-120 字左右。
-4. **每条记忆末尾必须各自附上「重要性」和「检索关键词」**：
+1. **严格核对人称代词与言语事实边界（杜绝性别错乱与假戏真做）**：
+   - 必须严格按照上方角色基本信息中的性别使用正确的第三人称代词（男性角色必须用「他」，女性角色用「她」，不确定时直接称呼名字「{{char}}」，绝不乱用「她」指代男性角色）！
+   - **严禁把玩笑、调侃、打比方、假设（如“就算你扮成XX也没人看出来”、“要是去当XX”）写成真实发生过的行动或过往经历**！凡是口头打趣、假设、比喻、吐槽或角色扮演玩笑，必须明确点明「用户调侃/打趣说……」「双方开玩笑聊到……」，绝不能抽掉语境变成「{{char}}曾经扮过/做过某事」！
+2. **按话题拆条（严禁混杂、严禁强加因果）**：如果当天发生了多件互不相关的独立事件、不同机制或不同话题（哪怕发生在同一时段或同一场景下），必须拆分成多条独立记忆，每条记忆之间用单独一行的 \`---\` 分隔。除非原始事件记录中明确写明了因果或前提关系，否则严禁把两件独立的事合并成一条，也严禁自行脑补「做A是为了B / 通过A就能达成B」等原文没有的关联！
+3. **正文中严禁写入任何日期或具体时间**（如“10月23日”、“上午”、“18:03”、“傍晚”等一律不要写，系统会自动记录该记忆发生的日期）。
+4. **精炼高价值内容**：使用第三人称描述{{char}}和用户之间的互动，保留关键事实、承诺、情感与关系变化、用户个人偏好/经历与核心观点结论；跳过无意义的寒暄流水账。单条记忆正文控制在 40-120 字左右。
+5. **每条记忆末尾必须各自附上「重要性」和「检索关键词」**：
    - **重要性**：1-10 的整数（日常闲聊/小事 4-6，重要偏好/约定/情绪互动 7-8，关系转折/核心设定/重大事件 9-10）
    - **检索关键词**：3-8 个核心词（涵盖该条记忆涉及的人名、作品名、地点、核心事件、物品或主题词，用顿号分隔）
 
@@ -91,18 +93,16 @@ export const DEFAULT_SUMMARIZATION_PROMPT = `你是一个记忆整理助手。�
 
 /**
  * Default core-memory summarization prompt template.
- * Placeholders: {{char}}, {{earliest}}, {{latest}}, {{previous}}, {{previousRefined}}, {{events}}
+ * Placeholders: {{char}}, {{charProfile}}, {{earliest}}, {{latest}}, {{previous}}, {{events}}
  */
 export const DEFAULT_CORE_MEMORY_PROMPT = `你是一个核心记忆整理助手。你的任务是以角色的内在视角，将长期记忆中的经历提炼为角色自身的成长脉络，这不是关系档案，而是角色"经历过这些事之后，变成了怎样的人"的心理沉淀。
 
 角色：{{char}}
+{{charProfile}}
 时间跨度：{{earliest}} 至 {{latest}}
 
 上一轮核心记忆总结（若为首次提炼则为空）：
 {{previous}}
-
-角色本人对上一轮的修正意见（可能为空；只参考其中对性格、动机、关系定性的判断，不得据此新增长期记忆里没有的事实）：
-{{previousRefined}}
 
 本周期长期记忆记录：
 {{events}}
@@ -153,13 +153,16 @@ export const DEFAULT_CORE_MEMORY_PROMPT = `你是一个核心记忆整理助手�
 export const DEFAULT_MANUAL_TEXT_CLEAN_PROMPT = `你是一个专业的记忆录入清洗与拆分助手。用户手动录入了一段文本（可能是跨天日志、聊天记录摘录、事件笔记或多段长文），请将其清洗、整理并拆分为 1 至多条「单一独立话题/事件」的长期记忆。
 
 角色：{{char}}
+{{charProfile}}
 默认参考日期：{{eventDate}}
 
 用户录入原文：
 {{content}}
 
 请严格遵守以下规则：
-1. **忠于原文事实（严禁编造）**：只能基于用户录入文本中已有的事实、互动、约定、偏好与关系进展进行清洗与精炼，绝不虚构原文没有的细节。
+1. **忠于原文事实与角色性别代词（严禁编造、严禁假戏真做）**：
+   - 严格按照角色性别使用「他」或「她」（男性必须用「他」），绝不写错性别代词。
+   - 只能基于原文已有的事实提炼；对于玩笑、调侃、比喻、假设（如“调侃他扮作某人也没违和感”），必须保留“调侃/开玩笑/打比方”的语境定性，严禁将其改写成真实发生过的往事或行动！
 2. **按独立话题或不同日期拆条**：如果原文包含了多件不同的事、多个不同话题或跨越了不同日期的事件，必须拆分成多条独立记忆，每条记忆之间用单独一行的 \`---\` 分隔。如果原文只讲了同一件事，则只整理为 1 条即可。
 3. **自动提取事件日期与清除正文时间字样**：
    - 仔细识别原文中出现的日期线索（如“2025年10月24日”、“10.24”、“10月24日”等），将其换算为 \`YYYY-MM-DD\`（若只写了月日，年份默认与参考日期 \`{{eventDate}}\` 一致）写在末尾的 \`**事件日期**\` 字段；若未提到具体日期，则使用参考日期 \`{{eventDate}}\`。
@@ -197,9 +200,8 @@ export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
     summarizationPrompt: DEFAULT_SUMMARIZATION_PROMPT,
     coreMemoryPrompt: DEFAULT_CORE_MEMORY_PROMPT,
     vnSummaryPrompt: "",
-    // 这两项留空表示「跟随内置默认」，避免 memory-types 反向依赖各模块的默认常量
+    // 留空表示「跟随内置默认」，避免 memory-types 反向依赖模块的默认常量
     eventBoxSummaryPrompt: "",
-    reflectionPrompt: "",
     shortTermAllowedSources: {
         chat: true,
         group_chat: true,

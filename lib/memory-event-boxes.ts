@@ -13,7 +13,13 @@ import { isEntryTrashed } from "./memory-trash";
 import { resolveAuxiliaryApiConfig } from "./settings-storage";
 import { generateEmbedding, resolveEmbeddingModel, cosineSimilarity, keywordOverlapRatio } from "./memory-embedding";
 import { simpleLLMCall } from "./api-helpers";
-import { resolveSummarizationApiConfig, extractMemoryStructuredMeta, stripMemoryStructuredSections } from "./memory-summarizer";
+import {
+    resolveSummarizationApiConfig,
+    extractMemoryStructuredMeta,
+    stripMemoryStructuredSections,
+    buildCharacterSummaryProfile,
+    injectCharacterProfileIntoPrompt,
+} from "./memory-summarizer";
 
 export const EVENT_BOX_KV_PREFIX = "ai_phone_memory_boxes_";
 registerDynamicPrefix(EVENT_BOX_KV_PREFIX);
@@ -184,7 +190,7 @@ export function isEntryArchived(entry: MemoryEntry): boolean {
 export function filterRecallableEntries(entries: MemoryEntry[]): MemoryEntry[] {
     const digestBoxIds = new Set<string>();
     for (const entry of entries) {
-        if (isEntryBoxDigest(entry)) {
+        if (isEntryBoxDigest(entry) && !isEntryTrashed(entry)) {
             const boxId = String(entry.metadata?.[EVENT_BOX_META_KEYS.digestOf] ?? "");
             if (boxId) digestBoxIds.add(boxId);
         }
@@ -194,7 +200,7 @@ export function filterRecallableEntries(entries: MemoryEntry[]): MemoryEntry[] {
         if (isEntryTrashed(entry)) return false;
         if (!isEntryArchived(entry)) return true;
         const archivedBoxId = String(entry.metadata?.[EVENT_BOX_META_KEYS.archivedInto] ?? "");
-        // 只有当该盒子确实存在总结条目时，才由总结条目代替；否则兜底保留原文召回
+        // 只有当该盒子确实存在「未被移入最近删除」的有效总结条目时，才由总结条目代替；否则兜底保留原文召回
         return !digestBoxIds.has(archivedBoxId);
     });
 }
@@ -217,10 +223,13 @@ export function getBoxLayers(entries: MemoryEntry[], box: MemoryEventBox): {
     archivedEntries: MemoryEntry[];
     allMemberEntries: MemoryEntry[];
 } {
-    const digestEntry = entries.find(
+    // 已被移入「最近删除」的记忆（含被删掉的总结或成员记忆）一律不参与事件盒展示与归纳，
+    // 只有用户在回收站恢复后才会重新回到盒内。
+    const activeEntries = entries.filter(e => !isEntryTrashed(e));
+    const digestEntry = activeEntries.find(
         e => (box.digestEntryId && e.id === box.digestEntryId) || e.metadata?.[EVENT_BOX_META_KEYS.digestOf] === box.id
     );
-    const allMemberEntries = entries
+    const allMemberEntries = activeEntries
         .filter(e => getEntryBoxId(e) === box.id && !isEntryBoxDigest(e))
         .sort((a, b) => {
             const da = entryDateKey(a);
@@ -303,29 +312,29 @@ export async function unarchiveSingleBoxEntry(entry: MemoryEntry): Promise<Memor
 
 // ── 手动总结事件盒（生成/更新「先前事件的总结」+ 自动向量化 + 原记忆归档）──
 
-export const DEFAULT_EVENT_BOX_SUMMARY_PROMPT = `你是一个擅长梳理叙事脉络的角色记忆整理专家。下面是{{char}}与用户围绕同一事件脉络的记忆记录。
-请对这些记录进行**深度提炼与因果重构**，写成一段逻辑连贯、主线清晰的事件总结，并根据完整脉络更新精准的事件盒标题与重要性评分。
+export const DEFAULT_EVENT_BOX_SUMMARY_PROMPT = `你是一个严谨客观的角色记忆归档专家。下面是{{char}}与用户围绕同一事件脉络的记忆记录。
+请忠实于原始事实，将这些记录整合为一段脉络清晰、语义保真的事件总结，并同步更新精准的事件盒标题与重要性评分。
 
 角色：{{char}}
+{{charProfile}}
 当前事件盒名称：{{title}}
 时间跨度：{{earliest}} 至 {{latest}}
 {{previousDigestSection}}
 本次需要整合的事件记录（按时间从早到晚）：
 {{events}}
 
-严格要求（核心铁律）：
-1. **严禁机械拼接与原样复述**：
-   - 绝对禁止把各条记录里的句子按顺序抄写或生硬拼接在一起！
-   - 必须先通读全部记录，找出「这条事件的核心主线是什么」，用统一的叙事语言**重写整合**，合并重复动作与反复拉扯的过程，压缩为精炼的叙事脉络。
-2. **串联前因后果（起因 → 经过/转折 → 结果与当前状态）**：
-   - 明确交代事情因何而起（起因/背景）、中间经历了怎样的推进或转折（关键行动、分歧或互动）、最终达成了什么结果或约定（当前定论与后续影响）。
-   - 如果有「先前事件的总结」，需将其与新进展打通重构为一篇完整的连贯脉络；若新进展推翻或改变了旧状态，直接以最新进展修正结论。
-3. **果断剔除无关枝节与噪音**：
-   - 单条日常记忆中往往夹杂着顺带提及的闲聊、与本事件主线无关的琐碎插曲、一时的情绪寒暄或场景枝节（例如：讨论正事时顺便聊起晚饭吃什么、随口开的一句无关玩笑等）。
-   - **凡是不影响该事件核心起因、推进转折与最终结果的支线细节，必须彻底剔除**，只保留推动主线发展的关键事实、核心约定与实质性的情感/关系变化。
-4. **同步更新事件标题**：根据重构后的核心主线，提炼一个 5～14 字的中文事件标题（必须用动宾短语或主谓短语点明具体发生了什么事，如“筹备海边生日惊喜”、“胃痛急诊与悉心照料”；**严禁使用“XX与XX”、“XX和XX”、“关于XX”这种名词堆砌格式**，不要带人名作并列主语，不要加引号或书名号）。
-5. **重新评估重要性（1-10整数）**：根据该事件整条脉络对角色关系、核心设定或关键约定的实际影响程度，客观给出 1-10 的重要性评分（日常小事推进 5-6，重要约定/深层互动 7-8，关系重大转折/关键里程碑 9-10）。
-6. **严禁编造 & 不写具体时间戳**：只基于已有记录提炼，绝不虚构未发生的细节；正文中不要出现具体日期或时间字样（系统会自动记录时间跨度）；使用第三人称客观叙述，控制在 100～240 字之间，一段话讲透前因后果。
+严格要求（核心铁律，违反任意一条即为严重失真）：
+1. **严格核对人称代词（严禁写错角色性别）**：
+   - 必须严格按照上方角色身份说明使用正确的第三人称代词（男性角色必须全程用「他」或直接写「{{char}}」，绝对禁止把男性角色写成「她」；女性角色用「她」）。若先前总结中写错了代词性别，本次总结必须一并纠正！
+2. **严守言语与事实边界（绝对严禁把玩笑/调侃/比喻写成真实经历！）**：
+   - 记录中凡是标明或属于「调侃、打趣、开玩笑、吐槽、打比方、假设、脑洞、角色扮演戏言」的内容（例如：用户调侃{{char}}扮作观音也没人看得出破绽），**本质只是口头玩笑话，绝不是{{char}}真的做过这件事**！
+   - 总结时若需提及，必须保留“调侃/打趣说……”的言语定性；若只是顺口一句无关主线的玩笑，直接省略即可。**绝对严禁剥离“调侃/假设”语境将其篡改、坐实为「{{char}}曾经扮过XX / 做过XX的往事」**！
+3. **忠实梳理脉络，严禁脑补因果**：
+   - 按「事情起因 → 实际经过/互动反应 → 当前结果或约定」将重复拉扯压缩合并为连贯的一段话，避免逐句生硬照抄。
+   - **只能整合记录中明确发生过的事实，严禁为了“故事完整”自行脑补原文没有的背景、动机或过往经历**！若有「先前事件的总结」，与新进展合并时以最新事实为准。
+4. **果断剔除无关枝节**：与本事件核心起因、推进和结果无关的顺口闲聊或零碎寒暄直接剔除，只保留真正推动该事件的关键事实、承诺与关系变化。
+5. **同步更新事件标题**：提炼一个 5～14 字的中文事件标题（用动宾或主谓短语点明具体发生了什么事，如“筹备海边生日惊喜”、“胃痛急诊与悉心照料”；**严禁使用“XX与XX”、“XX和XX”、“关于XX”这种名词堆砌格式**，不要加引号或书名号；更不要把一句玩笑话当成标题）。
+6. **重新评估重要性（1-10整数）与字数规范**：客观给出 1-10 的重要性评分（日常推进 5-6，重要约定/深层互动 7-8，关系重大转折 9-10）。正文不写具体日期或时间字样，使用第三人称客观叙述，控制在 80～220 字之间。
 7. **末尾固定输出三行元数据**（用于同步更新标题、重要性与检索向量）：
 **事件标题**：更新后的事件标题
 **重要性**：（1-10的整数）
@@ -402,20 +411,32 @@ export async function summarizeEventBoxManually(
         })
         .join("\n");
 
+    const charProfile = buildCharacterSummaryProfile(characterId, characterName);
+
     // 用用户在「记忆库 → 设置 → 事件盒提示词」里保存的模板；没配过就回退内置默认
-    const promptTemplate = (loadMemoryConfig().eventBoxSummaryPrompt ?? "").trim() || DEFAULT_EVENT_BOX_SUMMARY_PROMPT;
-    const prompt = promptTemplate
-        .replace(/\{\{char\}\}/gi, characterName || "角色")
-        .replace(/\{\{title\}\}/gi, box.title)
-        .replace(/\{\{earliest\}\}/gi, earliest)
-        .replace(/\{\{latest\}\}/gi, latest)
-        .replace(/\{\{previousDigestSection\}\}/gi, previousDigestSection)
-        .replace(/\{\{events\}\}/gi, eventsText);
+    // 兼容清理：若用户此前存下的旧版内置模板含「深度提炼与因果重构」且未包含代词与玩笑边界保护，自动附加强约束
+    let promptTemplate = (loadMemoryConfig().eventBoxSummaryPrompt ?? "").trim() || DEFAULT_EVENT_BOX_SUMMARY_PROMPT;
+    if (promptTemplate.includes("深度提炼与因果重构") && !promptTemplate.includes("严守言语与事实边界")) {
+        promptTemplate = DEFAULT_EVENT_BOX_SUMMARY_PROMPT;
+    } else if (!promptTemplate.includes("玩笑") && !promptTemplate.includes("调侃")) {
+        promptTemplate += `\n\n【事实与代词硬性护栏（最高优先级）】：\n1. 严格按上方角色性别使用正确的第三人称代词（男性角色必须用「他」，严禁写成「她」）。\n2. 凡属调侃、开玩笑、假设、打比方的内容，严禁剥离语境改写成角色真实发生过的往事或行动！`;
+    }
+
+    const prompt = injectCharacterProfileIntoPrompt(
+        promptTemplate
+            .replace(/\{\{char\}\}/gi, characterName || "角色")
+            .replace(/\{\{title\}\}/gi, box.title)
+            .replace(/\{\{earliest\}\}/gi, earliest)
+            .replace(/\{\{latest\}\}/gi, latest)
+            .replace(/\{\{previousDigestSection\}\}/gi, previousDigestSection)
+            .replace(/\{\{events\}\}/gi, eventsText),
+        charProfile,
+    );
 
     const result = await simpleLLMCall(
         apiConfig,
         [{ role: "user", content: prompt }],
-        { temperature: 0.3, label: `事件盒总结·${box.title}` },
+        { temperature: 0.2, label: `事件盒总结·${box.title}` },
     );
 
     if (!result.content) {
@@ -667,7 +688,7 @@ export async function summarizeAllPendingEventBoxes(
                 ? digest.metadata.eventBoxTitle
                 : box.title;
             currentEntries = currentEntries.map(e => {
-                if (getEntryBoxId(e) === box.id && !isEntryBoxDigest(e)) {
+                if (!isEntryTrashed(e) && getEntryBoxId(e) === box.id && !isEntryBoxDigest(e)) {
                     return {
                         ...e,
                         updatedAt: now,
@@ -801,7 +822,9 @@ export async function buildSmartBoxSuggestions(
     allLongTermEntries: MemoryEntry[],
     existingBoxes: MemoryEventBox[],
 ): Promise<SmartBoxSuggestion[]> {
-    const ungrouped = allLongTermEntries.filter(e => !getEntryBoxId(e) && !isEntryBoxDigest(e));
+    // 严格排除「最近删除」中的已删记忆，防止回收站存档被智能关联拉进事件盒
+    const activeLongTerm = allLongTermEntries.filter(e => !isEntryTrashed(e));
+    const ungrouped = activeLongTerm.filter(e => !getEntryBoxId(e) && !isEntryBoxDigest(e));
     if (ungrouped.length === 0) return [];
 
     const suggestions: SmartBoxSuggestion[] = [];
@@ -810,7 +833,7 @@ export async function buildSmartBoxSuggestions(
     // 第一步：尝试匹配进已有的事件盒（作为该盒的新事件进展）
     for (const box of existingBoxes) {
         if (box.status === "settled") continue;
-        const { digestEntry, allMemberEntries } = getBoxLayers(allLongTermEntries, box);
+        const { digestEntry, allMemberEntries } = getBoxLayers(activeLongTerm, box);
         const anchors = digestEntry ? [digestEntry, ...allMemberEntries] : allMemberEntries;
         if (anchors.length === 0) continue;
 

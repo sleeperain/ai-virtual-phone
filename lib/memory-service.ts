@@ -107,13 +107,7 @@ export async function retrieveCoreMemoriesForPrompt(
     const coreEntries = filterRecallableEntries(await loadMemoryEntriesByType(characterId, "core"));
     if (coreEntries.length === 0) return [];
 
-    // 角色反思与增量演进的核心记忆总结均只保留未被接替（或最新一轮）的条目参与对话注入：
-    // 旧轮次的历史记录仍保留在核心记忆库供回看，但不注入当前对话上下文，防止过期心境或已推翻的旧判断干扰当前扮演。
-    const reflections = coreEntries
-        .filter(e => e.metadata?.origin === "character_reflection")
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    const latestReflectionId = reflections[0]?.id;
-
+    // 增量演进的核心记忆总结只保留最新一轮参与对话注入（已移除角色反思功能，旧存量反思条目不再注入）：
     const autoCoreSummaries = coreEntries
         .filter(e => e.metadata?.origin === "core_summary")
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -121,7 +115,7 @@ export async function retrieveCoreMemoriesForPrompt(
 
     const candidateEntries = coreEntries.filter(e => {
         if (e.metadata?.origin === "character_reflection") {
-            return e.id === latestReflectionId;
+            return false;
         }
         if (e.metadata?.origin === "core_summary") {
             return e.id === latestCoreSummaryId;
