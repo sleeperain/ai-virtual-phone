@@ -527,9 +527,18 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     const [editingText, setEditingText] = useState("");
     const [annotationTranslationOverrides, setAnnotationTranslationOverrides] = useState<Record<string, boolean>>({});
     const [openAnnotationParagraphs, setOpenAnnotationParagraphs] = useState<Record<string, boolean>>({});
-    /** 翻页模式下就地展开的句子批注。默认全部收起，正文里只留一枚 🪶。
-     *  展开把下文推下去、不收进分页高度——所以这一页可能比一屏高，正文区允许滚动。 */
-    const [expandedNotes, setExpandedNotes] = useState<Record<string, boolean>>({});
+    /** 换书时顺手清掉的旧展开态。批注改成悬浮卡以后正文里不再就地展开，
+     *  这里只保留清空动作，避免老状态跨书残留。 */
+    const [, setExpandedNotes] = useState<Record<string, boolean>>({});
+    /** 当前打开的悬浮批注卡：🪶 点开后浮在正文上方，不撑开排版。
+     *  anchor 坐标是相对 surfaceRef 的，滚动时跟着走。 */
+    const [floatingNote, setFloatingNote] = useState<{
+        notes: ReadingAnnotation[];
+        anchorTop: number;
+        anchorLeft: number;
+        anchorHeight: number;
+        placeAbove: boolean;
+    } | null>(null);
     const toggleParagraphAnnotationBubble = useCallback((cIdx: number, pIdx: number) => {
         const key = `${cIdx}:${pIdx}`;
         setOpenAnnotationParagraphs((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -780,22 +789,30 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                             ? renderAnnotationItem(item.annotation)
                             : item.kind === "image"
                                 ? renderImageItem(item.image, i)
-                                : (
-                                    <Fragment key={i}>
-                                        {renderLine(item, i)}
-                                        {/* 点开 🪶 后，批注卡片就地接在这一行下面，下文顺次往下推。
-                                            这一页因此有可能比一屏高——正文区已经允许滚动，末行不会再被裁掉。 */}
-                                        {(item.notes || [])
-                                            .filter((note) => expandedNotes[note.id])
-                                            .map((note) => renderAnnotationItem(note))}
-                                    </Fragment>
-                                )
+                                : renderLine(item, i)
                 ))}
             </div>
         );
     };
 
     useEffect(() => { setMarks(loadReadingMarks(book.id)); }, [book.id]);
+
+    // 悬浮批注卡是按🪶当时的屏幕位置定位的：滚动/翻页后就对不上了，直接收起。
+    // 翻页模式下页面内容自己也可能滚（展开撑高时），所以在 surface 上捕获阶段一并接住。
+    useEffect(() => {
+        if (!floatingNote) return;
+        const close = () => setFloatingNote(null);
+        const body = scrollRef.current;
+        const surface = surfaceRef.current;
+        body?.addEventListener("scroll", close, { passive: true });
+        surface?.addEventListener("scroll", close, { passive: true, capture: true });
+        window.addEventListener("resize", close);
+        return () => {
+            body?.removeEventListener("scroll", close);
+            surface?.removeEventListener("scroll", close, { capture: true } as EventListenerOptions);
+            window.removeEventListener("resize", close);
+        };
+    }, [floatingNote]);
 
     useEffect(() => {
         const el = footerRef.current;
@@ -1178,7 +1195,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         if (sel && !sel.isCollapsed) return; // 正在选字，交给选字菜单
         const target = e.target as HTMLElement | null;
         if (!target) return;
-        if (target.closest(".reading-sentence-menu, .reading-mark-menu, .reading-selection-menu")) return;
+        if (target.closest(".reading-sentence-menu, .reading-mark-menu, .reading-selection-menu, .reading-floating-note-card")) return;
         // 长按刚弹过菜单，这次 click 是松手的余波
         if (longPressClickGuardRef.current) {
             longPressClickGuardRef.current = false;
@@ -1197,6 +1214,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         }
         setMarkMenu(null);
         setSentenceMenu(null);
+        setFloatingNote(null);
     };
 
     const openShareDialog = (mark: ReadingMark) => {
@@ -1831,33 +1849,10 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         else if (overTop > 0) container.scrollTop -= overTop;
     };
 
-    /** 展开后把卡片露出来：它插在被批注那一段的下方，可能正好在视口外。
-     *  从卡片往上找最近的可滚动祖先，找到谁就滚谁；都没有就交给正文区 `scrollRef`。
-     *  （翻页模式下页面那几层是放开裁剪、不自己滚的，最终落到正文区上。） */
-    const ensureNoteCardVisible = (noteId: string) => {
-        const reveal = () => {
-            const el = surfaceRef.current?.querySelector<HTMLElement>(`[data-annotation-id="${noteId}"]`);
-            if (!el) return;
-            // 从卡片往上找到最近的可滚动祖先，优先照顾它
-            for (let node = el.parentElement; node && node !== surfaceRef.current; node = node.parentElement) {
-                const style = window.getComputedStyle(node);
-                const scrollable = /(auto|scroll)/.test(style.overflowY)
-                    && node.scrollHeight > node.clientHeight + 1;
-                if (scrollable) {
-                    revealInScrollContainer(node, el);
-                    return;
-                }
-            }
-            revealInScrollContainer(scrollRef.current, el);
-        };
-        // 等卡片真正进 DOM 再量：一帧内 setState 还没 commit，量到的是旧布局
-        window.requestAnimationFrame(() => window.requestAnimationFrame(reveal));
-    };
-
-    /** 行内那枚小羽毛。点一下就在这一行（滚动模式下是这一段）下面把批注卡片展开/收起，
-     *  下文顺次往下推；它本身不占正文高度，也不参与分页。翻页与滚动模式共用。 */
+    /** 行内那枚小羽毛。点一下弹出悬浮批注卡片（覆盖正文上方，不撑开排版），
+     *  再点一下或点空白处收起。翻页与滚动模式共用。 */
     const renderNoteFeather = (note: ReadingAnnotation) => {
-        const open = expandedNotes[note.id] === true;
+        const open = floatingNote?.notes.some((item) => item.id === note.id) === true;
         return (
             <button
                 key={`feather-${note.id}`}
@@ -1875,9 +1870,32 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                     e.stopPropagation();
                     // 翻页动画那一层是张快照，点它不该改状态（否则下一页一进来就是展开的）
                     if (flipAnim) return;
-                    const next = !expandedNotes[note.id];
-                    setExpandedNotes((prev) => ({ ...prev, [note.id]: !prev[note.id] }));
-                    if (next) ensureNoteCardVisible(note.id);
+                    if (open) { setFloatingNote(null); return; }
+                    const el = e.currentTarget as HTMLElement;
+                    const rect = el.getBoundingClientRect();
+                    const surfaceRect = surfaceRef.current?.getBoundingClientRect();
+                    if (!surfaceRect) return;
+                    // 同一锚点（同一句话末字）上的多条批注列进同一张卡片
+                    const paragraphLength = chapters[note.chapterIndex]?.paragraphs[note.paragraphIndex]?.length ?? 0;
+                    const anchor = noteAnchorOffset(note, paragraphLength);
+                    const group = annotations
+                        .filter((item) =>
+                            item.chapterIndex === note.chapterIndex &&
+                            item.paragraphIndex === note.paragraphIndex &&
+                            isNoteAnnotation(item) &&
+                            noteAnchorOffset(item, paragraphLength) === anchor,
+                        )
+                        .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+                    // 下方空间不够放卡片（估 220px）就翻到上方
+                    const placeAbove = rect.bottom + 220 > window.innerHeight && rect.top > 240;
+                    setActiveAnnotationId(null);
+                    setFloatingNote({
+                        notes: group.length > 0 ? group : [note],
+                        anchorTop: rect.top - surfaceRect.top,
+                        anchorLeft: rect.left - surfaceRect.left + rect.width / 2,
+                        anchorHeight: rect.height,
+                        placeAbove,
+                    });
                 }}
             >
                 🪶
@@ -4344,13 +4362,9 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                                                 indent: true,
                                                                 segEnd: isLastSeg,
                                                                 charStart,
-                                                                // 滚动模式也走折叠：正文里只留一枚 🪶，点开才在这一段下面展开
                                                                 ...(matchingNotes.length > 0 ? { notes: matchingNotes } : {}),
                                                                 ...(isLastSeg && paragraphComments.length > 0 ? { annotationCount: paragraphComments.length } : {}),
                                                             }, sIndex)}
-                                                            {matchingNotes
-                                                                .filter((note) => expandedNotes[note.id])
-                                                                .map((note) => renderAnnotationItem(note))}
                                                         </div>
                                                     );
                                                 });
@@ -4954,6 +4968,122 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                     </div>
                 );
             })()}
+            {/* 悬浮批注卡：点🪶弹出，浮在正文上方，不撑开排版。同一锚点的多条批注列在同一张卡里 */}
+            {floatingNote && (
+                <div
+                    className={`reading-floating-note-card${floatingNote.placeAbove ? " reading-floating-note-card--above" : ""}`}
+                    data-no-nav="true"
+                    style={{
+                        top: floatingNote.placeAbove
+                            ? floatingNote.anchorTop - 8
+                            : floatingNote.anchorTop + floatingNote.anchorHeight + 8,
+                        left: floatingNote.anchorLeft,
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    onPointerDown={(e) => e.stopPropagation()}
+                >
+                    {floatingNote.notes.map((note, index) => {
+                        const isUser = note.authorType === "user";
+                        const displayName = (isUser ? userDisplayName : note.characterName) || "TA";
+                        const avatarUrl = isUser
+                            ? userAvatarUrl
+                            : (note.characterId ? characterById.get(note.characterId)?.avatar || "" : "");
+                        const stamp = (() => {
+                            const d = new Date(note.createdAt);
+                            if (Number.isNaN(d.getTime())) return "";
+                            const pad = (n: number) => String(n).padStart(2, "0");
+                            return `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())} 记`;
+                        })();
+                        const menuOpen = activeAnnotationId === note.id;
+                        return (
+                            <div key={note.id}>
+                                {index > 0 && <div className="reading-floating-note-divider" />}
+                                <div
+                                    className="reading-floating-note-item"
+                                    data-annotation-id={note.id}
+                                    data-author={isUser ? "user" : "character"}
+                                    onPointerDown={() => {
+                                        longPressTimer.current = setTimeout(() => {
+                                            setActiveMessageId(null);
+                                            setActiveAnnotationId(note.id);
+                                        }, 500);
+                                    }}
+                                    onPointerUp={() => { if (longPressTimer.current) clearTimeout(longPressTimer.current); }}
+                                    onPointerCancel={() => { if (longPressTimer.current) clearTimeout(longPressTimer.current); }}
+                                    onPointerLeave={() => { if (longPressTimer.current) clearTimeout(longPressTimer.current); }}
+                                >
+                                    <ReadingAnnotationContent
+                                        text={note.content}
+                                        bilingualEnabled={bilingualTranslationEnabled}
+                                        expanded={isAnnotationTranslationExpanded(note.id)}
+                                        onToggle={() => handleAnnotationTranslationToggle(note.id)}
+                                    />
+                                    <div className="reading-floating-note-meta">
+                                        <div className="reading-floating-note-avatar">
+                                            {avatarUrl
+                                                // eslint-disable-next-line @next/next/no-img-element
+                                                ? <img src={avatarUrl} alt="" />
+                                                : <span>{displayName[0] || "?"}</span>}
+                                        </div>
+                                        <div className="reading-floating-note-author">
+                                            <div className="reading-floating-note-name-row">
+                                                <span className="reading-floating-note-name">{displayName}</span>
+                                                <button
+                                                    type="button"
+                                                    className="reading-floating-note-menu-btn"
+                                                    aria-label="批注操作"
+                                                    aria-haspopup="menu"
+                                                    aria-expanded={menuOpen}
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setActiveAnnotationId(menuOpen ? null : note.id);
+                                                    }}
+                                                >
+                                                    <MoreHorizontal size={14} strokeWidth={2} />
+                                                </button>
+                                            </div>
+                                            <span className="reading-floating-note-time">{stamp}</span>
+                                        </div>
+                                    </div>
+                                    {menuOpen && (
+                                        <div className="ctx-menu reading-annotation-menu" onClick={(e) => e.stopPropagation()}>
+                                            <button
+                                                className="ctx-menu-btn"
+                                                onClick={() => {
+                                                    setEditingAnnotation(note);
+                                                    setEditingText(note.content);
+                                                    setActiveAnnotationId(null);
+                                                    setFloatingNote(null);
+                                                }}
+                                            >
+                                                编辑
+                                            </button>
+                                            <button
+                                                className="ctx-menu-btn"
+                                                onClick={() => {
+                                                    copyToClipboard(note.content);
+                                                    setActiveAnnotationId(null);
+                                                }}
+                                            >
+                                                复制
+                                            </button>
+                                            <button
+                                                className="ctx-menu-btn ctx-menu-btn-danger"
+                                                onClick={() => {
+                                                    void handleDeleteReadingAnnotation(note.id);
+                                                    setFloatingNote(null);
+                                                }}
+                                            >
+                                                删除
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
             {activeParagraphCommentModal && (() => {
                 const { chapterIndex: cIdx, paragraphIndex: pIdx } = activeParagraphCommentModal;
                 const allComments = annotations
