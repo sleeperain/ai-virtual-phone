@@ -44,7 +44,7 @@ import { downloadFile } from "@/lib/download-utils";
 import { getSchemes, saveScheme, deleteScheme, type CSSScheme } from "@/lib/css-scheme-storage";
 import { CustomStatusFrame } from "@/components/chat/custom-status-frame";
 import { KeyboardAutoSendDebounceItem } from "@/components/chat/keyboard-auto-send-debounce-item";
-import { BookOpen, ChevronRight, Image as ImageIcon, Video, Mic, UserMinus, UserPlus, Users, Pin, MessageSquare, Search, AlertCircle, Code, Laptop, Trash2, Smile, Sparkles, X, Play, Upload, Download, Save, FolderOpen, type LucideIcon } from "lucide-react";
+import { BookOpen, Calendar, ChevronLeft, ChevronRight, Image as ImageIcon, Video, Mic, UserMinus, UserPlus, Users, Pin, MessageSquare, Search, AlertCircle, Code, Laptop, Trash2, Smile, Sparkles, X, Play, Upload, Download, Save, FolderOpen, type LucideIcon } from "lucide-react";
 import { BINDING_ACCENTS, CONTENT_APP_ACCENTS } from "@/lib/ui-accent-colors";
 import CSSSchemeBar from "@/components/ui/css-scheme-picker";
 import { ConfirmDialog } from "@/components/ui/modal";
@@ -517,7 +517,13 @@ export function ChatSettingsPanel({
     // TA 的电脑：翻看角色云端电脑（连接了角色电脑才显示入口）
     const [showComputer, setShowComputer] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
-    const [submittedSearchQuery, setSubmittedSearchQuery] = useState("");
+    const [searchDateFilter, setSearchDateFilter] = useState("");
+    const [showSearchCalendar, setShowSearchCalendar] = useState(false);
+    const [searchCalendarMonth, setSearchCalendarMonth] = useState<{ year: number; month: number }>(() => {
+        const now = new Date();
+        return { year: now.getFullYear(), month: now.getMonth() };
+    });
+    const [searchAvailableDays, setSearchAvailableDays] = useState<Set<string>>(() => new Set());
     const [searchHistoryMessages, setSearchHistoryMessages] = useState<ChatMessage[]>([]);
     const [searchTotalVisibleCount, setSearchTotalVisibleCount] = useState(0);
     const [searchHasMore, setSearchHasMore] = useState(false);
@@ -529,6 +535,12 @@ export function ChatSettingsPanel({
     const loadSearchHistoryWindow = (count = CHAT_INITIAL_VISIBLE_MESSAGE_COUNT) => {
         const visibleMessages = loadChatMessages(session.id).filter(isSearchVisibleMessage);
         setSearchTotalVisibleCount(visibleMessages.length);
+        const daySet = new Set<string>();
+        for (const m of visibleMessages) {
+            const dk = getSearchMessageDayKey(m.createdAt);
+            if (dk) daySet.add(dk);
+        }
+        setSearchAvailableDays(daySet);
         const nextCount = Math.min(Math.max(count, CHAT_INITIAL_VISIBLE_MESSAGE_COUNT), visibleMessages.length);
         setSearchHistoryMessages(visibleMessages.slice(-nextCount).reverse());
         setSearchHasMore(nextCount < visibleMessages.length);
@@ -537,7 +549,10 @@ export function ChatSettingsPanel({
     const openSearchPanel = () => {
         searchRunRef.current += 1;
         setSearchQuery("");
-        setSubmittedSearchQuery("");
+        setSearchDateFilter("");
+        setShowSearchCalendar(false);
+        const now = new Date();
+        setSearchCalendarMonth({ year: now.getFullYear(), month: now.getMonth() });
         setSearchResults([]);
         setSearchTotalMatchedCount(0);
         setIsSearching(false);
@@ -549,7 +564,8 @@ export function ChatSettingsPanel({
         searchRunRef.current += 1;
         setShowSearch(false);
         setSearchQuery("");
-        setSubmittedSearchQuery("");
+        setSearchDateFilter("");
+        setShowSearchCalendar(false);
         setSearchResults([]);
         setSearchTotalMatchedCount(0);
         setSearchHistoryMessages([]);
@@ -566,13 +582,14 @@ export function ChatSettingsPanel({
         setSearchHasMore(nextCount < visibleMessages.length);
     };
 
-    const runSearch = () => {
+    useEffect(() => {
+        if (!showSearch) return;
         const rawQuery = searchQuery.trim();
+        const dateFilter = searchDateFilter;
         const runId = searchRunRef.current + 1;
         searchRunRef.current = runId;
-        setSubmittedSearchQuery(rawQuery);
 
-        if (!rawQuery) {
+        if (!rawQuery && !dateFilter) {
             setSearchResults([]);
             setSearchTotalMatchedCount(0);
             setIsSearching(false);
@@ -581,13 +598,12 @@ export function ChatSettingsPanel({
         }
 
         const needle = rawQuery.toLowerCase();
+        const isDateOnly = Boolean(dateFilter && !rawQuery);
         const results: ChatMessage[] = [];
         let matchedCount = 0;
-        setSearchResults([]);
-        setSearchTotalMatchedCount(0);
         setIsSearching(true);
 
-        window.setTimeout(() => {
+        const timer = window.setTimeout(() => {
             if (searchRunRef.current !== runId) return;
             const msgs = loadChatMessages(session.id);
             let index = msgs.length - 1;
@@ -599,12 +615,14 @@ export function ChatSettingsPanel({
                 for (; index > stop; index -= 1) {
                     const msg = msgs[index];
                     if (!isSearchVisibleMessage(msg)) continue;
-                    const haystack = getSearchHaystack(msg);
-                    if (haystack && haystack.toLowerCase().includes(needle)) {
-                        matchedCount += 1;
-                        if (results.length < SEARCH_RESULT_LIMIT) {
-                            results.push(msg);
-                        }
+                    if (dateFilter && getSearchMessageDayKey(msg.createdAt) !== dateFilter) continue;
+                    if (needle) {
+                        const haystack = getSearchHaystack(msg);
+                        if (!haystack || !haystack.toLowerCase().includes(needle)) continue;
+                    }
+                    matchedCount += 1;
+                    if (isDateOnly || results.length < SEARCH_RESULT_LIMIT) {
+                        results.push(msg);
                     }
                 }
 
@@ -619,8 +637,11 @@ export function ChatSettingsPanel({
             };
 
             scanChunk();
-        }, 0);
-    };
+        }, rawQuery ? 120 : 0);
+
+        return () => window.clearTimeout(timer);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [showSearch, searchQuery, searchDateFilter, session.id]);
 
     const [groupName, setGroupName] = useState(session.groupName || "");
 
@@ -834,7 +855,8 @@ export function ChatSettingsPanel({
         onClose();
     };
 
-    const searchMode = submittedSearchQuery.trim().length > 0;
+    const searchMode = searchQuery.trim().length > 0 || Boolean(searchDateFilter);
+    const isDateOnlyMode = Boolean(searchDateFilter && !searchQuery.trim());
     const displayedSearchMessages = searchMode ? searchResults : searchHistoryMessages;
 
     const renderSearchMessage = (msg: ChatMessage, index: number) => {
@@ -1782,35 +1804,134 @@ export function ChatSettingsPanel({
                     <PageShell title="查找聊天记录" onBack={closeSearchPanel} className="chat-search-history-shell">
                         <div className="chat-search-history-fixed-top">
                             <div className="px-4 pt-2 pb-1.5 flex items-center gap-2">
-                                <input
-                                    autoFocus
-                                    type="text"
-                                    placeholder="搜索聊天记录..."
-                                    value={searchQuery}
-                                    onChange={e => setSearchQuery(e.target.value)}
-                                    onKeyDown={e => {
-                                        if (e.key === "Enter") {
-                                            e.preventDefault();
-                                            runSearch();
-                                        }
-                                    }}
-                                    className="ui-input flex-1 min-w-0"
-                                />
+                                <div className="chat-search-history-input-wrap">
+                                    <Search size={16} strokeWidth={2} className="chat-search-history-input-icon" aria-hidden="true" />
+                                    <input
+                                        autoFocus
+                                        type="text"
+                                        placeholder="搜索聊天记录..."
+                                        value={searchQuery}
+                                        onChange={e => setSearchQuery(e.target.value)}
+                                        className="chat-search-history-input"
+                                    />
+                                    {searchQuery && (
+                                        <button
+                                            type="button"
+                                            aria-label="清除搜索关键词"
+                                            className="chat-search-history-clear-btn"
+                                            onClick={() => setSearchQuery("")}
+                                        >
+                                            <X size={14} strokeWidth={2} />
+                                        </button>
+                                    )}
+                                </div>
                                 <button
                                     type="button"
-                                    aria-label="搜索聊天记录"
-                                    title="搜索"
-                                    onClick={runSearch}
-                                    disabled={isSearching}
-                                    className="h-10 w-10 shrink-0 grid place-items-center border-0 bg-transparent text-[var(--c-icon)] disabled:opacity-40"
+                                    aria-label="按日期检索聊天记录"
+                                    title="按日期检索"
+                                    onClick={() => {
+                                        if (!showSearchCalendar && searchDateFilter) {
+                                            const [y, m] = searchDateFilter.split("-").map(Number);
+                                            if (y && m) setSearchCalendarMonth({ year: y, month: m - 1 });
+                                        }
+                                        setShowSearchCalendar(v => !v);
+                                    }}
+                                    className={`chat-search-history-date-btn ${searchDateFilter || showSearchCalendar ? "is-active" : ""}`}
                                 >
-                                    <Search size={20} strokeWidth={2.1} />
+                                    <Calendar size={20} strokeWidth={1.9} />
                                 </button>
                             </div>
+                            {showSearchCalendar && (() => {
+                                const { year, month } = searchCalendarMonth;
+                                const firstDayWeek = new Date(year, month, 1).getDay();
+                                const daysInMonth = new Date(year, month + 1, 0).getDate();
+                                const cells: (number | null)[] = [];
+                                for (let i = 0; i < firstDayWeek; i += 1) cells.push(null);
+                                for (let d = 1; d <= daysInMonth; d += 1) cells.push(d);
+                                const todayKey = getSearchMessageDayKey(new Date().toISOString());
+                                return (
+                                    <div className="chat-search-calendar-panel">
+                                        <div className="chat-search-calendar-header">
+                                            <button
+                                                type="button"
+                                                aria-label="上个月"
+                                                className="chat-search-calendar-nav"
+                                                onClick={() => setSearchCalendarMonth(prev => prev.month === 0 ? { year: prev.year - 1, month: 11 } : { year: prev.year, month: prev.month - 1 })}
+                                            >
+                                                <ChevronLeft size={16} />
+                                            </button>
+                                            <span className="chat-search-calendar-title">{year}年{month + 1}月</span>
+                                            <button
+                                                type="button"
+                                                aria-label="下个月"
+                                                className="chat-search-calendar-nav"
+                                                onClick={() => setSearchCalendarMonth(prev => prev.month === 11 ? { year: prev.year + 1, month: 0 } : { year: prev.year, month: prev.month + 1 })}
+                                            >
+                                                <ChevronRight size={16} />
+                                            </button>
+                                        </div>
+                                        <div className="chat-search-calendar-weekdays">
+                                            {["日", "一", "二", "三", "四", "五", "六"].map(w => (
+                                                <span key={w}>{w}</span>
+                                            ))}
+                                        </div>
+                                        <div className="chat-search-calendar-grid">
+                                            {cells.map((day, i) => {
+                                                if (!day) return <span key={`empty-${i}`} className="chat-search-calendar-cell is-empty" />;
+                                                const dayKey = `${year}-${padSearchTimeTwo(month + 1)}-${padSearchTimeTwo(day)}`;
+                                                const hasMsg = searchAvailableDays.has(dayKey);
+                                                const isSelected = searchDateFilter === dayKey;
+                                                const isToday = todayKey === dayKey;
+                                                return (
+                                                    <button
+                                                        key={dayKey}
+                                                        type="button"
+                                                        className={`chat-search-calendar-cell ${hasMsg ? "has-msg" : ""} ${isSelected ? "is-selected" : ""} ${isToday ? "is-today" : ""}`}
+                                                        onClick={() => {
+                                                            setSearchDateFilter(prev => prev === dayKey ? "" : dayKey);
+                                                            setShowSearchCalendar(false);
+                                                        }}
+                                                    >
+                                                        <span>{day}</span>
+                                                        {hasMsg && <i className="chat-search-calendar-dot" />}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                        {searchDateFilter && (
+                                            <div className="chat-search-calendar-footer">
+                                                <button
+                                                    type="button"
+                                                    className="chat-search-calendar-reset"
+                                                    onClick={() => {
+                                                        setSearchDateFilter("");
+                                                        setShowSearchCalendar(false);
+                                                    }}
+                                                >
+                                                    清除日期筛选
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })()}
                             <div className="chat-search-history-count-row">
-                                {searchMode && isSearching
-                                    ? "正在统计记录..."
-                                    : `共 ${searchMode ? searchTotalMatchedCount : searchTotalVisibleCount} 条记录`}
+                                <span>
+                                    {searchMode && isSearching
+                                        ? "正在统计记录..."
+                                        : `共 ${searchMode ? searchTotalMatchedCount : searchTotalVisibleCount} 条记录`}
+                                </span>
+                                {searchDateFilter && (
+                                    <button
+                                        type="button"
+                                        className="chat-search-history-date-chip"
+                                        onClick={() => setSearchDateFilter("")}
+                                        title="点击清除日期筛选"
+                                    >
+                                        <span>{searchDateFilter}</span>
+                                        <X size={12} strokeWidth={2} />
+                                    </button>
+                                )}
                             </div>
                         </div>
                         <div className="chat-search-history-scroll">
@@ -1819,7 +1940,7 @@ export function ChatSettingsPanel({
                                     <span className="menu-desc">暂无聊天记录</span>
                                 </div>
                             )}
-                            {searchMode && isSearching && (
+                            {searchMode && isSearching && displayedSearchMessages.length === 0 && (
                                 <div className="ui-empty">
                                     <span className="menu-desc">正在搜索...</span>
                                 </div>
@@ -1843,7 +1964,7 @@ export function ChatSettingsPanel({
                                     查看更多消息
                                 </button>
                             )}
-                            {searchMode && !isSearching && searchTotalMatchedCount > SEARCH_RESULT_LIMIT && (
+                            {searchMode && !isDateOnlyMode && !isSearching && searchTotalMatchedCount > SEARCH_RESULT_LIMIT && (
                                 <div className="ui-empty py-2">
                                     <span className="menu-desc">仅显示最近 {SEARCH_RESULT_LIMIT} 条结果</span>
                                 </div>
