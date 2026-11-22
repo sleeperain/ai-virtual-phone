@@ -554,6 +554,48 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     const chatMovedRef = useRef(false);
     const scrollRef = useRef<HTMLDivElement>(null);
     const chatListRef = useRef<HTMLDivElement>(null); // 共读讨论悬浮窗消息列表（滚动容器）
+    const [noteMenu, setNoteMenu] = useState<{
+        note: ReadingAnnotation;
+        top: number;
+        right: number;
+        placeAbove: boolean;
+    } | null>(null);
+    const suppressSurfaceClickRef = useRef(false);
+
+    const closeFloatingNote = useCallback(() => {
+        setFloatingNote(null);
+        setNoteMenu(null);
+    }, []);
+
+    useEffect(() => {
+        if (!floatingNote) return;
+        const onPointerDown = (event: PointerEvent) => {
+            const target = event.target as HTMLElement | null;
+            if (!target) return;
+            if (target.closest(".reading-floating-note-card, .reading-note-feather")) return;
+            suppressSurfaceClickRef.current = true;
+            window.setTimeout(() => { suppressSurfaceClickRef.current = false; }, 350);
+            setFloatingNote(null);
+            setNoteMenu(null);
+        };
+        window.addEventListener("pointerdown", onPointerDown, true);
+        return () => window.removeEventListener("pointerdown", onPointerDown, true);
+    }, [floatingNote]);
+
+    useEffect(() => {
+        setFloatingNote(null);
+        setNoteMenu(null);
+    }, [book.id, chapterIndex, txtPage, isScrollMode]);
+
+    useEffect(() => {
+        if (!floatingNote) return;
+        const body = scrollRef.current;
+        if (!body) return;
+        const onScroll = () => { setFloatingNote(null); setNoteMenu(null); };
+        body.addEventListener("scroll", onScroll, { passive: true, once: true });
+        return () => body.removeEventListener("scroll", onScroll);
+    }, [floatingNote]);
+
     const txtMeasureLineRef = useRef<HTMLParagraphElement>(null);
     const txtMeasureGapRef = useRef<HTMLDivElement>(null);
     const txtMeasureAnnotationRef = useRef<HTMLDivElement>(null);
@@ -1196,6 +1238,10 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
 
     /** 正文上的单击：点空白收起菜单；鼠标点句子照旧弹菜单，触摸端只认长按 */
     const handleSurfaceClick = (e: React.MouseEvent) => {
+        if (suppressSurfaceClickRef.current) {
+            suppressSurfaceClickRef.current = false;
+            return;
+        }
         const sel = typeof window !== "undefined" ? window.getSelection() : null;
         if (sel && !sel.isCollapsed) return; // 正在选字，交给选字菜单
         const target = e.target as HTMLElement | null;
@@ -1219,7 +1265,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         }
         setMarkMenu(null);
         setSentenceMenu(null);
-        setFloatingNote(null);
+        closeFloatingNote();
     };
 
     const openShareDialog = (mark: ReadingMark) => {
@@ -1875,7 +1921,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                     e.stopPropagation();
                     // 翻页动画那一层是张快照，点它不该改状态（否则下一页一进来就是展开的）
                     if (flipAnim) return;
-                    if (open) { setFloatingNote(null); return; }
+                    if (open) { closeFloatingNote(); return; }
                     const el = e.currentTarget as HTMLElement;
                     const rect = el.getBoundingClientRect();
                     const surfaceRect = surfaceRef.current?.getBoundingClientRect();
@@ -1899,6 +1945,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                     const ratio = surfaceRect.width > 0 ? featherCenter / surfaceRect.width : 0.5;
                     const arrowPercent = Math.min(92, Math.max(8, ratio * 100));
                     setActiveAnnotationId(null);
+                    setNoteMenu(null);
                     setFloatingNote({
                         notes: group.length > 0 ? group : [note],
                         anchorTop: rect.top - surfaceRect.top,
@@ -2825,12 +2872,14 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     };
 
     const handleReadingSurfaceClick = (e: React.MouseEvent<HTMLDivElement>) => {
+        if (suppressSurfaceClickRef.current) return;
         const target = e.target as HTMLElement | null;
         if (!target) return;
         if (target.closest("button, input, select, textarea, a, [data-no-nav='true']")) return;
-        if (activeMessageId || activeAnnotationId) {
+        if (activeMessageId || activeAnnotationId || floatingNote) {
             setActiveMessageId(null);
             setActiveAnnotationId(null);
+            closeFloatingNote();
             return;
         }
 
