@@ -517,7 +517,8 @@ export function ChatSettingsPanel({
     // TA 的电脑：翻看角色云端电脑（连接了角色电脑才显示入口）
     const [showComputer, setShowComputer] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
-    const [searchDateFilter, setSearchDateFilter] = useState("");
+    const [searchDateRange, setSearchDateRange] = useState<{ start: string; end: string } | null>(null);
+    const [searchDateRangePicking, setSearchDateRangePicking] = useState<string | null>(null);
     const [showSearchCalendar, setShowSearchCalendar] = useState(false);
     const [searchCalendarMonth, setSearchCalendarMonth] = useState<{ year: number; month: number }>(() => {
         const now = new Date();
@@ -549,7 +550,8 @@ export function ChatSettingsPanel({
     const openSearchPanel = () => {
         searchRunRef.current += 1;
         setSearchQuery("");
-        setSearchDateFilter("");
+        setSearchDateRange(null);
+        setSearchDateRangePicking(null);
         setShowSearchCalendar(false);
         const now = new Date();
         setSearchCalendarMonth({ year: now.getFullYear(), month: now.getMonth() });
@@ -564,7 +566,8 @@ export function ChatSettingsPanel({
         searchRunRef.current += 1;
         setShowSearch(false);
         setSearchQuery("");
-        setSearchDateFilter("");
+        setSearchDateRange(null);
+        setSearchDateRangePicking(null);
         setShowSearchCalendar(false);
         setSearchResults([]);
         setSearchTotalMatchedCount(0);
@@ -582,14 +585,24 @@ export function ChatSettingsPanel({
         setSearchHasMore(nextCount < visibleMessages.length);
     };
 
+    const isDateInRange = (dateKey: string, range: { start: string; end: string } | null): boolean => {
+        if (!range) return true;
+        return dateKey >= range.start && dateKey <= range.end;
+    };
+
+    const formatDateRangeLabel = (range: { start: string; end: string }): string => {
+        if (range.start === range.end) return range.start;
+        return `${range.start} ~ ${range.end}`;
+    };
+
     useEffect(() => {
         if (!showSearch) return;
         const rawQuery = searchQuery.trim();
-        const dateFilter = searchDateFilter;
+        const range = searchDateRange;
         const runId = searchRunRef.current + 1;
         searchRunRef.current = runId;
 
-        if (!rawQuery && !dateFilter) {
+        if (!rawQuery && !range) {
             setSearchResults([]);
             setSearchTotalMatchedCount(0);
             setIsSearching(false);
@@ -598,7 +611,7 @@ export function ChatSettingsPanel({
         }
 
         const needle = rawQuery.toLowerCase();
-        const isDateOnly = Boolean(dateFilter && !rawQuery);
+        const isDateOnly = Boolean(range && !rawQuery);
         const results: ChatMessage[] = [];
         let matchedCount = 0;
         setIsSearching(true);
@@ -615,7 +628,7 @@ export function ChatSettingsPanel({
                 for (; index > stop; index -= 1) {
                     const msg = msgs[index];
                     if (!isSearchVisibleMessage(msg)) continue;
-                    if (dateFilter && getSearchMessageDayKey(msg.createdAt) !== dateFilter) continue;
+                    if (range && !isDateInRange(getSearchMessageDayKey(msg.createdAt), range)) continue;
                     if (needle) {
                         const haystack = getSearchHaystack(msg);
                         if (!haystack || !haystack.toLowerCase().includes(needle)) continue;
@@ -641,7 +654,7 @@ export function ChatSettingsPanel({
 
         return () => window.clearTimeout(timer);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [showSearch, searchQuery, searchDateFilter, session.id]);
+    }, [showSearch, searchQuery, searchDateRange, session.id]);
 
     const [groupName, setGroupName] = useState(session.groupName || "");
 
@@ -855,8 +868,14 @@ export function ChatSettingsPanel({
         onClose();
     };
 
-    const searchMode = searchQuery.trim().length > 0 || Boolean(searchDateFilter);
-    const isDateOnlyMode = Boolean(searchDateFilter && !searchQuery.trim());
+    const searchMode = searchQuery.trim().length > 0 || Boolean(searchDateRange);
+    const isDateOnlyMode = Boolean(searchDateRange && !searchQuery.trim());
+    const displayedSearchMessages = searchMode ? searchResults : searchHistoryMessages;
+
+    function HighlightSpan({ text, term }: { text: string; term: string }) {
+        if (!term) return <>{text}</>;
+        const safeTerm = term.replace(/[.*+?^${}()|[\]\\]/g, '\\    const searchMode = searchQuery.trim().length > 0 || Boolean(searchDateRange);
+    const isDateOnlyMode = Boolean(searchDateRange && !searchQuery.trim());
     const displayedSearchMessages = searchMode ? searchResults : searchHistoryMessages;
 
     const renderSearchMessage = (msg: ChatMessage, index: number) => {
@@ -959,6 +978,135 @@ export function ChatSettingsPanel({
                             characterId={msg.senderCharacterId || session.contactId}
                             defaultTranslationExpanded={session.collapseBilingualTranslation !== false ? false : true}
                         />
+                    </div>
+                </div>
+            </div>
+        );
+    };');
+        const parts = text.split(new RegExp(`(${safeTerm})`, 'gi'));
+        return (
+            <>
+                {parts.map((part, i) =>
+                    part.toLowerCase() === term.toLowerCase()
+                        ? <span key={i} className="chat-search-highlight">{part}</span>
+                        : <span key={i}>{part}</span>
+                )}
+            </>
+        );
+    }
+
+    const renderSearchMessage = (msg: ChatMessage, index: number) => {
+        const resultRole = getSearchResultRole(msg);
+        const isSystemMessage = resultRole === "system";
+        const senderChar = session.isGroup && msg.senderCharacterId
+            ? characters.find(c => c.id === msg.senderCharacterId) || character
+            : character;
+
+        const senderName = msg.role === "user"
+            ? (userIdentity?.name || "我")
+            : (session.isGroup ? (msg.senderName || senderChar?.name || characterName) : characterName);
+
+        const prevMsg = index > 0 ? displayedSearchMessages[index - 1] : null;
+        const isSameDaySameSender = Boolean(
+            !isSystemMessage
+            && prevMsg
+            && getSearchResultRole(prevMsg) !== "system"
+            && getSearchSenderKey(prevMsg, session) === getSearchSenderKey(msg, session)
+            && getSearchMessageDayKey(prevMsg.createdAt) !== ""
+            && getSearchMessageDayKey(prevMsg.createdAt) === getSearchMessageDayKey(msg.createdAt)
+        );
+
+        const avatarKey = msg.role === "user" ? "self" : (msg.senderCharacterId || session.contactId);
+        const avatarUrl = avatarOverrides[avatarKey]
+            || (msg.role === "user" ? userIdentity?.avatarUrl : senderChar?.avatar);
+
+        const timeLabel = formatSearchMessageTime(msg.createdAt);
+        const highlightTerm = searchQuery.trim();
+
+        if (isSystemMessage) {
+            const sysText = msg.mediaType === "poke"
+                ? getChatMessagePreview(msg)
+                : getSearchResultText(msg);
+            return (
+                <div
+                    key={msg.id}
+                    role="button"
+                    tabIndex={0}
+                    className="chat-search-history-item chat-search-history-item-system"
+                    onClick={() => jumpToSearchMessage(msg.id)}
+                    onKeyDown={e => {
+                        if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            jumpToSearchMessage(msg.id);
+                        }
+                    }}
+                >
+                    <div className="chat-search-history-avatar chat-search-history-avatar-placeholder" aria-hidden="true" />
+                    <div className="chat-search-history-main">
+                        <div className="chat-search-history-meta">
+                            <span className="chat-search-history-name">系统消息</span>
+                            <span className="chat-search-history-time">{timeLabel}</span>
+                        </div>
+                        <div className="chat-search-history-body chat-search-history-body-system">
+                            {highlightTerm ? <HighlightSpan text={sysText} term={highlightTerm} /> : sysText}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        return (
+            <div
+                key={msg.id}
+                role="button"
+                tabIndex={0}
+                className="chat-search-history-item"
+                data-msg-id={msg.id}
+                onClick={() => jumpToSearchMessage(msg.id)}
+                onKeyDown={e => {
+                    if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        jumpToSearchMessage(msg.id);
+                    }
+                }}
+            >
+                <div
+                    className={`chat-search-history-avatar ${isSameDaySameSender ? "chat-search-history-avatar-placeholder" : ""}`}
+                    aria-hidden={isSameDaySameSender ? "true" : undefined}
+                >
+                    {!isSameDaySameSender && (
+                        avatarUrl ? (
+                            <img src={avatarUrl} alt="" />
+                        ) : (
+                            <ChatFallbackAvatar />
+                        )
+                    )}
+                </div>
+                <div className="chat-search-history-main">
+                    <div className="chat-search-history-meta">
+                        <span className="chat-search-history-name">{senderName}</span>
+                        <span className="chat-search-history-time">{timeLabel}</span>
+                    </div>
+                    <div className="chat-search-history-body">
+                        {!msg.mediaType || msg.mediaType === "quote" ? (
+                            <>
+                                {msg.mediaType === "quote" && msg.mediaData?.quotePreview && (
+                                    <div className="chat-search-history-quote-preview">{msg.mediaData.quotePreview}</div>
+                                )}
+                                {highlightTerm
+                                    ? <HighlightSpan text={msg.content} term={highlightTerm} />
+                                    : msg.content}
+                            </>
+                        ) : (
+                            <MessageBubble
+                                msg={msg}
+                                charName={senderChar?.name}
+                                userName={userIdentity?.name || "你"}
+                                groupSize={session.isGroup ? (session.participantIds?.length || 0) + (session.isSpectator ? 0 : 1) : undefined}
+                                characterId={msg.senderCharacterId || session.contactId}
+                                defaultTranslationExpanded={session.collapseBilingualTranslation !== false ? false : true}
+                            />
+                        )}
                     </div>
                 </div>
             </div>
@@ -1830,13 +1978,13 @@ export function ChatSettingsPanel({
                                     aria-label="按日期检索聊天记录"
                                     title="按日期检索"
                                     onClick={() => {
-                                        if (!showSearchCalendar && searchDateFilter) {
-                                            const [y, m] = searchDateFilter.split("-").map(Number);
+                                        if (!showSearchCalendar && searchDateRange) {
+                                            const [y, m] = searchDateRange.start.split("-").map(Number);
                                             if (y && m) setSearchCalendarMonth({ year: y, month: m - 1 });
                                         }
                                         setShowSearchCalendar(v => !v);
                                     }}
-                                    className={`chat-search-history-date-btn ${searchDateFilter || showSearchCalendar ? "is-active" : ""}`}
+                                    className={`chat-search-history-date-btn ${searchDateRange || showSearchCalendar ? "is-active" : ""}`}
                                 >
                                     <Calendar size={20} strokeWidth={1.9} />
                                 </button>
@@ -1849,6 +1997,8 @@ export function ChatSettingsPanel({
                                 for (let i = 0; i < firstDayWeek; i += 1) cells.push(null);
                                 for (let d = 1; d <= daysInMonth; d += 1) cells.push(d);
                                 const todayKey = getSearchMessageDayKey(new Date().toISOString());
+                                const range = searchDateRange;
+                                const picking = searchDateRangePicking;
                                 return (
                                     <div className="chat-search-calendar-panel">
                                         <div className="chat-search-calendar-header">
@@ -1880,15 +2030,32 @@ export function ChatSettingsPanel({
                                                 if (!day) return <span key={`empty-${i}`} className="chat-search-calendar-cell is-empty" />;
                                                 const dayKey = `${year}-${padSearchTimeTwo(month + 1)}-${padSearchTimeTwo(day)}`;
                                                 const hasMsg = searchAvailableDays.has(dayKey);
-                                                const isSelected = searchDateFilter === dayKey;
+                                                const isInRange = range && dayKey >= range.start && dayKey <= range.end;
+                                                const isRangeStart = range && dayKey === range.start;
+                                                const isRangeEnd = range && dayKey === range.end;
+                                                const isPicking = picking && dayKey === picking;
                                                 const isToday = todayKey === dayKey;
                                                 return (
                                                     <button
                                                         key={dayKey}
                                                         type="button"
-                                                        className={`chat-search-calendar-cell ${hasMsg ? "has-msg" : ""} ${isSelected ? "is-selected" : ""} ${isToday ? "is-today" : ""}`}
+                                                        className={`chat-search-calendar-cell ${hasMsg ? "has-msg" : ""} ${isInRange ? "is-in-range" : ""} ${isRangeStart ? "is-range-start" : ""} ${isRangeEnd ? "is-range-end" : ""} ${isPicking ? "is-picking" : ""} ${isToday ? "is-today" : ""}`}
                                                         onClick={() => {
-                                                            setSearchDateFilter(prev => prev === dayKey ? "" : dayKey);
+                                                            if (!picking) {
+                                                                setSearchDateRangePicking(dayKey);
+                                                                setSearchDateRange({ start: dayKey, end: dayKey });
+                                                                return;
+                                                            }
+                                                            if (picking === dayKey) {
+                                                                setSearchDateRangePicking(null);
+                                                                setSearchDateRange({ start: dayKey, end: dayKey });
+                                                                setShowSearchCalendar(false);
+                                                                return;
+                                                            }
+                                                            const start = picking < dayKey ? picking : dayKey;
+                                                            const end = picking < dayKey ? dayKey : picking;
+                                                            setSearchDateRangePicking(null);
+                                                            setSearchDateRange({ start, end });
                                                             setShowSearchCalendar(false);
                                                         }}
                                                     >
@@ -1898,13 +2065,14 @@ export function ChatSettingsPanel({
                                                 );
                                             })}
                                         </div>
-                                        {searchDateFilter && (
+                                        {range && (
                                             <div className="chat-search-calendar-footer">
                                                 <button
                                                     type="button"
                                                     className="chat-search-calendar-reset"
                                                     onClick={() => {
-                                                        setSearchDateFilter("");
+                                                        setSearchDateRange(null);
+                                                        setSearchDateRangePicking(null);
                                                         setShowSearchCalendar(false);
                                                     }}
                                                 >
@@ -1921,14 +2089,14 @@ export function ChatSettingsPanel({
                                         ? "正在统计记录..."
                                         : `共 ${searchMode ? searchTotalMatchedCount : searchTotalVisibleCount} 条记录`}
                                 </span>
-                                {searchDateFilter && (
+                                {searchDateRange && (
                                     <button
                                         type="button"
                                         className="chat-search-history-date-chip"
-                                        onClick={() => setSearchDateFilter("")}
+                                        onClick={() => { setSearchDateRange(null); setSearchDateRangePicking(null); }}
                                         title="点击清除日期筛选"
                                     >
-                                        <span>{searchDateFilter}</span>
+                                        <span>{formatDateRangeLabel(searchDateRange)}</span>
                                         <X size={12} strokeWidth={2} />
                                     </button>
                                 )}
