@@ -872,6 +872,8 @@ export function ChatSettingsPanel({
     const isDateOnlyMode = Boolean(searchDateRange && !searchQuery.trim());
     const displayedSearchMessages = searchMode ? searchResults : searchHistoryMessages;
 
+    // 触发重新部署：修复 chunk 加载失败（force rebuild）
+
     const renderSearchMessage = (msg: ChatMessage, index: number) => {
         const resultRole = getSearchResultRole(msg);
         const isSystemMessage = resultRole === "system";
