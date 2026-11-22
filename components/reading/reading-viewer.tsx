@@ -527,9 +527,11 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     const [editingText, setEditingText] = useState("");
     const [annotationTranslationOverrides, setAnnotationTranslationOverrides] = useState<Record<string, boolean>>({});
     const [openAnnotationParagraphs, setOpenAnnotationParagraphs] = useState<Record<string, boolean>>({});
-    /** 换书时顺手清掉的旧展开态。批注改成悬浮卡以后正文里不再就地展开，
-     *  这里只保留清空动作，避免老状态跨书残留。 */
-    const [, setExpandedNotes] = useState<Record<string, boolean>>({});
+    /** 旧的就地展开态。批注改成悬浮卡以后正文里不再用它渲染，但文件里仍有
+     *  引用（换书清空、跳转等），所以变量本身保留，别再解构成空位——那样别处
+     *  一引用就是运行时 "expandedNotes is not defined"。 */
+    const [expandedNotes, setExpandedNotes] = useState<Record<string, boolean>>({});
+    void expandedNotes;
     /** 当前打开的悬浮批注卡：🪶 点开后浮在正文上方，不撑开排版。
      *  anchor 坐标是相对 surfaceRef 的，滚动时跟着走。 */
     const [floatingNote, setFloatingNote] = useState<{
