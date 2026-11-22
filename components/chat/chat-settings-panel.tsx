@@ -519,13 +519,16 @@ export function ChatSettingsPanel({
     const [searchQuery, setSearchQuery] = useState("");
     const [submittedSearchQuery, setSubmittedSearchQuery] = useState("");
     const [searchHistoryMessages, setSearchHistoryMessages] = useState<ChatMessage[]>([]);
+    const [searchTotalVisibleCount, setSearchTotalVisibleCount] = useState(0);
     const [searchHasMore, setSearchHasMore] = useState(false);
     const [searchResults, setSearchResults] = useState<ChatMessage[]>([]);
+    const [searchTotalMatchedCount, setSearchTotalMatchedCount] = useState(0);
     const [isSearching, setIsSearching] = useState(false);
     const searchRunRef = useRef(0);
 
     const loadSearchHistoryWindow = (count = CHAT_INITIAL_VISIBLE_MESSAGE_COUNT) => {
         const visibleMessages = loadChatMessages(session.id).filter(isSearchVisibleMessage);
+        setSearchTotalVisibleCount(visibleMessages.length);
         const nextCount = Math.min(Math.max(count, CHAT_INITIAL_VISIBLE_MESSAGE_COUNT), visibleMessages.length);
         setSearchHistoryMessages(visibleMessages.slice(-nextCount).reverse());
         setSearchHasMore(nextCount < visibleMessages.length);
@@ -536,6 +539,7 @@ export function ChatSettingsPanel({
         setSearchQuery("");
         setSubmittedSearchQuery("");
         setSearchResults([]);
+        setSearchTotalMatchedCount(0);
         setIsSearching(false);
         loadSearchHistoryWindow();
         setShowSearch(true);
@@ -547,13 +551,16 @@ export function ChatSettingsPanel({
         setSearchQuery("");
         setSubmittedSearchQuery("");
         setSearchResults([]);
+        setSearchTotalMatchedCount(0);
         setSearchHistoryMessages([]);
+        setSearchTotalVisibleCount(0);
         setSearchHasMore(false);
         setIsSearching(false);
     };
 
     const loadMoreSearchHistory = () => {
         const visibleMessages = loadChatMessages(session.id).filter(isSearchVisibleMessage);
+        setSearchTotalVisibleCount(visibleMessages.length);
         const nextCount = Math.min(searchHistoryMessages.length + CHAT_LOAD_MORE_MESSAGE_COUNT, visibleMessages.length);
         setSearchHistoryMessages(visibleMessages.slice(-nextCount).reverse());
         setSearchHasMore(nextCount < visibleMessages.length);
@@ -567,6 +574,7 @@ export function ChatSettingsPanel({
 
         if (!rawQuery) {
             setSearchResults([]);
+            setSearchTotalMatchedCount(0);
             setIsSearching(false);
             loadSearchHistoryWindow();
             return;
@@ -574,7 +582,9 @@ export function ChatSettingsPanel({
 
         const needle = rawQuery.toLowerCase();
         const results: ChatMessage[] = [];
+        let matchedCount = 0;
         setSearchResults([]);
+        setSearchTotalMatchedCount(0);
         setIsSearching(true);
 
         window.setTimeout(() => {
@@ -586,15 +596,21 @@ export function ChatSettingsPanel({
                 if (searchRunRef.current !== runId) return;
 
                 const stop = Math.max(-1, index - SEARCH_SCAN_CHUNK_SIZE);
-                for (; index > stop && results.length < SEARCH_RESULT_LIMIT; index -= 1) {
+                for (; index > stop; index -= 1) {
                     const msg = msgs[index];
                     if (!isSearchVisibleMessage(msg)) continue;
                     const haystack = getSearchHaystack(msg);
-                    if (haystack && haystack.toLowerCase().includes(needle)) results.push(msg);
+                    if (haystack && haystack.toLowerCase().includes(needle)) {
+                        matchedCount += 1;
+                        if (results.length < SEARCH_RESULT_LIMIT) {
+                            results.push(msg);
+                        }
+                    }
                 }
 
-                if (results.length >= SEARCH_RESULT_LIMIT || index < 0) {
+                if (index < 0) {
                     setSearchResults([...results]);
+                    setSearchTotalMatchedCount(matchedCount);
                     setIsSearching(false);
                     return;
                 }
@@ -1763,34 +1779,41 @@ export function ChatSettingsPanel({
             {showSearch && (
                 <div style={{ position: "absolute", inset: 0, zIndex: 9999, background: "#ffffff" }}>
                 <div style={{ position: "absolute", inset: 0, background: "var(--c-page-body-bg)" }}>
-                    <PageShell title="查找聊天记录" onBack={closeSearchPanel}>
-                        <div className="px-4 pt-2 pb-3 flex items-center gap-2">
-                            <input
-                                autoFocus
-                                type="text"
-                                placeholder="搜索聊天记录..."
-                                value={searchQuery}
-                                onChange={e => setSearchQuery(e.target.value)}
-                                onKeyDown={e => {
-                                    if (e.key === "Enter") {
-                                        e.preventDefault();
-                                        runSearch();
-                                    }
-                                }}
-                                className="ui-input flex-1 min-w-0"
-                            />
-                            <button
-                                type="button"
-                                aria-label="搜索聊天记录"
-                                title="搜索"
-                                onClick={runSearch}
-                                disabled={isSearching}
-                                className="h-10 w-10 shrink-0 grid place-items-center border-0 bg-transparent text-[var(--c-icon)] disabled:opacity-40"
-                            >
-                                <Search size={20} strokeWidth={2.1} />
-                            </button>
+                    <PageShell title="查找聊天记录" onBack={closeSearchPanel} className="chat-search-history-shell">
+                        <div className="chat-search-history-fixed-top">
+                            <div className="px-4 pt-2 pb-1.5 flex items-center gap-2">
+                                <input
+                                    autoFocus
+                                    type="text"
+                                    placeholder="搜索聊天记录..."
+                                    value={searchQuery}
+                                    onChange={e => setSearchQuery(e.target.value)}
+                                    onKeyDown={e => {
+                                        if (e.key === "Enter") {
+                                            e.preventDefault();
+                                            runSearch();
+                                        }
+                                    }}
+                                    className="ui-input flex-1 min-w-0"
+                                />
+                                <button
+                                    type="button"
+                                    aria-label="搜索聊天记录"
+                                    title="搜索"
+                                    onClick={runSearch}
+                                    disabled={isSearching}
+                                    className="h-10 w-10 shrink-0 grid place-items-center border-0 bg-transparent text-[var(--c-icon)] disabled:opacity-40"
+                                >
+                                    <Search size={20} strokeWidth={2.1} />
+                                </button>
+                            </div>
+                            <div className="chat-search-history-count-row">
+                                {searchMode && isSearching
+                                    ? "正在统计记录..."
+                                    : `共 ${searchMode ? searchTotalMatchedCount : searchTotalVisibleCount} 条记录`}
+                            </div>
                         </div>
-                        <div className="px-4 pb-4">
+                        <div className="chat-search-history-scroll">
                             {!searchMode && searchHistoryMessages.length === 0 && (
                                 <div className="ui-empty">
                                     <span className="menu-desc">暂无聊天记录</span>
@@ -1820,7 +1843,7 @@ export function ChatSettingsPanel({
                                     查看更多消息
                                 </button>
                             )}
-                            {searchMode && !isSearching && searchResults.length >= SEARCH_RESULT_LIMIT && (
+                            {searchMode && !isSearching && searchTotalMatchedCount > SEARCH_RESULT_LIMIT && (
                                 <div className="ui-empty py-2">
                                     <span className="menu-desc">仅显示最近 {SEARCH_RESULT_LIMIT} 条结果</span>
                                 </div>

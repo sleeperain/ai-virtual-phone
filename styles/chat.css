@@ -8628,6 +8628,39 @@
 }
 
 /* ── 查找聊天记录专属列表样式（完全隔离，不影响聊天室气泡） ── */
+.chat-search-history-shell > .page-body {
+  overflow: hidden;
+  padding-bottom: 0 !important;
+}
+
+.chat-search-history-shell > .page-body::after {
+  display: none !important;
+}
+
+.chat-search-history-fixed-top {
+  flex-shrink: 0;
+  background: var(--c-page-body-bg);
+  border-bottom: 0.5px solid var(--c-card-border);
+}
+
+.chat-search-history-count-row {
+  padding: 0 18px 8px;
+  font-size: calc(12px * var(--app-text-scale, 1));
+  color: var(--c-icon);
+  line-height: 1.3;
+  text-align: left;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.chat-search-history-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 16px calc(24px + env(safe-area-inset-bottom, 0px));
+}
+
 .chat-search-history-list {
   display: flex;
   flex-direction: column;
@@ -8704,7 +8737,7 @@
 }
 
 .chat-search-history-time {
-  font-size: calc(11.5px * var(--app-text-scale, 1));
+  font-size: calc(12px * var(--app-text-scale, 1));
   color: var(--c-icon);
   line-height: 1.3;
   flex-shrink: 0;
