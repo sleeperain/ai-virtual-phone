@@ -64,13 +64,19 @@ function annotationCardCss(suffix: string, style: AnnotationCardStyle): string {
         `${card}::before {`,
         `  background: ${readingMarkColor(style.cardColor, 0.6)};`,
         "}",
+        // 悬浮批注卡里的正文也要吃这份字号：它挂在 .reading-floating-note-item 上，
+        // 不是 .reading-annotation，只写前者的话悬浮卡会退回默认小字——外面那圈
+        // 「正文用批注字体/字号」的规则根本选不中它。两处一起写。
         `${card} .reading-annotation-text,`,
-        `${card} .reading-annotation-translation {`,
+        `${card} .reading-annotation-translation,`,
+        `.reading-app-surface .reading-floating-note-item${suffix} .reading-annotation-text,`,
+        `.reading-app-surface .reading-floating-note-item${suffix} .reading-annotation-translation {`,
         `  font-size: calc(${style.fontSize}px * var(--app-text-scale, 1));`,
         `  line-height: ${style.lineHeight};`,
         `  color: ${style.textColor};`,
         "}",
-        `${card} .reading-annotation-name {`,
+        `${card} .reading-annotation-name,`,
+        `.reading-app-surface .reading-floating-note-item${suffix} .reading-annotation-name {`,
         `  font-size: calc(${Math.round(style.fontSize * 0.85 * 10) / 10}px * var(--app-text-scale, 1));`,
         `  color: ${style.textColor};`,
         "}",
@@ -322,7 +328,10 @@ export default function ReadingApp({ onClose }: Props) {
         resolvedUserAnnotationFont && [
             '.reading-app-surface .reading-annotation[data-author="user"] .reading-annotation-name,',
             '.reading-app-surface .reading-annotation[data-author="user"] .reading-annotation-text,',
-            '.reading-app-surface .reading-annotation[data-author="user"] .reading-annotation-translation {',
+            '.reading-app-surface .reading-annotation[data-author="user"] .reading-annotation-translation,',
+            // 悬浮批注卡同样要吃「用户批注字体」
+            '.reading-app-surface .reading-floating-note-item[data-author="user"] .reading-annotation-text,',
+            '.reading-app-surface .reading-floating-note-item[data-author="user"] .reading-annotation-translation {',
             `  font-family: ${resolvedUserAnnotationFont};`,
             "}",
         ].join("\n"),

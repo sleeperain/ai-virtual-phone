@@ -5014,15 +5014,6 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                     className="reading-floating-note-item"
                                     data-annotation-id={note.id}
                                     data-author={isUser ? "user" : "character"}
-                                    onPointerDown={() => {
-                                        longPressTimer.current = setTimeout(() => {
-                                            setActiveMessageId(null);
-                                            setActiveAnnotationId(note.id);
-                                        }, 500);
-                                    }}
-                                    onPointerUp={() => { if (longPressTimer.current) clearTimeout(longPressTimer.current); }}
-                                    onPointerCancel={() => { if (longPressTimer.current) clearTimeout(longPressTimer.current); }}
-                                    onPointerLeave={() => { if (longPressTimer.current) clearTimeout(longPressTimer.current); }}
                                 >
                                     <ReadingAnnotationContent
                                         text={note.content}
