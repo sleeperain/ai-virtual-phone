@@ -583,11 +583,15 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     const chatListRef = useRef<HTMLDivElement>(null); // 共读讨论悬浮窗消息列表（滚动容器）
     /** 悬浮批注卡下方的横向菜单是否展开 */
     const [noteMenuExpanded, setNoteMenuExpanded] = useState(false);
+    /** 同一张卡片里可能有多条批注（同一句话被写了多次）：菜单要作用在哪一条上。
+     *  点卡片里任意一条批注就把它设为当前操作对象，菜单按钮只对它有反应。 */
+    const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
     const suppressSurfaceClickRef = useRef(false);
 
     const closeFloatingNote = useCallback(() => {
         setFloatingNote(null);
         setNoteMenuExpanded(false);
+        setActiveNoteId(null);
     }, []);
 
     const txtMeasureLineRef = useRef<HTMLParagraphElement>(null);
@@ -1978,6 +1982,8 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                     const arrowPercent = Math.min(92, Math.max(8, ratio * 100));
                     setActiveAnnotationId(null);
                     setNoteMenuExpanded(false);
+                    // 打开时默认选中这条（也就是被点的那枚笔对应的批注）
+                    setActiveNoteId(note.id);
                     setFloatingNote({
                         notes: group.length > 0 ? group : [note],
                         anchorTop: rect.top - surfaceRect.top,
@@ -1987,9 +1993,22 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                     });
                 }}
             >
-                <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ verticalAlign: "middle" }}>
-                    <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
-                    <line x1="2" y1="22" x2="22" y2="22" />
+                {/* 铅笔 + 下划线：下划线不做成描边方块底，而是贴着文字基线画一条短横线，
+                    视觉上和正文的划线落在同一行上 */}
+                <svg
+                    width={14}
+                    height={14}
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={1.9}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                    style={{ verticalAlign: "-2px" }}
+                >
+                    <path d="M16.5 4.5a2.121 2.121 0 0 1 3 3L8 19l-4 1 1-4L16.5 4.5z" />
+                    <line x1="4.5" y1="21" x2="20" y2="21" />
                 </svg>
             </button>
         );
@@ -2037,7 +2056,11 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
             const to = points[i + 1];
             // 先把落在这个切点上的羽毛铺出去，再铺它右边的那一片字，
             // 顺序正好是「被批注的最后一个字 → 🪶 → 后面的字」
-            for (const note of feathersAt.get(from) || []) nodes.push(renderNoteFeather(note));
+            // 同一位置如果有多条批注，只渲染一枚笔图标（点开会在同一张卡片里展示所有批注）
+            const notesHere = feathersAt.get(from) || [];
+            if (notesHere.length > 0) {
+                nodes.push(renderNoteFeather(notesHere[0]));
+            }
             if (to <= from) continue;
             const slice = renderRangeWithActiveSelection(
                 item.text,
@@ -5093,14 +5116,16 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                             ? userAvatarUrl
                             : (note.characterId ? characterById.get(note.characterId)?.avatar || "" : "");
                         const stamp = formatCommentTimestamp(note.createdAt);
-                        const menuOpen = activeAnnotationId === note.id;
+                        // 卡片里只有一条批注时它就是操作对象；多条时看用户点了哪一条
+                        const isTarget = (activeNoteId ?? floatingNote.notes[0]?.id) === note.id;
                         return (
                             <div key={note.id}>
                                 {index > 0 && <div className="reading-floating-note-divider" />}
                                 <div
-                                    className="reading-floating-note-item"
+                                    className={`reading-floating-note-item${floatingNote.notes.length > 1 && isTarget ? " is-target" : ""}`}
                                     data-annotation-id={note.id}
                                     data-author={isUser ? "user" : "character"}
+                                    onClick={() => { if (activeNoteId !== note.id) setActiveNoteId(note.id); }}
                                 >
                                     <ReadingAnnotationContent
                                         text={note.content}
@@ -5127,7 +5152,8 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                 </div>
                 {/* 菜单固定在卡片外侧下方右侧，未展开时只显示向下按钮，点击后向左展开其余三个按钮 */}
                 {floatingNote.notes.length > 0 && (() => {
-                    const activeNote = floatingNote.notes[0];
+                    // 菜单永远作用于「当前选中的那一条」：多条批注时点哪一条就操作哪一条
+                    const activeNote = floatingNote.notes.find((n) => n.id === activeNoteId) || floatingNote.notes[0];
                     return (
                         <div
                             className="reading-note-menu"
@@ -5169,8 +5195,17 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                     role="menuitem"
                                     className="reading-note-menu-item reading-note-menu-item--danger"
                                     onClick={() => {
-                                        closeFloatingNote();
+                                        // 删完不整张卡一起关：同一锚点上还有别的批注就留着继续看，
+                                        // 只剩最后一条时才把卡片收起来
+                                        const rest = floatingNote.notes.filter((n) => n.id !== activeNote.id);
                                         void handleDeleteReadingAnnotation(activeNote.id);
+                                        if (rest.length > 0) {
+                                            setFloatingNote({ ...floatingNote, notes: rest });
+                                            setActiveNoteId(rest[0].id);
+                                            setNoteMenuExpanded(false);
+                                        } else {
+                                            closeFloatingNote();
+                                        }
                                     }}
                                 >
                                     删除
