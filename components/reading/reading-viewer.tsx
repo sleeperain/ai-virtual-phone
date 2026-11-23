@@ -1938,7 +1938,13 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     /** 行内那枚小羽毛。点一下弹出悬浮批注卡片（覆盖正文上方，不撑开排版），
      *  再点一下或点空白处收起。翻页与滚动模式共用。 */
     const renderNoteFeather = (note: ReadingAnnotation) => {
-        const open = floatingNote?.notes.some((item) => item.id === note.id) === true;
+        const paragraphLength = chapters[note.chapterIndex]?.paragraphs[note.paragraphIndex]?.length ?? 0;
+        const currentAnchor = noteAnchorOffset(note, paragraphLength);
+        const open = floatingNote !== null &&
+            floatingNote.notes.length > 0 &&
+            floatingNote.notes[0].chapterIndex === note.chapterIndex &&
+            floatingNote.notes[0].paragraphIndex === note.paragraphIndex &&
+            noteAnchorOffset(floatingNote.notes[0], paragraphLength) === currentAnchor;
         return (
             <button
                 key={`feather-${note.id}`}
@@ -2035,7 +2041,10 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         // 锚点落在本行内的批注 → 羽毛插在这个字符位置上；跨行的批注只在末字那一行出现一次
         const feathersAt = new Map<number, ReadingAnnotation[]>();
         for (const note of item.notes || []) {
-            const anchor = Math.max(lineStart, Math.min(lineEnd, noteAnchorOffset(note, paragraphLength)));
+            const rawAnchor = noteAnchorOffset(note, paragraphLength);
+            // 批注只在末字所在的这一行渲染；若锚点在当前行之前或之后，则本行不渲染这枚笔
+            if (rawAnchor < lineStart || rawAnchor > lineEnd) continue;
+            const anchor = rawAnchor;
             const bucket = feathersAt.get(anchor);
             if (bucket) bucket.push(note);
             else feathersAt.set(anchor, [note]);
@@ -2089,8 +2098,9 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                 nodes.push(<Fragment key={`slice-${from}`}>{slice}</Fragment>);
             }
         }
-        // 行尾那一刀的羽毛（锚点 = 行末 / 整段批注）
-        for (const note of feathersAt.get(points[points.length - 1]) || []) nodes.push(renderNoteFeather(note));
+        // 行尾那一刀的羽毛（锚点 = 行末 / 整段批注）：同样同一位置只渲染一枚笔
+        const lastCutNotes = feathersAt.get(points[points.length - 1]) || [];
+        if (lastCutNotes.length > 0) nodes.push(renderNoteFeather(lastCutNotes[0]));
         return nodes;
     };
 
