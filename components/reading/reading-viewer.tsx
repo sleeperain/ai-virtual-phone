@@ -1993,8 +1993,8 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                     });
                 }}
             >
-                {/* 铅笔 + 下划线：整体下移一点，让笔底那条横线正好压在正文的基线上，
-                    和划线落在同一条线上 */}
+                {/* 一支笔 + 笔下方一道下划线（Lucide pen-line 的造型）。
+                    下划线贴着字形基线走，和正文里的划线落在同一条线上。 */}
                 <svg
                     width={14}
                     height={14}
@@ -2005,10 +2005,10 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     aria-hidden="true"
-                    style={{ verticalAlign: "-2px", transform: "translateY(3px)" }}
+                    style={{ verticalAlign: "-2px" }}
                 >
-                    <path d="M16.5 4.5a2.121 2.121 0 0 1 3 3L8 19l-4 1 1-4L16.5 4.5z" />
-                    <line x1="4.5" y1="21" x2="20" y2="21" />
+                    <path d="M12 20h9" />
+                    <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
                 </svg>
             </button>
         );
@@ -2056,7 +2056,10 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
             const to = points[i + 1];
             // 先把落在这个切点上的羽毛铺出去，再铺它右边的那一片字，
             // 顺序正好是「被批注的最后一个字 → 🪶 → 后面的字」
-            for (const note of feathersAt.get(from) || []) nodes.push(renderNoteFeather(note));
+            // 同一位置（同一句话末字）上的多条批注，正文里只渲染一枚笔图标——
+            // 两条批注并排画出两枚笔会显得像重复渲染。点开后在卡片里列出该位置的全部批注。
+            const notesHere = feathersAt.get(from) || [];
+            if (notesHere.length > 0) nodes.push(renderNoteFeather(notesHere[0]));
             if (to <= from) continue;
             const slice = renderRangeWithActiveSelection(
                 item.text,
