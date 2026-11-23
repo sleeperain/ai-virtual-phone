@@ -74,6 +74,17 @@ function formatEntryTime(value: string): string {
   return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, "0")}.${String(date.getDate()).padStart(2, "0")}`;
 }
 
+function formatEntryDateTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value || "未知时间";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day} ${hours}:${minutes}`;
+}
+
 function clipText(value: string, maxLength: number): string {
   const normalized = value.replace(/\s+/g, " ").trim();
   return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized;
@@ -301,9 +312,17 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
 
   const kindEntries = useMemo(() => entries.filter(entry => entry.authorType === kind), [entries, kind]);
 
+  const sortedKindEntries = useMemo(() => {
+    return [...kindEntries].sort((a, b) => {
+      const timeA = new Date(a.createdAt).getTime();
+      const timeB = new Date(b.createdAt).getTime();
+      return (Number.isNaN(timeB) ? 0 : timeB) - (Number.isNaN(timeA) ? 0 : timeA);
+    });
+  }, [kindEntries]);
+
   const books = useMemo<DiaryBook[]>(() => {
     const map = new Map<string, DiaryEntry[]>();
-    for (const entry of kindEntries) {
+    for (const entry of sortedKindEntries) {
       const list = map.get(entry.characterId);
       if (list) list.push(entry);
       else map.set(entry.characterId, [entry]);
@@ -314,7 +333,7 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
       avatar: characters.find(character => character.id === characterId)?.avatar ?? "",
       entries: characterEntries,
     }));
-  }, [kindEntries, characters]);
+  }, [sortedKindEntries, characters]);
 
   const activeBook = useMemo(
     () => (activeCharacterId ? books.find(book => book.characterId === activeCharacterId) ?? null : null),
@@ -334,14 +353,16 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
         <button
           type="button"
           className="diary-icon-btn"
-          onClick={() => (activeBook ? setActiveCharacterId(null) : onBack())}
+          onClick={() => (kind === "user" && activeBook ? setActiveCharacterId(null) : onBack())}
           aria-label="返回"
         >
           <ChevronLeft size={20} />
         </button>
         <div>
-          <h1>{activeBook ? (kind === "user" ? `写给 ${activeBook.characterName} 的日记` : `${activeBook.characterName} 的日记`) : (kind === "user" ? "我的日记" : "TA的日记")}</h1>
-          <p>{activeBook ? `共 ${activeBook.entries.length} 篇手写日常` : (kind === "user" ? "每个角色一本，写下只属于你们的纸页" : "每个角色一本，点开翻阅")}</p>
+          <h1>{kind === "user" ? (activeBook ? `写给 ${activeBook.characterName} 的日记` : "我的日记") : "TA的日记"}</h1>
+          {kind === "user" && (
+            <p>{activeBook ? `共 ${activeBook.entries.length} 篇手写日常` : "每个角色一本，写下只属于你们的纸页"}</p>
+          )}
         </div>
         <input
           ref={fontFileRef}
@@ -365,6 +386,7 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
             className="note-wall-menu-btn"
             onClick={() => {
               if (kind === "user") setReplySettingsOpen(true);
+              else if (kind === "character") setTimerSettingsOpen(true);
               else if (activeBook) setBookSettingsOpen(true);
               else setTimerSettingsOpen(true);
             }}
@@ -385,12 +407,37 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
               {kind === "user" ? "写下第一篇" : "让TA写一篇"}
             </button>
           </div>
+        ) : kind === "character" ? (
+          <div className="diary-flat-entry-list">
+            {sortedKindEntries.map(entry => (
+              <DiaryEntryCard
+                key={entry.id}
+                entry={entry}
+                character={characters.find(c => c.id === entry.characterId)}
+                isDragSource={trash.drag?.item.id === entry.id}
+                onPointerDown={(event) => trash.onPointerDown(event, entry)}
+                onPointerMove={trash.onPointerMove}
+                onPointerUp={trash.onPointerUp}
+                onPointerCancel={trash.onPointerCancel}
+                onPointerLeave={trash.onPointerLeave}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (trash.isClickSuppressed()) {
+                    event.preventDefault();
+                    return;
+                  }
+                  setActiveEntry(entry);
+                }}
+              />
+            ))}
+          </div>
         ) : activeBook ? (
           <div className="diary-entry-list">
             {activeBook.entries.map(entry => (
               <DiaryEntryCard
                 key={entry.id}
                 entry={entry}
+                character={characters.find(c => c.id === entry.characterId)}
                 isDragSource={trash.drag?.item.id === entry.id}
                 onPointerDown={(event) => trash.onPointerDown(event, entry)}
                 onPointerMove={trash.onPointerMove}
@@ -443,17 +490,6 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
               <span>写日记</span>
             </button>
           )
-        ) : activeBook ? (
-          <button
-            type="button"
-            className="diary-entry-write-btn"
-            disabled={activeBookBusy}
-            aria-busy={activeBookBusy}
-            onClick={() => generateForCharacters([activeBook.characterId])}
-          >
-            <WandSparkles size={18} strokeWidth={1.7} />
-            {activeBookBusy ? <DiaryWritingStatus /> : <span>让TA写</span>}
-          </button>
         ) : (
           <button type="button" className="diary-entry-write-btn" onClick={() => setWritePanelOpen(true)}>
             <WandSparkles size={18} strokeWidth={1.7} />
@@ -576,7 +612,7 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
 
       {trash.drag ? (
         <div
-          className="diary-entry-card diary-entry-drag-ghost"
+          className="diary-flat-card diary-entry-drag-ghost"
           style={{
             left: trash.drag.x,
             top: trash.drag.y,
@@ -584,7 +620,10 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
             minHeight: trash.drag.height,
           }}
         >
-          <DiaryEntryCardContent entry={trash.drag.item} />
+          <DiaryEntryCardContent
+            entry={trash.drag.item}
+            character={characters.find(c => c.id === trash.drag?.item.characterId)}
+          />
         </div>
       ) : null}
     </section>
@@ -628,29 +667,77 @@ function DiaryBookCover({ book, busy, onOpen }: { book: DiaryBook; busy: boolean
   );
 }
 
-function DiaryEntryCardContent({ entry }: { entry: DiaryEntry }) {
-  const preview = entry.blocks.map(blockPlainText).filter(Boolean).join(" ");
-  const markers = getEntryMarkers(entry);
+function DiaryEntryCardContent({ entry, character }: { entry: DiaryEntry; character?: Character }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [canExpand, setCanExpand] = useState(false);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+
+  const preview = useMemo(() => {
+    const fromBlocks = entry.blocks.map(blockPlainText).filter(Boolean).join("\n");
+    return fromBlocks || entry.body;
+  }, [entry.blocks, entry.body]);
+
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    // 检查在 6 行限制下是否产生溢出
+    if (el.scrollHeight > el.clientHeight + 1) {
+      setCanExpand(true);
+    }
+  }, [preview]);
+
+  const phone = character?.wechatID || character?.id || "";
+  const avatar = character?.avatar || "";
+
   return (
-    <>
-      <span className="diary-entry-card-kicker">DIARY</span>
-      {markers.length > 0 ? (
-        <span className="diary-entry-card-markers">
-          {markers.map(marker => <span key={marker} className="diary-entry-marker">{marker}</span>)}
-        </span>
-      ) : null}
-      <strong>{entry.title}</strong>
-      <span className="diary-entry-card-text">{clipText(preview || entry.body, 130)}</span>
-      <span className="diary-entry-card-meta">
-        <span>{entry.characterName}</span>
-        <time>{formatEntryTime(entry.createdAt)}</time>
-      </span>
-    </>
+    <div className="diary-flat-card-inner">
+      {/* 第一行最左侧是32*32px的角色圆形头像，右侧第一行角色名（黑），第二行小一号字ID（@手机号） */}
+      <div className="diary-flat-card-author-row">
+        <div className="diary-flat-card-avatar">
+          {avatar ? <img src={avatar} alt={entry.characterName} /> : <Bot size={18} />}
+        </div>
+        <div className="diary-flat-card-author-info">
+          <span className="diary-flat-card-author-name">{entry.characterName}</span>
+          <span className="diary-flat-card-author-id">@{phone}</span>
+        </div>
+      </div>
+
+      {/* 角色头像所在行下方第一行是日记标题，字体加粗（约450左右）、颜色为莫兰迪蓝，与头像最左侧对齐 */}
+      <h3 className="diary-flat-card-title">{entry.title}</h3>
+
+      {/* 第二行开始为日记正文，字体颜色为黑（#252525）。正文超过六行时，在第七行显示“展开”纯文字按钮，字体颜色浅灰 */}
+      <div
+        ref={bodyRef}
+        className={`diary-flat-card-body ${!isExpanded ? "is-clamped" : ""}`}
+      >
+        {preview}
+      </div>
+
+      {canExpand && !isExpanded && (
+        <button
+          type="button"
+          className="diary-flat-card-expand-btn"
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsExpanded(true);
+          }}
+        >
+          展开
+        </button>
+      )}
+
+      {/* 最后一行最左侧为小字“🕓 YYYY-MM-DD hh:mm”，字体颜色为灰色，其中“🕓”采用SVG图标，图标与角色头像左侧对齐 */}
+      <div className="diary-flat-card-footer">
+        <Clock3 size={13} className="diary-flat-clock-svg" aria-hidden="true" />
+        <time className="diary-flat-card-time">{formatEntryDateTime(entry.createdAt)}</time>
+      </div>
+    </div>
   );
 }
 
 function DiaryEntryCard({
   entry,
+  character,
   isDragSource,
   onClick,
   onPointerDown,
@@ -660,6 +747,7 @@ function DiaryEntryCard({
   onPointerLeave,
 }: {
   entry: DiaryEntry;
+  character?: Character;
   isDragSource: boolean;
   onClick: (event: MouseEvent<HTMLButtonElement>) => void;
   onPointerDown: (event: PointerEvent<HTMLButtonElement>) => void;
@@ -671,7 +759,7 @@ function DiaryEntryCard({
   return (
     <button
       type="button"
-      className={`diary-entry-card ${isDragSource ? "is-drag-source" : ""}`}
+      className={`diary-flat-card ${isDragSource ? "is-drag-source" : ""}`}
       draggable={false}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -681,7 +769,7 @@ function DiaryEntryCard({
       onContextMenu={event => event.preventDefault()}
       onClick={onClick}
     >
-      <DiaryEntryCardContent entry={entry} />
+      <DiaryEntryCardContent entry={entry} character={character} />
     </button>
   );
 }
