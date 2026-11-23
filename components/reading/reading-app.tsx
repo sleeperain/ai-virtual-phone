@@ -494,24 +494,18 @@ export default function ReadingApp({ onClose }: Props) {
             "}",
             ".reading-floating-note-item {",
             "  position: relative;",
-            "  border-radius: 8px;",
-            "  padding: 8px 10px;",
-            "  margin: 4px 0;",
-            "  border: 1px solid transparent;",
-            "  transition: all 200ms cubic-bezier(0.2, 0.8, 0.25, 1);",
+            "  border-radius: 6px;",
+            "  padding: 6px 8px;",
+            "  margin: 0;",
+            "  transition: padding 180ms ease, background-color 150ms ease, margin 180ms ease;",
             "  cursor: pointer;",
             "}",
-            /* 多条批注时，被点选的那条整卡放大并抽出：
-               四周外扩留白（margin/padding 展开）、描边与投影浮现、轻微向外撑大，
-               在视觉上仿佛将这张小卡片单独拿出来一样 */
+            /* 多条批注时，被选中的条目展开呼吸感，高度明显高于其他条目，不套多余边框阴影 */
             ".reading-floating-note-item.is-target {",
-            "  background: #ffffff;",
-            "  border-color: rgba(0, 0, 0, 0.08);",
-            "  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.06);",
-            "  transform: scale(1.035);",
-            "  margin: 8px -2px;",
-            "  padding: 10px 12px;",
-            "  z-index: 5;",
+            "  background: rgba(0, 0, 0, 0.03);",
+            "  padding-top: 14px;",
+            "  padding-bottom: 14px;",
+            "  margin: 6px 0;",
             "}",
             /* 卡片外侧固定的横向操作条：
                在卡片下方时：位于下方外侧间距 3px，右侧对齐；
