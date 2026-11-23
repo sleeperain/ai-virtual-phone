@@ -5111,17 +5111,11 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                                     onClick={(e) => {
                                                         e.stopPropagation();
                                                         if (menuOpen) { setNoteMenu(null); return; }
-                                                        const btn = e.currentTarget as HTMLElement;
-                                                        const btnRect = btn.getBoundingClientRect();
-                                                        const surfaceRect = surfaceRef.current?.getBoundingClientRect();
-                                                        const sTop = surfaceRect?.top ?? 0;
-                                                        const sRight = surfaceRect?.right ?? window.innerWidth;
-                                                        // 相对 surfaceRef 定位，直接挂在整个阅读区最上层，永远出现在 ⋯ 按钮正下方
                                                         setNoteMenu({
                                                             note,
                                                             placeAbove: false,
-                                                            top: btnRect.bottom - sTop + 4,
-                                                            right: Math.max(12, sRight - btnRect.right),
+                                                            top: 0,
+                                                            right: 0,
                                                         });
                                                         setActiveAnnotationId(null);
                                                     }}
@@ -5143,7 +5137,6 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                         role="menu"
                         aria-label="批注操作"
                         data-no-nav="true"
-                        style={{ top: noteMenu.top, right: noteMenu.right }}
                         onClick={(e) => e.stopPropagation()}
                         onPointerDown={(e) => e.stopPropagation()}
                     >
@@ -5158,9 +5151,9 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                 closeFloatingNote();
                             }}
                         >
-                            <PenLine size={13} strokeWidth={1.8} />
-                            <span>修改批注</span>
+                            修改
                         </button>
+                        <div className="reading-note-menu-divider" />
                         <button
                             type="button"
                             role="menuitem"
@@ -5170,12 +5163,9 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                 setNoteMenu(null);
                             }}
                         >
-                            <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                            </svg>
-                            <span>复制</span>
+                            复制
                         </button>
+                        <div className="reading-note-menu-divider" />
                         <button
                             type="button"
                             role="menuitem"
@@ -5186,9 +5176,12 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                 void handleDeleteReadingAnnotation(target.id);
                             }}
                         >
-                            <Trash2 size={13} strokeWidth={1.8} />
-                            <span>删除</span>
+                            删除
                         </button>
+                        <div className="reading-note-menu-divider" />
+                        <span className="reading-note-menu-chevron" aria-hidden="true">
+                            <ChevronRight size={13} strokeWidth={2} />
+                        </span>
                     </div>
                 )}
                 </div>
