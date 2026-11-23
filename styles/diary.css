@@ -651,9 +651,9 @@
   text-align: left;
 }
 
-/* 第二行开始为日记正文，字体颜色为黑（#252525），行间距为1.5倍 */
+/* 日记卡片正文，字体颜色为黑（#252525），行间距为1.5倍，响应手记字号缩放比例 */
 .diary-flat-card-body {
-  font-size: calc(14px * var(--app-text-scale, 1));
+  font-size: calc(14px * var(--app-text-scale, 1) * var(--diary-entry-font-scale, 1));
   line-height: 1.5;
   color: #252525;
   white-space: pre-wrap;
@@ -1966,10 +1966,10 @@
 .diary-entry-detail-paper h2 {
   margin: 0;
   min-width: 0;
-  font-size: calc(22px*var(--app-text-scale,1)*var(--diary-entry-font-scale,1));
+  font-size: calc(20px*var(--app-text-scale,1)*var(--diary-entry-font-scale,1));
   line-height: 1.35;
-  font-weight: 450;
-  color: #5B7B9A;
+  font-weight: 550;
+  color: #1a1a1c;
 }
 
 .diary-entry-detail-actions {

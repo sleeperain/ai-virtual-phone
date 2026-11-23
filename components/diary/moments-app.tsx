@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bookmark, Bot, ChevronLeft, Layers, Trash2, X } from "lucide-react";
+import { Bookmark, Bot, ChevronLeft, Clock3, Layers, Trash2, X } from "lucide-react";
 import { DotsThree } from "@phosphor-icons/react";
 
 import { ReadingShareDialog } from "@/components/reading/reading-share-dialog";
@@ -417,8 +417,6 @@ export function MomentsApp({ onBack, onNotice }: MomentsAppProps) {
                           <span className="diary-flat-card-author-id">@{phone}</span>
                         </div>
                       </div>
-
-                      <h3 className="diary-flat-card-title">{sourceLabel(moment)}摘录</h3>
 
                       <div className="diary-flat-card-body">
                         {contentText}

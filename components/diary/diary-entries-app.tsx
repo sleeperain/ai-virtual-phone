@@ -697,10 +697,7 @@ function DiaryEntryCardContent({ entry, character }: { entry: DiaryEntry; charac
         </div>
       </div>
 
-      {/* 角色头像所在行下方第一行是日记标题，字体加粗（约450左右）、颜色为莫兰迪蓝，与头像最左侧对齐 */}
-      <h3 className="diary-flat-card-title">{entry.title}</h3>
-
-      {/* 第二行开始为日记正文，字体颜色为黑（#252525）。正文超过六行时，在第七行显示“展开/收起”纯文字按钮，字体颜色浅灰 */}
+      {/* 日记正文：去掉卡片条目标题，只显示正文，字体颜色为黑（#252525）。正文超过六行时，在第七行显示“展开/收起”纯文字按钮，字体颜色浅灰 */}
       <div
         ref={bodyRef}
         className={`diary-flat-card-body ${!isExpanded ? "is-clamped" : ""}`}
