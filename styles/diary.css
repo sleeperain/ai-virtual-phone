@@ -594,10 +594,10 @@
 }
 
 .diary-flat-card-avatar {
-  width: 32px;
-  height: 32px;
-  min-width: 32px;
-  min-height: 32px;
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  min-height: 34px;
   border-radius: 50%;
   overflow: hidden;
   background: #f0f2f5;
@@ -651,10 +651,37 @@
   text-align: left;
 }
 
-/* 日记卡片正文，字体颜色为黑（#252525），行间距为1.5倍，响应手记字号缩放比例 */
+/* 默认参数变量 */
+:root {
+  --my-diary-text-size: 17px;
+  --my-diary-line-height: 1.7;
+  --my-diary-header-bottom-gap: 8px;
+  --my-diary-card-padding: 16px 16px 14px;
+  --my-diary-author-name-size: 15px;
+  --my-diary-author-id-size: 11px;
+  --my-diary-time-gap: 10px;
+}
+
+.diary-flat-card {
+  padding: var(--my-diary-card-padding) !important;
+}
+
+.diary-flat-card-author-row {
+  margin-bottom: var(--my-diary-header-bottom-gap) !important;
+}
+
+.diary-flat-card-author-name {
+  font-size: var(--my-diary-author-name-size) !important;
+}
+
+.diary-flat-card-author-id {
+  font-size: var(--my-diary-author-id-size) !important;
+}
+
+/* 日记卡片正文，字体颜色为黑（#252525），响应手记字号缩放比例 */
 .diary-flat-card-body {
-  font-size: calc(14px * var(--app-text-scale, 1) * var(--diary-entry-font-scale, 1));
-  line-height: 1.5;
+  font-size: calc(var(--my-diary-text-size) * var(--app-text-scale, 1) * var(--diary-entry-font-scale, 1));
+  line-height: var(--my-diary-line-height);
   color: #252525;
   white-space: pre-wrap;
   word-break: break-word;
@@ -669,21 +696,21 @@
   overflow: hidden;
 }
 
-/* 在第七行显示“展开”纯文字按钮，字体颜色为浅灰色 */
-.diary-flat-card-expand-btn {
-  align-self: flex-start;
-  margin-top: 4px;
+/* 跟在文本后的纯文字展开/收起按钮，不用单独一行 */
+.diary-flat-card-expand-inline-btn {
+  display: inline;
+  margin-left: 6px;
   padding: 0;
   border: none;
   background: transparent;
   color: #999999;
-  font-size: calc(13px * var(--app-text-scale, 1));
-  line-height: 1.5;
+  font-size: 0.9em;
+  line-height: inherit;
   cursor: pointer;
-  text-align: left;
+  vertical-align: baseline;
 }
 
-.diary-flat-card-expand-btn:hover {
+.diary-flat-card-expand-inline-btn:hover {
   color: #707070;
 }
 

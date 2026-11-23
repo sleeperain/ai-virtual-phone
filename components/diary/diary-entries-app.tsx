@@ -697,26 +697,25 @@ function DiaryEntryCardContent({ entry, character }: { entry: DiaryEntry; charac
         </div>
       </div>
 
-      {/* 日记正文：去掉卡片条目标题，只显示正文，字体颜色为黑（#252525）。正文超过六行时，在第七行显示“展开/收起”纯文字按钮，字体颜色浅灰 */}
+      {/* 日记正文：去掉卡片条目标题，只显示正文，字体颜色为黑（#252525）。展开/收起按钮直接跟在文本后 */}
       <div
         ref={bodyRef}
         className={`diary-flat-card-body ${!isExpanded ? "is-clamped" : ""}`}
       >
-        {preview}
+        <span>{preview}</span>
+        {canExpand && (
+          <button
+            type="button"
+            className="diary-flat-card-expand-inline-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsExpanded(!isExpanded);
+            }}
+          >
+            {isExpanded ? "收起" : "展开"}
+          </button>
+        )}
       </div>
-
-      {canExpand && (
-        <button
-          type="button"
-          className="diary-flat-card-expand-btn"
-          onClick={(e) => {
-            e.stopPropagation();
-            setIsExpanded(!isExpanded);
-          }}
-        >
-          {isExpanded ? "收起" : "展开"}
-        </button>
-      )}
 
       {/* 最后一行最左侧为小字“🕓 YYYY-MM-DD hh:mm”，字体颜色为灰色，其中“🕓”采用SVG图标，图标与角色头像左侧对齐 */}
       <div className="diary-flat-card-footer">
