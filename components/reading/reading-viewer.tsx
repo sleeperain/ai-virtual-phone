@@ -1988,10 +1988,11 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                     const arrowPercent = Math.min(92, Math.max(8, ratio * 100));
                     setActiveAnnotationId(null);
                     setNoteMenuExpanded(false);
-                    // 打开时默认选中这条（也就是被点的那枚笔对应的批注）
-                    setActiveNoteId(note.id);
+                    const finalGroup = group.length > 0 ? group : [note];
+                    // 单条批注时默认直接选中并显示菜单按钮；多条批注时默认不选中任何条目，等待用户点击具体某条放大
+                    setActiveNoteId(finalGroup.length === 1 ? finalGroup[0].id : null);
                     setFloatingNote({
-                        notes: group.length > 0 ? group : [note],
+                        notes: finalGroup,
                         anchorTop: rect.top - surfaceRect.top,
                         arrowPercent,
                         anchorHeight: anchorHeightWithHalfLine,
@@ -5159,8 +5160,8 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                         );
                     })}
                 </div>
-                {/* 菜单固定在卡片外侧下方右侧，未展开时只显示向下按钮，点击后向左展开其余三个按钮 */}
-                {floatingNote.notes.length > 0 && (() => {
+                {/* 菜单固定在卡片外侧：单条批注或多条批注选中了某一条时才浮现出来 */}
+                {floatingNote.notes.length > 0 && (activeNoteId !== null || floatingNote.notes.length === 1) && (() => {
                     // 菜单永远作用于「当前选中的那一条」：多条批注时点哪一条就操作哪一条
                     const activeNote = floatingNote.notes.find((n) => n.id === activeNoteId) || floatingNote.notes[0];
                     return (

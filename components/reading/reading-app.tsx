@@ -494,18 +494,18 @@ export default function ReadingApp({ onClose }: Props) {
             "}",
             ".reading-floating-note-item {",
             "  position: relative;",
-            "  border-radius: 6px;",
-            "  transition: background-color 140ms ease;",
+            "  border-radius: 8px;",
+            "  padding: 4px 6px;",
+            "  margin: 0 -6px;",
+            "  transition: transform 180ms cubic-bezier(0.2, 0.8, 0.25, 1), background-color 160ms ease, box-shadow 180ms ease;",
+            "  cursor: pointer;",
             "}",
-            /* 一张卡里有多条批注时，被选中（菜单会作用到它身上）的那条给个浅底提示，
-               否则按删除根本不知道删的是哪一条 */
+            /* 多条批注时，被点选的那条卡片轻微放大浮起，且背景浅底凸显，与未选中条目有明显视觉区分 */
             ".reading-floating-note-item.is-target {",
-            "  background: rgba(0, 0, 0, 0.035);",
-            "  box-shadow: inset 2px 0 0 rgba(0, 0, 0, 0.18);",
-            "  padding-left: 8px;",
-            "  margin-left: -8px;",
-            "  padding-right: 6px;",
-            "  margin-right: -6px;",
+            "  background: rgba(0, 0, 0, 0.04);",
+            "  transform: scale(1.025);",
+            "  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.07);",
+            "  z-index: 2;",
             "}",
             /* 卡片外侧固定的横向操作条：
                在卡片下方时：位于下方外侧间距 3px，右侧对齐；
