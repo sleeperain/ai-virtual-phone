@@ -436,7 +436,7 @@ export default function ReadingApp({ onClose }: Props) {
             "  margin-bottom: 0;",
             "}",
             ".reading-floating-note-item .reading-annotation-text {",
-            "  margin: 0 0 6px;",
+            "  margin: 0 0 12px;",
             "}",
             ".reading-floating-note-divider {",
             "  height: 1px;",
@@ -485,6 +485,7 @@ export default function ReadingApp({ onClose }: Props) {
             "  font-weight: 500;",
             "  line-height: 1.25;",
             "  color: #222222;",
+            "  transform: translateY(2px);",
             "}",
             ".reading-floating-note-time {",
             "  font-size: calc(9.5px * var(--app-text-scale, 1));",
@@ -495,13 +496,13 @@ export default function ReadingApp({ onClose }: Props) {
             ".reading-floating-note-item {",
             "  position: relative;",
             "}",
-            /* 卡片外侧下方固定的横向操作条：
-               卡片外侧下方、间距 3px、右侧对齐。
-               未展开时只显示向下的箭头按钮；点击后向左侧平滑展开修改/复制/删除 */
+            /* 卡片外侧固定的横向操作条：
+               在卡片下方时：位于下方外侧间距 3px，右侧对齐；
+               在卡片上方时：位于上方外侧间距 3px，右侧对齐；
+               未展开时只显示箭头按钮；点击后向左侧平滑展开修改/复制/删除 */
             ".reading-note-menu {",
             "  position: absolute;",
             "  z-index: 70;",
-            "  top: calc(100% + 3px);",
             "  right: 0;",
             "  display: inline-flex;",
             "  align-items: center;",
@@ -510,6 +511,12 @@ export default function ReadingApp({ onClose }: Props) {
             "  background: #ffffff;",
             "  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08);",
             "  overflow: hidden;",
+            "}",
+            ".reading-note-menu[data-place=\"below\"] {",
+            "  top: calc(100% + 3px);",
+            "}",
+            ".reading-note-menu[data-place=\"above\"] {",
+            "  bottom: calc(100% + 3px);",
             "}",
             ".reading-note-menu-expand {",
             "  display: inline-flex;",

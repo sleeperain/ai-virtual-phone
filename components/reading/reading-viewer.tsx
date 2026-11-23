@@ -108,18 +108,45 @@ function formatCommentTimestamp(iso: string): string {
     const date = new Date(iso);
     if (Number.isNaN(date.getTime())) return "";
     const now = new Date();
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const hm = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
-    if (
+    const diffMs = now.getTime() - date.getTime();
+    const diffMin = Math.floor(diffMs / 60000);
+
+    // 小于 1 分钟：显示「刚刚」
+    if (diffMin < 1) return "刚刚";
+    // 1 ~ 59 分钟：显示「X分钟前」
+    if (diffMin < 60) return `${diffMin}分钟前`;
+
+    // 检查是否为今天
+    const isToday =
         date.getFullYear() === now.getFullYear() &&
         date.getMonth() === now.getMonth() &&
-        date.getDate() === now.getDate()
-    ) {
-        return hm;
+        date.getDate() === now.getDate();
+
+    if (isToday) {
+        const diffHour = Math.floor(diffMin / 60);
+        return `${Math.max(1, diffHour)}小时前`;
     }
-    const md = `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${hm}`;
-    if (date.getFullYear() === now.getFullYear()) return md;
-    return `${date.getFullYear()}-${md}`;
+
+    // 检查是否为次日（昨天）：基于自然日的判断
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const startOfYesterday = startOfToday - 86400000;
+    if (date.getTime() >= startOfYesterday && date.getTime() < startOfToday) {
+        return "昨天";
+    }
+
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const month = pad(date.getMonth() + 1);
+    const day = pad(date.getDate());
+    const hours = pad(date.getHours());
+    const minutes = pad(date.getMinutes());
+
+    // 不是当前年份（例如 2026 年看 2027 年，或去年）：显示包含年的日期「YYYY.MM.DD」
+    if (date.getFullYear() !== now.getFullYear()) {
+        return `${date.getFullYear()}.${month}.${day}`;
+    }
+
+    // 第 3 天开始且在同一年：格式为「MM.DD HH:mm」
+    return `${month}.${day} ${hours}:${minutes}`;
 }
 
 /** iOS 的 Copy / Look Up 条出现在选区上方还是下方，UIKit 没有公开规则，
@@ -5065,12 +5092,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                         const avatarUrl = isUser
                             ? userAvatarUrl
                             : (note.characterId ? characterById.get(note.characterId)?.avatar || "" : "");
-                        const stamp = (() => {
-                            const d = new Date(note.createdAt);
-                            if (Number.isNaN(d.getTime())) return "";
-                            const pad = (n: number) => String(n).padStart(2, "0");
-                            return `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())} 记`;
-                        })();
+                        const stamp = formatCommentTimestamp(note.createdAt);
                         const menuOpen = activeAnnotationId === note.id;
                         return (
                             <div key={note.id}>
@@ -5112,6 +5134,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                             role="menu"
                             aria-label="批注操作"
                             data-no-nav="true"
+                            data-place={floatingNote.placeAbove ? "above" : "below"}
                             onClick={(e) => e.stopPropagation()}
                             onPointerDown={(e) => e.stopPropagation()}
                         >
