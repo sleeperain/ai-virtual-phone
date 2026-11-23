@@ -651,10 +651,10 @@
   text-align: left;
 }
 
-/* 第二行开始为日记正文，字体颜色为黑（#252525），行间距为1.25倍 */
+/* 第二行开始为日记正文，字体颜色为黑（#252525），行间距为1.5倍 */
 .diary-flat-card-body {
   font-size: calc(14px * var(--app-text-scale, 1));
-  line-height: 1.25;
+  line-height: 1.5;
   color: #252525;
   white-space: pre-wrap;
   word-break: break-word;
