@@ -103,11 +103,31 @@ function clampMenuX(centerX: number, width: number): number {
 //   段评（comment）= 挂在段落下面的一串评论与回复。
 // 这个组件里所有分栏、计数、提示词、记忆都只认那一个判据，不再各自推断。
 
-function formatCommentTimestamp(iso: string): string {
+/** 批注与段评时间戳格式化：
+ *  - 批注（kind="note"）：
+ *      <1分: 刚刚 | 1~59分: X分钟前 | 今天: X小时前 | 1~7天: X天前 | 超过7天同一年: MM.DD HH:mm | 往年: YYYY.MM.DD
+ *  - 段评（kind="comment"）：
+ *      同一年: MM-DD | 跨年: YYYY-MM-DD
+ */
+function formatCommentTimestamp(iso: string, kind: "note" | "comment" = "note"): string {
     if (!iso) return "";
     const date = new Date(iso);
     if (Number.isNaN(date.getTime())) return "";
     const now = new Date();
+
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const month = pad(date.getMonth() + 1);
+    const day = pad(date.getDate());
+
+    // 段评模式：同一年 MM-DD，往年 YYYY-MM-DD
+    if (kind === "comment") {
+        if (date.getFullYear() !== now.getFullYear()) {
+            return `${date.getFullYear()}-${month}-${day}`;
+        }
+        return `${month}-${day}`;
+    }
+
+    // 批注模式
     const diffMs = now.getTime() - date.getTime();
     const diffMin = Math.floor(diffMs / 60000);
 
@@ -127,25 +147,21 @@ function formatCommentTimestamp(iso: string): string {
         return `${Math.max(1, diffHour)}小时前`;
     }
 
-    // 检查是否为次日（昨天）：基于自然日的判断
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    const startOfYesterday = startOfToday - 86400000;
-    if (date.getTime() >= startOfYesterday && date.getTime() < startOfToday) {
-        return "昨天";
+    // 1 ~ 7 天内：基于自然日或 24 小时跨度，显示「X天前」
+    const diffDays = Math.floor(diffMs / (86400000));
+    if (diffDays >= 1 && diffDays <= 7) {
+        return `${diffDays}天前`;
     }
 
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const month = pad(date.getMonth() + 1);
-    const day = pad(date.getDate());
     const hours = pad(date.getHours());
     const minutes = pad(date.getMinutes());
 
-    // 不是当前年份（例如 2026 年看 2027 年，或去年）：显示包含年的日期「YYYY.MM.DD」
+    // 跨年：显示包含年的日期「YYYY.MM.DD」
     if (date.getFullYear() !== now.getFullYear()) {
         return `${date.getFullYear()}.${month}.${day}`;
     }
 
-    // 第 3 天开始且在同一年：格式为「MM.DD HH:mm」
+    // 超过 7 天且在同一年：格式为「MM.DD HH:mm」
     return `${month}.${day} ${hours}:${minutes}`;
 }
 
@@ -5139,7 +5155,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                             <div key={note.id}>
                                 {index > 0 && <div className="reading-floating-note-divider" />}
                                 <div
-                                    className={`reading-floating-note-item${floatingNote.notes.length > 1 && isTarget ? " is-target" : ""}`}
+                                    className={`reading-floating-note-item${floatingNote.notes.length > 1 && activeNoteId !== null && isTarget ? " is-target" : ""}`}
                                     data-annotation-id={note.id}
                                     data-author={isUser ? "user" : "character"}
                                     onClick={() => { if (activeNoteId !== note.id) setActiveNoteId(note.id); }}
@@ -5549,7 +5565,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                                             translationStyle={{ opacity: 0.78 }}
                                                         />
                                                         <div className="reading-comment-meta">
-                                                            <span className="reading-comment-time">{formatCommentTimestamp(comment.createdAt)}</span>
+                                                            <span className="reading-comment-time">{formatCommentTimestamp(comment.createdAt, "comment")}</span>
                                                             <button
                                                                 type="button"
                                                                 className="reading-comment-reply-btn"
@@ -5599,7 +5615,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                                                                     translationStyle={{ opacity: 0.78 }}
                                                                                 />
                                                                                 <div className="reading-comment-meta">
-                                                                                    <span className="reading-comment-time">{formatCommentTimestamp(reply.createdAt)}</span>
+                                                                                    <span className="reading-comment-time">{formatCommentTimestamp(reply.createdAt, "comment")}</span>
                                                                                     <button
                                                                                         type="button"
                                                                                         className="reading-comment-reply-btn"
