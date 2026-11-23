@@ -2846,6 +2846,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     }, []);
 
     const handleNavChapterClick = (index: number) => {
+        closeFloatingNote();
         if (isPdf) {
             const chapter = chapters[index];
             const firstPage = chapter?.pageStart ?? chapter?.paragraphPages?.[0] ?? 1;
@@ -2858,6 +2859,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     };
 
     const handleNavPageSlider = (value: number) => {
+        closeFloatingNote();
         if (isPdf) {
             setPdfJumpPage(value);
         } else {
@@ -3029,6 +3031,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     // Chapter navigation
     const goToChapter = (idx: number, startFromEnd = false) => {
         if (idx < 0 || idx >= chapters.length) return;
+        closeFloatingNote();
         pendingTxtPageFractionRef.current = startFromEnd ? 1 : null;
         // 滚动模式：显式跳章后定位到新章节的起点（0）或终点（1），而非窗口顶部（可能是上一章）
         // 实际滚动位置由渲染后的 useLayoutEffect 依据章节块度量换算
@@ -3088,6 +3091,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     };
 
     const jumpToBookmark = (bookmark: ReadingBookmark) => {
+        closeFloatingNote();
         setShowBookmarks(false);
         setShowReadingSettings(false);
         if (isPdf) {
@@ -3133,6 +3137,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
      *  跨章时先切章，等目标章的排版算完再定位（见后面两个 effect）。 */
     const jumpToSavedLine = (targetChapterIndex: number, targetParagraphIndex: number) => {
         if (chapters.length === 0) return;
+        closeFloatingNote();
         const target = Math.min(Math.max(0, targetChapterIndex), Math.max(0, chapters.length - 1));
         const chapter = chapters[target];
         const paragraphIndex = Math.max(0, Math.min(
@@ -3854,6 +3859,9 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         if (direction === 'backward' && !canBackward) return;
 
         // 关掉动画就直接切页：flipAnim 是那层翻页覆盖物，不设它就没有动画
+        // 翻页立即收起卡片和菜单，避免带着上一页的卡片飞到新一页
+        closeFloatingNote();
+
         if (flipAnimationEnabled && currentItems && currentItems.length > 0) {
             setFlipAnim({ direction, items: currentItems });
         }
