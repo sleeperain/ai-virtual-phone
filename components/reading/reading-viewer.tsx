@@ -567,35 +567,6 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
         setNoteMenu(null);
     }, []);
 
-    useEffect(() => {
-        if (!floatingNote) return;
-        const onPointerDown = (event: PointerEvent) => {
-            const target = event.target as HTMLElement | null;
-            if (!target) return;
-            if (target.closest(".reading-floating-note-card, .reading-note-feather")) return;
-            suppressSurfaceClickRef.current = true;
-            window.setTimeout(() => { suppressSurfaceClickRef.current = false; }, 350);
-            setFloatingNote(null);
-            setNoteMenu(null);
-        };
-        window.addEventListener("pointerdown", onPointerDown, true);
-        return () => window.removeEventListener("pointerdown", onPointerDown, true);
-    }, [floatingNote]);
-
-    useEffect(() => {
-        setFloatingNote(null);
-        setNoteMenu(null);
-    }, [book.id, chapterIndex, txtPage, isScrollMode]);
-
-    useEffect(() => {
-        if (!floatingNote) return;
-        const body = scrollRef.current;
-        if (!body) return;
-        const onScroll = () => { setFloatingNote(null); setNoteMenu(null); };
-        body.addEventListener("scroll", onScroll, { passive: true, once: true });
-        return () => body.removeEventListener("scroll", onScroll);
-    }, [floatingNote]);
-
     const txtMeasureLineRef = useRef<HTMLParagraphElement>(null);
     const txtMeasureGapRef = useRef<HTMLDivElement>(null);
     const txtMeasureAnnotationRef = useRef<HTMLDivElement>(null);
@@ -666,6 +637,36 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     const flipAnimationEnabled = readingConfig.pageFlipAnimation !== false;
     const defaultTranslationExpanded = readingConfig.collapseBilingualTranslation !== true;
     const isScrollMode = !isPdf && readingConfig.readingMode === "scroll";
+
+    useEffect(() => {
+        if (!floatingNote) return;
+        const onPointerDown = (event: PointerEvent) => {
+            const target = event.target as HTMLElement | null;
+            if (!target) return;
+            if (target.closest(".reading-floating-note-card, .reading-note-feather")) return;
+            suppressSurfaceClickRef.current = true;
+            window.setTimeout(() => { suppressSurfaceClickRef.current = false; }, 350);
+            setFloatingNote(null);
+            setNoteMenu(null);
+        };
+        window.addEventListener("pointerdown", onPointerDown, true);
+        return () => window.removeEventListener("pointerdown", onPointerDown, true);
+    }, [floatingNote]);
+
+    useEffect(() => {
+        setFloatingNote(null);
+        setNoteMenu(null);
+    }, [book.id, chapterIndex, txtPage, isScrollMode]);
+
+    useEffect(() => {
+        if (!floatingNote) return;
+        const body = scrollRef.current;
+        if (!body) return;
+        const onScroll = () => { setFloatingNote(null); setNoteMenu(null); };
+        body.addEventListener("scroll", onScroll, { passive: true, once: true });
+        return () => body.removeEventListener("scroll", onScroll);
+    }, [floatingNote]);
+
     // 保持 ref 与最新状态同步（供长生命周期滚动回调读取）
     chapterIndexRef.current = chapterIndex;
     chaptersLenRef.current = chapters.length;
