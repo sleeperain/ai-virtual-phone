@@ -554,17 +554,13 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     const chatMovedRef = useRef(false);
     const scrollRef = useRef<HTMLDivElement>(null);
     const chatListRef = useRef<HTMLDivElement>(null); // 共读讨论悬浮窗消息列表（滚动容器）
-    const [noteMenu, setNoteMenu] = useState<{
-        note: ReadingAnnotation;
-        top: number;
-        right: number;
-        placeAbove: boolean;
-    } | null>(null);
+    /** 悬浮批注卡下方的横向菜单是否展开 */
+    const [noteMenuExpanded, setNoteMenuExpanded] = useState(false);
     const suppressSurfaceClickRef = useRef(false);
 
     const closeFloatingNote = useCallback(() => {
         setFloatingNote(null);
-        setNoteMenu(null);
+        setNoteMenuExpanded(false);
     }, []);
 
     const txtMeasureLineRef = useRef<HTMLParagraphElement>(null);
@@ -638,47 +634,41 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     const defaultTranslationExpanded = readingConfig.collapseBilingualTranslation !== true;
     const isScrollMode = !isPdf && readingConfig.readingMode === "scroll";
 
-    // 点卡片外部空白：收起卡片和菜单。
-    // 如果菜单正打开着，点卡片内部非菜单区域：只关闭菜单。
+    // 点卡片及菜单外部空白：收起卡片与菜单
     useEffect(() => {
-        if (!floatingNote && !noteMenu) return;
+        if (!floatingNote) return;
         const onPointerDown = (event: PointerEvent) => {
             const target = event.target as HTMLElement | null;
             if (!target) return;
-            // 点在 ⋯ 按钮自己身上交由按钮点击处理
-            if (target.closest(".reading-floating-note-menu-btn")) return;
-            // 点在菜单自己身上不关
             if (target.closest(".reading-note-menu")) return;
 
-            // 如果菜单开着，点卡片本身或外部任意位置都先关闭菜单
-            if (noteMenu) {
-                setNoteMenu(null);
+            if (noteMenuExpanded && target.closest(".reading-floating-note-card")) {
+                setNoteMenuExpanded(false);
+                return;
             }
 
-            // 点在卡片外部：收起卡片
             if (!target.closest(".reading-floating-note-card, .reading-note-feather")) {
                 suppressSurfaceClickRef.current = true;
                 window.setTimeout(() => { suppressSurfaceClickRef.current = false; }, 350);
-                setFloatingNote(null);
+                closeFloatingNote();
             }
         };
         window.addEventListener("pointerdown", onPointerDown, true);
         return () => window.removeEventListener("pointerdown", onPointerDown, true);
-    }, [floatingNote, noteMenu]);
+    }, [closeFloatingNote, floatingNote, noteMenuExpanded]);
 
     useEffect(() => {
-        setFloatingNote(null);
-        setNoteMenu(null);
-    }, [book.id, chapterIndex, txtPage, isScrollMode]);
+        closeFloatingNote();
+    }, [book.id, chapterIndex, closeFloatingNote, isScrollMode, txtPage]);
 
     useEffect(() => {
         if (!floatingNote) return;
         const body = scrollRef.current;
         if (!body) return;
-        const onScroll = () => { setFloatingNote(null); setNoteMenu(null); };
+        const onScroll = () => { closeFloatingNote(); };
         body.addEventListener("scroll", onScroll, { passive: true, once: true });
         return () => body.removeEventListener("scroll", onScroll);
-    }, [floatingNote]);
+    }, [closeFloatingNote, floatingNote]);
 
     // 保持 ref 与最新状态同步（供长生命周期滚动回调读取）
     chapterIndexRef.current = chapterIndex;
@@ -1951,25 +1941,29 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                             noteAnchorOffset(item, paragraphLength) === anchor,
                         )
                         .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-                    // 下方空间不够放卡片（估 220px）就翻到上方
-                    const placeAbove = rect.bottom + 220 > window.innerHeight && rect.top > 240;
-                    // 卡片和正文同宽（左右各留 16px），居中摆放；三角按羽毛的相对位置
-                    // 横向偏移，并夹住左右各 18px，免得尖角跑到圆角外面去。
+                    // 默认在划线句子最后一行上方；只有上方空间不够（rect.top 离顶部小于 240px）才移到下方
+                    const placeAbove = rect.top >= 240;
+                    // 在下方时，卡片应该露出下面一行的一半文字（按单行约 24px 计算，偏移半行约 12px）
+                    const anchorHeightWithHalfLine = placeAbove ? rect.height : rect.height + 12;
+                    // 卡片和正文同宽（左右各留 16px），居中摆放；三角按铅笔图标的相对位置横向偏移
                     const featherCenter = rect.left - surfaceRect.left + rect.width / 2;
                     const ratio = surfaceRect.width > 0 ? featherCenter / surfaceRect.width : 0.5;
                     const arrowPercent = Math.min(92, Math.max(8, ratio * 100));
                     setActiveAnnotationId(null);
-                    setNoteMenu(null);
+                    setNoteMenuExpanded(false);
                     setFloatingNote({
                         notes: group.length > 0 ? group : [note],
                         anchorTop: rect.top - surfaceRect.top,
                         arrowPercent,
-                        anchorHeight: rect.height,
+                        anchorHeight: anchorHeightWithHalfLine,
                         placeAbove,
                     });
                 }}
             >
-                🪶
+                <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ verticalAlign: "middle" }}>
+                    <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+                    <line x1="2" y1="22" x2="22" y2="22" />
+                </svg>
             </button>
         );
     };
@@ -5100,29 +5094,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                                 : <span>{displayName[0] || "?"}</span>}
                                         </div>
                                         <div className="reading-floating-note-author">
-                                            <div className="reading-floating-note-name-row">
-                                                <span className="reading-floating-note-name">{displayName}</span>
-                                                <button
-                                                    type="button"
-                                                    className="reading-floating-note-menu-btn"
-                                                    aria-label="批注操作"
-                                                    aria-haspopup="menu"
-                                                    aria-expanded={menuOpen}
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        if (menuOpen) { setNoteMenu(null); return; }
-                                                        setNoteMenu({
-                                                            note,
-                                                            placeAbove: false,
-                                                            top: 0,
-                                                            right: 0,
-                                                        });
-                                                        setActiveAnnotationId(null);
-                                                    }}
-                                                >
-                                                    <MoreHorizontal size={13} strokeWidth={2} />
-                                                </button>
-                                            </div>
+                                            <span className="reading-floating-note-name">{displayName}</span>
                                             <span className="reading-floating-note-time">{stamp}</span>
                                         </div>
                                     </div>
@@ -5131,59 +5103,72 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                         );
                     })}
                 </div>
-                {noteMenu && (
-                    <div
-                        className="reading-note-menu"
-                        role="menu"
-                        aria-label="批注操作"
-                        data-no-nav="true"
-                        onClick={(e) => e.stopPropagation()}
-                        onPointerDown={(e) => e.stopPropagation()}
-                    >
-                        <button
-                            type="button"
-                            role="menuitem"
-                            className="reading-note-menu-item"
-                            onClick={() => {
-                                const target = noteMenu.note;
-                                setEditingAnnotation(target);
-                                setEditingText(target.content);
-                                closeFloatingNote();
-                            }}
+                {/* 菜单固定在卡片外侧下方右侧，未展开时只显示向下按钮，点击后向左展开其余三个按钮 */}
+                {floatingNote.notes.length > 0 && (() => {
+                    const activeNote = floatingNote.notes[0];
+                    return (
+                        <div
+                            className="reading-note-menu"
+                            role="menu"
+                            aria-label="批注操作"
+                            data-no-nav="true"
+                            onClick={(e) => e.stopPropagation()}
+                            onPointerDown={(e) => e.stopPropagation()}
                         >
-                            修改
-                        </button>
-                        <div className="reading-note-menu-divider" />
-                        <button
-                            type="button"
-                            role="menuitem"
-                            className="reading-note-menu-item"
-                            onClick={() => {
-                                copyToClipboard(noteMenu.note.content);
-                                setNoteMenu(null);
-                            }}
-                        >
-                            复制
-                        </button>
-                        <div className="reading-note-menu-divider" />
-                        <button
-                            type="button"
-                            role="menuitem"
-                            className="reading-note-menu-item reading-note-menu-item--danger"
-                            onClick={() => {
-                                const target = noteMenu.note;
-                                closeFloatingNote();
-                                void handleDeleteReadingAnnotation(target.id);
-                            }}
-                        >
-                            删除
-                        </button>
-                        <div className="reading-note-menu-divider" />
-                        <span className="reading-note-menu-chevron" aria-hidden="true">
-                            <ChevronRight size={13} strokeWidth={2} />
-                        </span>
-                    </div>
-                )}
+                            <div className={`reading-note-menu-expand${noteMenuExpanded ? " is-expanded" : ""}`}>
+                                <button
+                                    type="button"
+                                    role="menuitem"
+                                    className="reading-note-menu-item"
+                                    onClick={() => {
+                                        setEditingAnnotation(activeNote);
+                                        setEditingText(activeNote.content);
+                                        closeFloatingNote();
+                                    }}
+                                >
+                                    修改
+                                </button>
+                                <div className="reading-note-menu-divider" />
+                                <button
+                                    type="button"
+                                    role="menuitem"
+                                    className="reading-note-menu-item"
+                                    onClick={() => {
+                                        copyToClipboard(activeNote.content);
+                                        setNoteMenuExpanded(false);
+                                    }}
+                                >
+                                    复制
+                                </button>
+                                <div className="reading-note-menu-divider" />
+                                <button
+                                    type="button"
+                                    role="menuitem"
+                                    className="reading-note-menu-item reading-note-menu-item--danger"
+                                    onClick={() => {
+                                        closeFloatingNote();
+                                        void handleDeleteReadingAnnotation(activeNote.id);
+                                    }}
+                                >
+                                    删除
+                                </button>
+                                <div className="reading-note-menu-divider" />
+                            </div>
+                            <button
+                                type="button"
+                                className={`reading-note-menu-toggle-btn${noteMenuExpanded ? " is-expanded" : ""}`}
+                                aria-label={noteMenuExpanded ? "收起操作菜单" : "展开操作菜单"}
+                                aria-expanded={noteMenuExpanded}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setNoteMenuExpanded((prev) => !prev);
+                                }}
+                            >
+                                <ChevronDown size={14} strokeWidth={2.2} />
+                            </button>
+                        </div>
+                    );
+                })()}
                 </div>
             )}
             {activeParagraphCommentModal && (() => {
