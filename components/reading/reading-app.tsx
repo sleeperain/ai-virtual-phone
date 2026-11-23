@@ -381,7 +381,8 @@ export default function ReadingApp({ onClose }: Props) {
             "  margin: 0 auto;",
             "  border-radius: 10px;",
             "  background: #ffffff;",
-            "  border: 1px solid rgba(0, 0, 0, 0.15);",
+            /* 删掉描边，改用向下投影定边界 */
+            "  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08);",
             "}",
             ".reading-floating-note-scroll {",
             "  max-height: 46vh;",
@@ -518,16 +519,17 @@ export default function ReadingApp({ onClose }: Props) {
             ".reading-floating-note-item {",
             "  position: relative;",
             "}",
-            /* 点 ⋯ 弹出的菜单：纯白实底、细灰边、紧凑菜单项 */
+            /* 点 ⋯ 弹出的菜单：直接绝对定位在屏幕/阅读区层级（z-index: 100），
+               摆在 ⋯ 按钮正下方，绝不受卡片边框和滚动裁切限制 */
             ".reading-note-menu {",
             "  position: absolute;",
-            "  z-index: 5;",
+            "  z-index: 100;",
             "  min-width: 110px;",
             "  padding: 4px 0;",
             "  box-sizing: border-box;",
             "  border-radius: 6px;",
             "  background: #ffffff;",
-            "  border: 1px solid rgba(0, 0, 0, 0.18);",
+            "  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16), 0 1px 3px rgba(0, 0, 0, 0.08);",
             "  display: flex;",
             "  flex-direction: column;",
             "}",

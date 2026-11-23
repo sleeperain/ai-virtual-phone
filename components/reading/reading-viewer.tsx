@@ -638,20 +638,33 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
     const defaultTranslationExpanded = readingConfig.collapseBilingualTranslation !== true;
     const isScrollMode = !isPdf && readingConfig.readingMode === "scroll";
 
+    // 点卡片外部空白：收起卡片和菜单。
+    // 如果菜单正打开着，点卡片内部非菜单区域：只关闭菜单。
     useEffect(() => {
-        if (!floatingNote) return;
+        if (!floatingNote && !noteMenu) return;
         const onPointerDown = (event: PointerEvent) => {
             const target = event.target as HTMLElement | null;
             if (!target) return;
-            if (target.closest(".reading-floating-note-card, .reading-note-feather")) return;
-            suppressSurfaceClickRef.current = true;
-            window.setTimeout(() => { suppressSurfaceClickRef.current = false; }, 350);
-            setFloatingNote(null);
-            setNoteMenu(null);
+            // 点在 ⋯ 按钮自己身上交由按钮点击处理
+            if (target.closest(".reading-floating-note-menu-btn")) return;
+            // 点在菜单自己身上不关
+            if (target.closest(".reading-note-menu")) return;
+
+            // 如果菜单开着，点卡片本身或外部任意位置都先关闭菜单
+            if (noteMenu) {
+                setNoteMenu(null);
+            }
+
+            // 点在卡片外部：收起卡片
+            if (!target.closest(".reading-floating-note-card, .reading-note-feather")) {
+                suppressSurfaceClickRef.current = true;
+                window.setTimeout(() => { suppressSurfaceClickRef.current = false; }, 350);
+                setFloatingNote(null);
+            }
         };
         window.addEventListener("pointerdown", onPointerDown, true);
         return () => window.removeEventListener("pointerdown", onPointerDown, true);
-    }, [floatingNote]);
+    }, [floatingNote, noteMenu]);
 
     useEffect(() => {
         setFloatingNote(null);
@@ -5092,18 +5105,15 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                                                         if (menuOpen) { setNoteMenu(null); return; }
                                                         const btn = e.currentTarget as HTMLElement;
                                                         const btnRect = btn.getBoundingClientRect();
-                                                        const card = btn.closest(".reading-floating-note-card") as HTMLElement | null;
-                                                        const cardRect = card?.getBoundingClientRect();
-                                                        const MENU_H = 98;
-                                                        const topInCard = cardRect ? btnRect.bottom - cardRect.top + 4 : 4;
-                                                        const placeAbove = cardRect ? topInCard + MENU_H > cardRect.height : false;
+                                                        const surfaceRect = surfaceRef.current?.getBoundingClientRect();
+                                                        const sTop = surfaceRect?.top ?? 0;
+                                                        const sRight = surfaceRect?.right ?? window.innerWidth;
+                                                        // 相对 surfaceRef 定位，直接挂在整个阅读区最上层，永远出现在 ⋯ 按钮正下方
                                                         setNoteMenu({
                                                             note,
-                                                            placeAbove,
-                                                            top: placeAbove
-                                                                ? Math.max(4, btnRect.top - (cardRect?.top ?? 0) - 4 - MENU_H)
-                                                                : topInCard,
-                                                            right: cardRect ? Math.max(6, cardRect.right - btnRect.right) : 8,
+                                                            placeAbove: false,
+                                                            top: btnRect.bottom - sTop + 4,
+                                                            right: Math.max(12, sRight - btnRect.right),
                                                         });
                                                         setActiveAnnotationId(null);
                                                     }}
@@ -5124,6 +5134,7 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                         className="reading-note-menu"
                         role="menu"
                         aria-label="批注操作"
+                        data-no-nav="true"
                         style={{ top: noteMenu.top, right: noteMenu.right }}
                         onClick={(e) => e.stopPropagation()}
                         onPointerDown={(e) => e.stopPropagation()}
