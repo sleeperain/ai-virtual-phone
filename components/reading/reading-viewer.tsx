@@ -1978,9 +1978,17 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                             noteAnchorOffset(item, paragraphLength) === anchor,
                         )
                         .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-                    // 默认在划线句子最后一行上方；只有上方空间不够（rect.top 离顶部小于 240px）才移到下方
-                    const placeAbove = rect.top >= 240;
-                    // 在下方时，卡片应该露出下面一行的一半文字（按单行约 24px 计算，偏移半行约 12px）
+                    // 预留顶部与底部操作栏/安全区（顶栏约 56px + 菜单高度 36px，底栏约 72px + 菜单高度 36px）
+                    // 估算卡片高度（单条约 140px，多条最高达 320px）
+                    const finalGroup = group.length > 0 ? group : [note];
+                    const estimatedCardHeight = Math.min(320, 90 + finalGroup.length * 75);
+                    const topAvailable = rect.top - surfaceRect.top;
+                    const bottomAvailable = surfaceRect.bottom - rect.bottom;
+                    // 向上放需要预留：卡片高度 + 菜单高度(36px) + 顶栏与内边距(56px)
+                    const spaceNeededAbove = estimatedCardHeight + 36 + 56;
+                    // 如果上方空间充裕，优先放在上方；若上方放不下但下方空间更宽敞，则放在下方
+                    const placeAbove = topAvailable >= spaceNeededAbove || topAvailable >= bottomAvailable;
+                    // 在下方时，卡片露出下面一行的一半文字（按单行约 24px 计算，偏移半行约 12px）
                     const anchorHeightWithHalfLine = placeAbove ? rect.height : rect.height + 12;
                     // 卡片和正文同宽（左右各留 16px），居中摆放；三角按铅笔图标的相对位置横向偏移
                     const featherCenter = rect.left - surfaceRect.left + rect.width / 2;
@@ -1988,7 +1996,6 @@ export function ReadingViewer({ book, appearanceKey, onBack }: Props) {
                     const arrowPercent = Math.min(92, Math.max(8, ratio * 100));
                     setActiveAnnotationId(null);
                     setNoteMenuExpanded(false);
-                    const finalGroup = group.length > 0 ? group : [note];
                     // 单条批注时默认直接选中并显示菜单按钮；多条批注时默认不选中任何条目，等待用户点击具体某条放大
                     setActiveNoteId(finalGroup.length === 1 ? finalGroup[0].id : null);
                     setFloatingNote({

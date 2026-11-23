@@ -495,17 +495,23 @@ export default function ReadingApp({ onClose }: Props) {
             ".reading-floating-note-item {",
             "  position: relative;",
             "  border-radius: 8px;",
-            "  padding: 4px 6px;",
-            "  margin: 0 -6px;",
-            "  transition: transform 180ms cubic-bezier(0.2, 0.8, 0.25, 1), background-color 160ms ease, box-shadow 180ms ease;",
+            "  padding: 8px 10px;",
+            "  margin: 4px 0;",
+            "  border: 1px solid transparent;",
+            "  transition: all 200ms cubic-bezier(0.2, 0.8, 0.25, 1);",
             "  cursor: pointer;",
             "}",
-            /* 多条批注时，被点选的那条卡片轻微放大浮起，且背景浅底凸显，与未选中条目有明显视觉区分 */
+            /* 多条批注时，被点选的那条整卡放大并抽出：
+               四周外扩留白（margin/padding 展开）、描边与投影浮现、轻微向外撑大，
+               在视觉上仿佛将这张小卡片单独拿出来一样 */
             ".reading-floating-note-item.is-target {",
-            "  background: rgba(0, 0, 0, 0.04);",
-            "  transform: scale(1.025);",
-            "  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.07);",
-            "  z-index: 2;",
+            "  background: #ffffff;",
+            "  border-color: rgba(0, 0, 0, 0.08);",
+            "  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.06);",
+            "  transform: scale(1.035);",
+            "  margin: 8px -2px;",
+            "  padding: 10px 12px;",
+            "  z-index: 5;",
             "}",
             /* 卡片外侧固定的横向操作条：
                在卡片下方时：位于下方外侧间距 3px，右侧对齐；
