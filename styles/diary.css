@@ -37,6 +37,11 @@
   overflow: hidden;
 }
 
+/* 日记条目页（TA的日记、我的日记等）背景为干净温润的浅灰色 */
+.diary-entry-app {
+  background: #f4f5f7 !important;
+}
+
 .note-wall-app {
   --nw-paper-shadow: 0 2px 4px rgba(45, 36, 24, 0.16), 0 1px 1px rgba(45, 36, 24, 0.08), inset 0 -8px 14px rgba(116, 95, 26, 0.03);
   --nw-paper-shadow-pressed: 0 1px 3px rgba(45, 36, 24, 0.14), 0 1px 1px rgba(45, 36, 24, 0.06), inset 0 -7px 12px rgba(116, 95, 26, 0.03);
@@ -628,7 +633,7 @@
 
 .diary-flat-card-author-id {
   font-size: calc(12px * var(--app-text-scale, 1));
-  color: #718096;
+  color: #8c8c8c;
   margin-top: 1px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -637,7 +642,7 @@
 
 /* 角色头像所在行下方第一行是日记标题，字体加粗（约450左右）、颜色为莫兰迪蓝，与头像最左侧对齐 */
 .diary-flat-card-title {
-  margin: 0 0 6px 0;
+  margin: 0 0 10px 0;
   padding: 0;
   font-size: calc(16px * var(--app-text-scale, 1));
   font-weight: 450;
@@ -646,10 +651,10 @@
   text-align: left;
 }
 
-/* 第二行开始为日记正文，字体颜色为黑（#252525） */
+/* 第二行开始为日记正文，字体颜色为黑（#252525），行间距为1.25倍 */
 .diary-flat-card-body {
   font-size: calc(14px * var(--app-text-scale, 1));
-  line-height: 1.6;
+  line-height: 1.25;
   color: #252525;
   white-space: pre-wrap;
   word-break: break-word;
@@ -1984,6 +1989,14 @@
   white-space: nowrap;
   cursor: pointer;
   padding: 0;
+}
+
+.diary-entry-detail-actions .diary-detail-delete-btn {
+  color: #e53e3e;
+}
+
+.diary-entry-detail-actions .diary-detail-delete-btn:hover {
+  color: #c53030;
 }
 
 .diary-entry-detail-titleline {

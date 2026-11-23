@@ -359,10 +359,7 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
           <ChevronLeft size={20} />
         </button>
         <div>
-          <h1>{kind === "user" ? (activeBook ? `写给 ${activeBook.characterName} 的日记` : "我的日记") : "TA的日记"}</h1>
-          {kind === "user" && (
-            <p>{activeBook ? `共 ${activeBook.entries.length} 篇手写日常` : "每个角色一本，写下只属于你们的纸页"}</p>
-          )}
+          <h1>{kind === "user" ? "我的日记" : "TA的日记"}</h1>
         </div>
         <input
           ref={fontFileRef}
@@ -431,9 +428,9 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
               />
             ))}
           </div>
-        ) : activeBook ? (
-          <div className="diary-entry-list">
-            {activeBook.entries.map(entry => (
+        ) : (
+          <div className="diary-flat-entry-list">
+            {sortedKindEntries.map(entry => (
               <DiaryEntryCard
                 key={entry.id}
                 entry={entry}
@@ -453,21 +450,6 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
                   setActiveEntry(entry);
                 }}
               />
-            ))}
-          </div>
-        ) : (
-          <div className="diary-shelf">
-            {[0, 1].map(column => (
-              <div className="diary-shelf-column" key={column}>
-                {books.filter((_, index) => index % 2 === column).map(book => (
-                  <DiaryBookCover
-                    key={book.characterId}
-                    book={book}
-                    busy={generatingCharacterIds.includes(book.characterId)}
-                    onOpen={() => setActiveCharacterId(book.characterId)}
-                  />
-                ))}
-              </div>
             ))}
           </div>
         )}
@@ -573,6 +555,11 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
           entry={activeEntry}
           onClose={() => setActiveEntry(null)}
           onEdit={() => { setComposeTarget({ mode: "edit", entry: activeEntry }); setActiveEntry(null); }}
+          onDelete={() => {
+            const entryToDelete = activeEntry;
+            setActiveEntry(null);
+            setDeleteCandidateEntry(entryToDelete);
+          }}
         />
       ) : null}
 
@@ -673,8 +660,16 @@ function DiaryEntryCardContent({ entry, character }: { entry: DiaryEntry; charac
   const bodyRef = useRef<HTMLDivElement | null>(null);
 
   const preview = useMemo(() => {
-    const fromBlocks = entry.blocks.map(blockPlainText).filter(Boolean).join("\n");
-    return fromBlocks || entry.body;
+    // 过滤掉日程相关内容（待办/清单类 todo、bullet 等做某事相关板块）
+    const filteredBlocks = entry.blocks.filter(b => b.type !== "todo" && b.type !== "bullet");
+    const fromBlocks = filteredBlocks.map(blockPlainText).filter(Boolean).join("\n");
+    if (fromBlocks) return fromBlocks;
+    // 如果没有 blocks 或直接读取 body，过滤常见的待办/日程清单行（如以 - [ ] 或 待办: 等开头的行）
+    return (entry.body || "")
+      .split("\n")
+      .filter(line => !/^\s*(-\s*\[[ xX]\]|待办|日程|清单|TODO|todo|[0-9]+[、.][\s]*待办)/.test(line))
+      .join("\n")
+      .trim();
   }, [entry.blocks, entry.body]);
 
   useEffect(() => {
@@ -705,7 +700,7 @@ function DiaryEntryCardContent({ entry, character }: { entry: DiaryEntry; charac
       {/* 角色头像所在行下方第一行是日记标题，字体加粗（约450左右）、颜色为莫兰迪蓝，与头像最左侧对齐 */}
       <h3 className="diary-flat-card-title">{entry.title}</h3>
 
-      {/* 第二行开始为日记正文，字体颜色为黑（#252525）。正文超过六行时，在第七行显示“展开”纯文字按钮，字体颜色浅灰 */}
+      {/* 第二行开始为日记正文，字体颜色为黑（#252525）。正文超过六行时，在第七行显示“展开/收起”纯文字按钮，字体颜色浅灰 */}
       <div
         ref={bodyRef}
         className={`diary-flat-card-body ${!isExpanded ? "is-clamped" : ""}`}
@@ -713,16 +708,16 @@ function DiaryEntryCardContent({ entry, character }: { entry: DiaryEntry; charac
         {preview}
       </div>
 
-      {canExpand && !isExpanded && (
+      {canExpand && (
         <button
           type="button"
           className="diary-flat-card-expand-btn"
           onClick={(e) => {
             e.stopPropagation();
-            setIsExpanded(true);
+            setIsExpanded(!isExpanded);
           }}
         >
-          展开
+          {isExpanded ? "收起" : "展开"}
         </button>
       )}
 
@@ -1532,7 +1527,7 @@ function CharacterAvatarGrid({ characters, selectedIds, busyIds, disabled, onTog
   );
 }
 
-function DiaryEntryDetail({ entry, onClose, onEdit }: { entry: DiaryEntry; onClose: () => void; onEdit: () => void }) {
+function DiaryEntryDetail({ entry, onClose, onEdit, onDelete }: { entry: DiaryEntry; onClose: () => void; onEdit: () => void; onDelete?: () => void }) {
   const markers = getEntryMarkers(entry);
   return (
     <div className="nw-modal-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
@@ -1545,6 +1540,9 @@ function DiaryEntryDetail({ entry, onClose, onEdit }: { entry: DiaryEntry; onClo
             <div className="diary-entry-detail-topline">
               <span>日记详情</span>
               <div className="diary-entry-detail-actions">
+                {onDelete ? (
+                  <button type="button" className="diary-detail-delete-btn" onClick={onDelete}>删除</button>
+                ) : null}
                 <button type="button" onClick={onEdit}>编辑</button>
                 <button type="button" onClick={onClose}>关闭</button>
               </div>

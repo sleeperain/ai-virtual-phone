@@ -389,45 +389,49 @@ export function MomentsApp({ onBack, onNotice }: MomentsAppProps) {
             <h2>还没有收下的片刻</h2>
             <p>在剧情正篇、番外里长按一段，点「收藏」就会收到这里。</p>
           </div>
-        ) : activeBook ? (
-          <div className={`diary-entry-list${picking ? " is-picking" : ""}`}>
-            {activeBook.moments.map((moment, index) => (
-              <button
-                key={moment.id}
-                type="button"
-                className={`diary-entry-card moment-card ${trash.drag?.item.id === moment.id ? "is-drag-source" : ""}${picking && pickedIds.includes(moment.id) ? " is-picked" : ""}`}
-                aria-pressed={picking ? pickedIds.includes(moment.id) : undefined}
-                draggable={false}
-                onPointerDown={(event) => trash.onPointerDown(event, moment)}
-                onPointerMove={trash.onPointerMove}
-                onPointerUp={trash.onPointerUp}
-                onPointerCancel={trash.onPointerCancel}
-                onPointerLeave={trash.onPointerLeave}
-                onContextMenu={event => event.preventDefault()}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  if (trash.isClickSuppressed()) {
-                    event.preventDefault();
-                    return;
-                  }
-                  if (!picking) setActiveMoment({ moment, tone: paperTone(index) });
-                  else if (moment.source === "chat") notify("聊天的纸不能合并，点开它可以直接分享截图。");
-                  else togglePicked(moment.id);
-                }}
-              >
-                <MomentCardContent moment={moment} assetUrls={assetUrls} />
-              </button>
-            ))}
-          </div>
         ) : (
-          <div className="diary-shelf">
-            {[0, 1].map(column => (
-              <div className="diary-shelf-column" key={column}>
-                {books.filter((_, index) => index % 2 === column).map(book => (
-                  <MomentBookCover key={book.characterId} book={book} onOpen={() => setActiveCharacterId(book.characterId)} />
-                ))}
-              </div>
-            ))}
+          <div className="diary-flat-entry-list">
+            {[...moments]
+              .sort((a, b) => momentTime(b) - momentTime(a))
+              .map((moment) => {
+                const char = characters.find(c => c.id === moment.characterId);
+                const phone = char?.wechatID || char?.id || "";
+                const avatar = char?.avatar || "";
+                const contentText = moment.source === "chat"
+                  ? (moment.lines ?? []).map(l => (l.kind === "text" ? `${l.speaker === "user" ? "我" : moment.characterName}: ${l.text}` : "[图片]")).join("\n")
+                  : moment.paragraphs.join("\n");
+
+                return (
+                  <article
+                    key={moment.id}
+                    className="diary-flat-card"
+                    onClick={() => setActiveMoment({ moment, tone: "yellow" })}
+                  >
+                    <div className="diary-flat-card-inner">
+                      <div className="diary-flat-card-author-row">
+                        <div className="diary-flat-card-avatar">
+                          {avatar ? <img src={avatar} alt={moment.characterName} /> : <Bot size={18} />}
+                        </div>
+                        <div className="diary-flat-card-author-info">
+                          <span className="diary-flat-card-author-name">{moment.characterName}</span>
+                          <span className="diary-flat-card-author-id">@{phone}</span>
+                        </div>
+                      </div>
+
+                      <h3 className="diary-flat-card-title">{sourceLabel(moment)}摘录</h3>
+
+                      <div className="diary-flat-card-body">
+                        {contentText}
+                      </div>
+
+                      <div className="diary-flat-card-footer">
+                        <Clock3 size={13} className="diary-flat-clock-svg" aria-hidden="true" />
+                        <time className="diary-flat-card-time">{momentDate(moment)}</time>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
           </div>
         )}
       </main>
@@ -700,6 +704,17 @@ function MomentDetail({ moment, tone, assetUrls, onClose, onShare }: {
             <div className="diary-entry-detail-topline">
               <span>{`${sourceLabel(moment)}摘录`}</span>
               <div className="diary-entry-detail-actions">
+                <button
+                  type="button"
+                  className="diary-detail-delete-btn"
+                  onClick={() => {
+                    const toDelete = moment;
+                    onClose();
+                    setDeleteCandidate(toDelete);
+                  }}
+                >
+                  删除
+                </button>
                 <button type="button" onClick={onShare}>分享</button>
                 <button type="button" onClick={onClose}>关闭</button>
               </div>
