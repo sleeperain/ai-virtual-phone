@@ -12,8 +12,21 @@ export type RevisionSpan = { start: number; end: number };
 /** 旧记忆被修订后剩下的检索权重系数：0.35 表示重要性与召回分都打三折 */
 export const DEFAULT_REVISION_WEIGHT = 0.35;
 
-/** 判定「这条是同一件事的新版本」的相似度下限（低于此值视为互不相关的新记忆） */
-export const REVISION_MATCH_THRESHOLD = 0.88;
+/**
+ * 判定「这条是同一件事的新版本」的相似度下限（同日）。
+ * 原先的 0.88 对中文偏松：同一对角色、同一话题在不同天的两次独立总结普遍能到 0.87~0.92，
+ * 于是「同一话题」被当成「同一事实的新版本」，刚总结的记忆被误判成旧记忆。
+ */
+export const REVISION_MATCH_THRESHOLD = 0.93;
+
+/** 跨日的相似度下限：隔天重复总结同一话题更不该被判成「改写了旧记忆」，口径再收紧一档 */
+export const REVISION_CROSS_DAY_THRESHOLD = 0.95;
+
+/**
+ * 无向量可用时的兜底阈值：按检索关键词与正文的集合重合度（Jaccard，分母取并集）判断。
+ * 命中只按「重复」合并、绝不据此计算划线区间。
+ */
+export const REVISION_KEYWORD_FALLBACK_THRESHOLD = 0.72;
 
 /** 相似度高于此值时视为「几乎一字不差」，仍旧按重复合并处理，不产生划线记录 */
 export const REVISION_EXACT_THRESHOLD = 0.97;

@@ -428,3 +428,19 @@ export function keywordOverlapRatio(textA: string, textB: string): number {
     }
     return overlap / Math.min(tokensA.size, tokensB.size);
 }
+
+/**
+ * 集合重合度（Jaccard）：分母取两边的并集。
+ * 与 keywordOverlapRatio 的 min 分母不同，短文本不会因为「二元组都能在长文本里找到」而虚高到 0.8+，
+ * 适合判断两条记忆是不是在讲同一件事（重复总结），而不是判断「短句是否被长文包含」。
+ */
+export function tokenJaccardRatio(textA: string, textB: string): number {
+    const tokensA = new Set(extractTokens(textA));
+    const tokensB = new Set(extractTokens(textB));
+    if (tokensA.size === 0 || tokensB.size === 0) return 0;
+    let overlap = 0;
+    for (const t of tokensA) {
+        if (tokensB.has(t)) overlap++;
+    }
+    return overlap / (tokensA.size + tokensB.size - overlap);
+}

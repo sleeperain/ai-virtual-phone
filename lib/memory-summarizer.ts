@@ -17,7 +17,7 @@ import {
 } from "./memory-storage";
 import { resolveAuxiliaryApiConfig } from "./settings-storage";
 import { loadNativeTimeline, formatTimelineForSummarization, filterTimelineByAllowedSources } from "./short-term-assembler";
-import { generateEmbeddingsBatch, resolveEmbeddingModel, cosineSimilarity, keywordOverlapRatio } from "./memory-embedding";
+import { generateEmbeddingsBatch, resolveEmbeddingModel, cosineSimilarity, tokenJaccardRatio } from "./memory-embedding";
 import { simpleLLMCall } from "./api-helpers";
 import { maybeRunCoreMemoryPipeline } from "./core-memory-builder";
 import {
@@ -25,7 +25,10 @@ import {
     computeSupersededSpans,
     effectiveImportance,
     isEntrySuperseded,
+    REVISION_CROSS_DAY_THRESHOLD,
     REVISION_EXACT_THRESHOLD,
+    REVISION_KEYWORD_FALLBACK_THRESHOLD,
+    REVISION_MATCH_THRESHOLD,
     REVISION_META_KEYS,
 } from "./memory-revision";
 
@@ -433,6 +436,9 @@ export async function runSummarizationPipeline(
     let savedEntryCount = 0;
     let lastError = "";
     let latestSummarizedTs = "";
+    // 本轮（这一次总结任务）亲手创建/合并过的条目 id。
+    // 同批拆出来的第 N 条会立刻出现在候选池里，如果不排除，第 1 条就可能被它判成「旧版本」。
+    const runCreatedIds = new Set<string>();
 
     for (let dayIdx = 0; dayIdx < sortedDays.length; dayIdx++) {
         const dayKey = sortedDays[dayIdx];
@@ -543,35 +549,72 @@ export async function runSummarizationPipeline(
         for (let topicIdx = 0; topicIdx < parsedTopics.length; topicIdx++) {
             const topic = parsedTopics[topicIdx];
             const embedding = batchEmbeddings[topicIdx] ?? undefined;
-            const createdAtIso = new Date(Date.now() + dayIdx * 100 + topicIdx).toISOString();
+            // createdAt 用真实写入时间：原先按 dayIdx * 100 加偏移，会造出「未来时间」，
+            // 任何按 createdAt 判新旧的逻辑都会错位（天级信息只应该放在 metadata.eventDate）。
+            const createdAtIso = new Date(Date.now() + topicIdx).toISOString();
 
             // 相似记忆处理，分两种情形：
             // 1. 几乎一字不差（相似度 >= REVISION_EXACT_THRESHOLD）：合并进旧条目，沿用原行为；
             // 2. 部分或全部被改写：旧条目保留，把被改掉的字句标成「划掉」并降权，新记忆独立入库。
             //    这样「原来住城东」改成「搬去城西」时，旧记忆不会连着新事实一起消失。
-            const match = findNearDuplicateMemory(existingLongTerm, dayKey, topic.cleanBody, embedding);
+            const match = findNearDuplicateMemory(
+                existingLongTerm,
+                dayKey,
+                topic.cleanBody,
+                topic.keywords,
+                embedding,
+                runCreatedIds,
+            );
             // 划掉区间的基准必须是「显示用的正文」而不是原始 content：
             // 卡片渲染时展示的是 stripMemoryStructuredSections 之后的内容，
             // 用原始 content 算偏移会因为末尾元数据段被剥掉而错位。
             const oldBaseText = match
                 ? (stripMemoryStructuredSections(match.entry.content) || match.entry.content)
                 : "";
-            const revision = match && match.similarity < REVISION_EXACT_THRESHOLD
+            // 只有「向量口径命中 + 不是本批刚建 + 不是几乎一字不差」才允许算划线区间；
+            // 关键词兜底命中、以及同批拆条之间，一律按重复合并处理，绝不划线降权。
+            const canRevise = Boolean(
+                match
+                && match.source === "vector"
+                && !match.sameRun
+                && match.similarity < REVISION_EXACT_THRESHOLD
+            );
+            const revision = canRevise && match
                 ? computeSupersededSpans(oldBaseText, topic.cleanBody)
                 : null;
             const duplicate = match && (!revision || revision.spans.length === 0) ? match.entry : null;
+            // 兜底闸门：绝不把「比这条新记忆更新」的条目标成被改写。
+            // 补总结 / 强制重跑 / 水位线重置时，命中更晚日期的记忆就是这个闸门拦住的情况。
+            const oldCreatedMs = match ? Date.parse(match.entry.createdAt) : 0;
+            const newCreatedMs = Date.parse(createdAtIso);
+            // 时间戳缺失/畸形时不拦（方向门槛已由 eventDate 兜住），只在能确定「旧条目更新」时放弃标注
+            const oldIsNotNewer = Number.isNaN(oldCreatedMs) || Number.isNaN(newCreatedMs) || oldCreatedMs <= newCreatedMs;
+            const willSupersedeOld = Boolean(
+                match
+                && revision
+                && revision.spans.length > 0
+                && oldIsNotNewer
+            );
             if (duplicate) {
                 const existingKws = Array.isArray(duplicate.metadata?.keywords)
                     ? (duplicate.metadata.keywords as unknown[]).map(String)
                     : [];
                 const mergedKeywords = Array.from(new Set([...existingKws, ...topic.keywords])).slice(0, 10);
-                const mergedContent = topic.cleanBody.length >= duplicate.content.length ? topic.cleanBody : duplicate.content;
+                // 合并时以「这次模型新总结的正文」为准。
+                // 原先取「谁长用谁」，而旧条目若来自更早版本、正文还带着 **重要性**/**检索关键词** 段，
+                // 天然比剥离元数据后的新总结更长，于是新总结被静默丢弃、只刷新了元数据（用户看到的就是
+                // 「记忆被改了却没更新内容」）。只有当新正文明显更短（说明这次是压缩版，丢掉会损信息）时才保留旧正文。
+                const previousBody = stripMemoryStructuredSections(duplicate.content) || duplicate.content;
+                const keepNewBody = topic.cleanBody.length >= previousBody.length * 0.6;
+                const mergedContent = keepNewBody ? topic.cleanBody : previousBody;
                 // 正文被换成新文本时，旧的划掉区间（按老正文下标算的）已经失效，必须一并清掉，
                 // 否则删除线会画到毫不相干的位置上。
                 const contentReplaced = mergedContent !== duplicate.content;
                 const mergedMetadata: Record<string, unknown> = {
                     ...(duplicate.metadata ?? {}),
-                    eventDate: dayKey,
+                    // 日期只允许往后推：补总结/重跑时若把已有记忆的日期改早，它在时间线和召回排序里
+                    // 就会「凭空变旧」，这也是「刚总结的记忆却显示成旧记忆」的来源之一。
+                    eventDate: dayKey > entryEventDateOf(duplicate) ? dayKey : entryEventDateOf(duplicate),
                     keywords: mergedKeywords,
                     // 合并进旧条目时同步刷新溯源指向，否则详情里看到的是上一批原文
                     provenanceBatchId,
@@ -597,6 +640,8 @@ export async function runSummarizationPipeline(
                 await saveMemoryEntry(mergedEntry);
                 const idx = existingLongTerm.findIndex(e => e.id === duplicate.id);
                 if (idx !== -1) existingLongTerm[idx] = mergedEntry;
+                // 合并过的条目等同于本轮产出：后面的拆条不能再把它判成「旧版本」
+                runCreatedIds.add(mergedEntry.id);
                 savedEntryCount += 1;
                 continue;
             }
@@ -624,14 +669,14 @@ export async function runSummarizationPipeline(
                     // 原文溯源：指向本批原始事件的存档，记忆库详情里可展开回看
                     provenanceBatchId,
                     // 这条记忆改写了哪条旧记忆：点进详情时能顺着找回去
-                    ...(match && revision && revision.spans.length > 0 ? { revisesMemoryId: match.entry.id } : {}),
+                    ...(willSupersedeOld && match ? { revisesMemoryId: match.entry.id } : {}),
                     ...(embedding ? { embeddingDim: embedding.length } : {}),
                 },
             };
             await saveMemoryEntry(longTermEntry);
 
             // 旧记忆不让位：把被改写的字句标成划掉并降权，其余内容照旧可用。
-            if (match && revision && revision.spans.length > 0) {
+            if (willSupersedeOld && match && revision) {
                 const supersededEntry: MemoryEntry = {
                     ...match.entry,
                     updatedAt: createdAtIso,
@@ -643,6 +688,7 @@ export async function runSummarizationPipeline(
             }
 
             existingLongTerm.unshift(longTermEntry);
+            runCreatedIds.add(longTermEntry.id);
             savedEntryCount += 1;
         }
 
@@ -921,49 +967,86 @@ export async function trashAllLegacyResplitFragments(
     return { count: targets.length, ids: targets.map(entry => entry.id) };
 }
 
+/** 取一条记忆的事件日期（YYYY-MM-DD），缺失时退回 createdAt */
+function entryEventDateOf(entry: MemoryEntry): string {
+    const raw = typeof entry.metadata?.eventDate === "string" ? entry.metadata.eventDate.trim() : "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+    return (entry.createdAt || "").slice(0, 10);
+}
+
 /**
  * Find if a newly summarized topic is a near-duplicate of an existing long-term memory.
+ *
+ * 判定口径（逐条短路，宁可不合并，也不要把「同一话题的两次独立总结」错判成「同一事实的新版本」）：
+ * 1. 方向门槛：晚于本次总结日的条目属于更新版本，不能反过来被更早的总结改写；
+ * 2. 有向量时按余弦相似度，同日 REVISION_MATCH_THRESHOLD、跨日 REVISION_CROSS_DAY_THRESHOLD；
+ * 3. 无向量时退化为集合重合（tokenJaccardRatio，分母取并集），达到
+ *    REVISION_KEYWORD_FALLBACK_THRESHOLD 才认为同一件事，且只按「重复合并」处理、不产生划线；
+ * 4. 同一次总结里刚创建的条目（sameRun）只参与「几乎一字不差」的合并，绝不被判成被改写。
  */
 type NearDuplicateMatch = {
     entry: MemoryEntry;
     similarity: number;
+    /** 命中口径：vector=向量余弦；keyword=关键词/正文集合重合兜底 */
+    source: "vector" | "keyword";
+    /** 是否是本轮总结刚创建/合并出来的条目 */
+    sameRun: boolean;
 };
 
 function findNearDuplicateMemory(
     existingEntries: MemoryEntry[],
     dayKey: string,
     newBody: string,
-    newEmbedding?: number[]
+    newKeywords: string[],
+    newEmbedding?: number[],
+    runCreatedIds?: Set<string>,
 ): NearDuplicateMatch | null {
     let best: NearDuplicateMatch | null = null;
     let bestRank = -1;
+    const newKeywordsText = newKeywords.filter(Boolean).join(" ");
     for (const item of existingEntries) {
-        const itemDate = typeof item.metadata?.eventDate === "string"
-            ? item.metadata.eventDate.trim()
-            : item.createdAt.slice(0, 10);
+        const itemDate = entryEventDateOf(item);
         const sameDay = itemDate === dayKey;
+        // 方向门槛：YYYY-MM-DD 可直接字符串比较
+        if (!sameDay && itemDate && dayKey && itemDate > dayKey) continue;
+        const sameRun = Boolean(runCreatedIds?.has(item.id));
         let similarity = 0;
+        let source: NearDuplicateMatch["source"] = "vector";
         if (
             newEmbedding &&
             newEmbedding.length > 0 &&
             Array.isArray(item.embedding) &&
             item.embedding.length === newEmbedding.length
         ) {
+            const threshold = sameDay ? REVISION_MATCH_THRESHOLD : REVISION_CROSS_DAY_THRESHOLD;
             const sim = cosineSimilarity(newEmbedding, item.embedding);
-            if (sim >= (sameDay ? 0.87 : 0.91)) similarity = sim;
+            if (sim >= threshold) similarity = sim;
         }
-        if (similarity === 0 && sameDay) {
-            const overlap = keywordOverlapRatio(newBody, item.content);
-            if (overlap >= 0.82) similarity = overlap;
+        if (similarity === 0) {
+            // 兜底：检索关键词 + 正文的集合重合（Jaccard，分母取并集）。
+            // 原先用的 keywordOverlapRatio 分母取 min，短的新总结几乎全能被长条目包含，重合率虚高，
+            // 于是「同一话题」被错判成「同一件事」。
+            const itemKeywords = Array.isArray(item.metadata?.keywords)
+                ? (item.metadata.keywords as unknown[]).map(String).filter(Boolean)
+                : [];
+            const keywordScore = newKeywordsText && itemKeywords.length > 0
+                ? tokenJaccardRatio(newKeywordsText, itemKeywords.join(" "))
+                : 0;
+            const bodyScore = tokenJaccardRatio(newBody, item.content);
+            if (Math.max(keywordScore, bodyScore) >= REVISION_KEYWORD_FALLBACK_THRESHOLD) {
+                // 映射到「几乎一字不差」区间：走重复合并，绝不据此算划线区间
+                similarity = REVISION_EXACT_THRESHOLD;
+                source = "keyword";
+            }
         }
         if (similarity <= 0) continue;
         // 已经被修订过的旧版本再被改写时，优先挂在「最新那一版」上；
         // 否则划掉区间会一层层叠在最早的文本上，越叠越乱。
         const alreadySuperseded = typeof item.metadata?.[REVISION_META_KEYS.by] === "string";
-        const rank = similarity - (alreadySuperseded ? 0.02 : 0);
+        const rank = similarity - (alreadySuperseded ? 0.02 : 0) - (sameRun ? 0.01 : 0);
         if (rank > bestRank) {
             bestRank = rank;
-            best = { entry: item, similarity };
+            best = { entry: item, similarity, source, sameRun };
         }
     }
     return best;
@@ -985,6 +1068,20 @@ export function isLegacyUnorganizedMemory(entry: MemoryEntry): boolean {
     if (entry.metadata?.resplitDone === true) return false;
     // 事件盒生成的总结条目不走旧记忆拆条清洗
     if (entry.metadata?.origin === "event_box_digest" || entry.metadata?.eventBoxDigestOf) return false;
+
+    // 只整理「用户自己带进来的内容」和「没有总结管道痕迹的历史格式条目」。
+    // 自动总结产出的条目本来就按当前格式生成，偶尔超字数或带换行并不代表它需要被清洗；
+    // 之前这里不分来源，导致模型刚总结的记忆被算进「一键清洗旧记忆(N)」的计数里。
+    const origin = String(entry.metadata?.origin ?? "");
+    const isUserOwned = origin === "user_manual"
+        || origin === "user_edited"
+        || entry.metadata?.editedByUser === true
+        || Boolean(entry.metadata?.importedFrom);
+    const hasPipelineTrace = entry.metadata?.topicSplitV2 === true
+        || typeof entry.metadata?.provenanceBatchId === "string"
+        || typeof entry.metadata?.resplitFrom === "string"
+        || typeof entry.metadata?.summarizedEvents === "number";
+    if (hasPipelineTrace && !isUserOwned) return false;
 
     const cleanBody = stripMemoryStructuredSections(entry.content) || entry.content.trim();
     const kws = Array.isArray(entry.metadata?.keywords)

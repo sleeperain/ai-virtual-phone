@@ -1770,13 +1770,13 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                     className="mem-entry-add-btn"
                                     onClick={() => void handleCleanAllLegacyMemories()}
                                     disabled={cleaningAllLegacy || summarizing}
-                                    title="一键将以前混杂/长文本的旧记忆清洗拆分为独立话题记忆、提取事件日期并补齐向量"
+                                    title="整理「格式未归档」的记忆（长文本、正文带日期或缺少检索关键词）：拆分成独立话题、提取事件日期并补齐向量。只处理你自己录入/导入的条目与历史遗留条目，自动总结的记忆不会出现在这里"
                                 >
                                     <Sparkles size={14} strokeWidth={1.8} />
                                     <span>
                                         {cleaningAllLegacy
-                                            ? `清洗中(${cleanLegacyProgress})...`
-                                            : `一键清洗旧记忆(${legacyUnorganizedCount})`}
+                                            ? `整理中(${cleanLegacyProgress})...`
+                                            : `整理旧格式记忆(${legacyUnorganizedCount})`}
                                     </span>
                                 </button>
                             )}
