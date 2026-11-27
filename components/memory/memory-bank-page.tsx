@@ -2391,7 +2391,15 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                             />
                         )
                     ) : activeTab === "boxes" ? (
-                        /* ── Event Boxes: 标题+日期同在分割线之上 + 支持一键批量总结 + 点击展开关联事件 ── */
+                        /* 事件盒功能已停用：不再新建/总结/归档，旧数据原样保留为普通长期记忆继续参与召回 */
+                        <div className="mem-empty-card">
+                            <p>
+                                事件盒功能已停用。原来放进事件盒的记忆都还在「长期记忆」列表里，可以照常查看、编辑和召回；
+                                这里不再提供新建、总结或归档。已经留下的空盒子可以直接忽略。
+                            </p>
+                        </div>
+                    ) : (activeTab as string) === "__event_box_disabled__" ? (
+                        /* 旧事件盒界面保留为不可达分支，仅作存档，等待后续整体删除 */
                         (() => {
                             const ungroupedCount = longTermEntries.filter(e => !isEntryTrashed(e) && !getEntryBoxId(e) && !isEntryBoxDigest(e)).length;
                             const pendingSummarizeBoxCount = boxes.filter(b => {
@@ -3058,7 +3066,8 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                         onChange={e => setMemoryEditor(prev => prev ? { ...prev, keywordsText: e.target.value } : prev)}
                                                     />
                                                 </div>
-                                                {!isCore && (!memoryEditor.entry || !isEntryBoxDigest(memoryEditor.entry)) && (
+                                                {/* 事件盒功能已停用：编辑器里不再提供「放入事件盒」 */}
+                                                {false && !isCore && (!memoryEditor.entry || !isEntryBoxDigest(memoryEditor.entry)) && (
                                                     <div className="mem-edit-field-row">
                                                         <label className="mem-edit-field-label">放入事件盒</label>
                                                         <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1, minWidth: 0 }}>
@@ -3917,7 +3926,9 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                     </div>
                 </div>
 
-                {/* 事件盒提示词编辑器 */}
+                {/* 事件盒提示词编辑器：事件盒功能已停用，配置入口一并移除（旧配置值原样留在存档里，不影响任何流程） */}
+                {false && (
+                <>
                 <p className="menu-group-desc mx-2">事件盒提示词</p>
                 <div className="menu-group">
                     <div className="menu-item">
@@ -3956,6 +3967,8 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                         )}
                     </div>
                 </div>
+                </>
+                )}
 
             </div>
         );

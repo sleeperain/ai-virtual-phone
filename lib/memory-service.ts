@@ -9,7 +9,8 @@ import { estimateTokens } from "./token-counter";
 import { extractMemoryStructuredMeta } from "./memory-summarizer";
 import { sortMemoriesByDateThenImportance } from "./memory-injector";
 import { effectiveImportance, isEntrySuperseded } from "./memory-revision";
-import { filterRecallableEntries, getEntryBoxId, isEntryBoxDigest } from "./memory-event-boxes";
+// 事件盒相关：仅保留召回过滤（filterRecallableEntries），盒串联/盒上下文注入已移除
+import { filterRecallableEntries } from "./memory-event-boxes";
 
 /**
  * Retrieve relevant long-term memories for prompt injection.
@@ -80,14 +81,13 @@ export async function retrieveMemoriesForPrompt(
                 .slice(0, topK)
                 .map(s => s.entry);
 
-            // 事件盒脉络串联：当某条被召回的记忆属于某个事件盒时，自动把该事件盒的「先前事件总结」
-            // 以及盒内尚未归档的关联新事件紧随其后排入候选，保证同一件事的前因后果在预算内一起注入
-            const chainedCandidates = chainEventBoxEntries(baseCandidates, longTermEntries);
-            selected = fillByBudget(chainedCandidates, budget);
+            // 事件盒脉络串联已移除：召回只按相关度/预算独立挑选，不再为了「同一件事前后呼应」
+            // 把同盒的其它条目强行绑进上下文——那会让不相干的内容被一起塞进 Prompt。
+            selected = fillByBudget(baseCandidates, budget);
         }
 
         if (selected.length === 0) {
-            const sorted = chainEventBoxEntries(sortMemoriesByDateThenImportance(longTermEntries, 0.8), longTermEntries);
+            const sorted = sortMemoriesByDateThenImportance(longTermEntries, 0.8);
             selected = fillByBudget(sorted, budget);
         }
     }
@@ -144,55 +144,7 @@ export async function retrieveCoreMemoriesForPrompt(
     return sortMemoriesByDateThenImportance(selected, 0.95);
 }
 
-/**
- * 事件盒脉络串联：
- * 当候选列表中命中了某个事件盒里的条目（无论是盒子的阶段性总结还是盒内尚未总结的新事件），
- * 自动把同一个事件盒的「先前事件总结」与盒内关联新事件排在该条目之后，确保同一件事的前因后果不断裂。
- */
-function chainEventBoxEntries(candidates: MemoryEntry[], allRecallable: MemoryEntry[]): MemoryEntry[] {
-    const byBox = new Map<string, MemoryEntry[]>();
-    for (const entry of allRecallable) {
-        const boxId = getEntryBoxId(entry) || (isEntryBoxDigest(entry) ? String(entry.metadata?.eventBoxDigestOf ?? "") : "");
-        if (!boxId) continue;
-        const list = byBox.get(boxId) ?? [];
-        list.push(entry);
-        byBox.set(boxId, list);
-    }
-
-    const result: MemoryEntry[] = [];
-    const seen = new Set<string>();
-
-    for (const entry of candidates) {
-        if (seen.has(entry.id)) continue;
-        result.push(entry);
-        seen.add(entry.id);
-
-        const boxId = getEntryBoxId(entry) || (isEntryBoxDigest(entry) ? String(entry.metadata?.eventBoxDigestOf ?? "") : "");
-        if (!boxId) continue;
-        const siblings = byBox.get(boxId);
-        if (!siblings || siblings.length <= 1) continue;
-
-        // 优先补充该事件盒的阶段性总结（背景前情），再按时间从近到远补充同盒的未归档新进展（最多附带 3 条以防挤爆预算）
-        const sortedSiblings = [...siblings]
-            .filter(s => !seen.has(s.id))
-            .sort((a, b) => {
-                const aDigest = isEntryBoxDigest(a) ? 0 : 1;
-                const bDigest = isEntryBoxDigest(b) ? 0 : 1;
-                if (aDigest !== bDigest) return aDigest - bDigest;
-                return b.createdAt.localeCompare(a.createdAt);
-            })
-            .slice(0, 3);
-
-        for (const sib of sortedSiblings) {
-            result.push(sib);
-            seen.add(sib.id);
-        }
-    }
-
-    return result;
-}
-
-/** Pick entries in order until token budget is exhausted (skips oversized single entry to fit smaller chained ones). */
+/** Pick entries in order until token budget is exhausted (skips oversized single entry to fit smaller ones). */
 function fillByBudget(entries: MemoryEntry[], budget: number): MemoryEntry[] {
     const result: MemoryEntry[] = [];
     let used = 0;

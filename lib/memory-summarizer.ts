@@ -424,7 +424,7 @@ export async function runSummarizationPipeline(
     const charProfile = buildCharacterSummaryProfile(characterId, characterName);
 
     // Enforce our core rules even when the user has a custom summarization prompt:
-    const ruleEnforcement = `\n\n【硬性事实与格式要求（最高优先级）】：\n1. **严格核对角色性别代词与玩笑边界**：严格依据角色设定使用正确的「他/她」（男性角色严禁写成「她」）；凡是调侃、玩笑、打比方、假设（如“调侃他扮作某人也没人看出”），必须写明是“调侃/开玩笑”，严禁脱离语境改写成“曾经真实做过某事”！\n2. **按独立话题拆条，严禁强加因果**：同一天或同一场景中发生的多件互不相关的事、不同机制或独立话题，必须用单独一行的 \`---\` 拆成多条独立记忆；除非原始记录中明确写明了因果或前提关系，否则严禁将两件独立的事合并成一条，也严禁自行补出原文不存在的因果关联。\n3. **记忆正文中严禁出现任何日期或具体时间**（如“10月23日”、“上午”、“18:03”等一律不写，系统会自动记录该记忆所属日期）。\n4. 每条记忆末尾必须各自单独输出两行：\n**重要性**：（1-10的整数）\n**检索关键词**：关键词1、关键词2、关键词3`;
+    const ruleEnforcement = `\n\n【硬性事实与格式要求（最高优先级）】：\n1. **严格核对角色性别代词与玩笑边界**：严格依据角色设定使用正确的「他/她」（男性角色严禁写成「她」）；凡是调侃、玩笑、打比方、假设（如“调侃他扮作某人也没人看出”），必须写明是“调侃/开玩笑”，严禁脱离语境改写成“曾经真实做过某事”！\n2. **按独立话题拆条，严禁强加因果**：同一天或同一场景中发生的多件互不相关的事、不同机制或独立话题，必须用单独一行的 \`---\` 拆成多条独立记忆；除非原始记录中明确写明了因果或前提关系，否则严禁将两件独立的事合并成一条，也严禁自行补出原文不存在的因果关联。\n3. **记忆正文中严禁出现任何日期或具体时间**（如“10月23日”、“上午”、“18:03”等一律不写，系统会自动记录该记忆所属日期）。\n4. 每条记忆末尾必须各自单独输出两行：\n**重要性**：（1-10的整数）\n**检索关键词**：关键词1、关键词2、关键词3\n5. **禁止凭空补出因果与动机**：除非事件记录里原文明确写了因果（「因为…所以…」「为了…」），否则严禁在记忆里出现「为了、因为、于是、结果、这才、是为了、借此、从而」这类因果连词。只允许陈述「谁做了什么、说了什么、发生了什么反应」，不允许解释「为什么这么做」。两件事发生在同一时段，不等于其中一件是为了另一件。\n6. **宁短勿编**：事件记录里没有的信息一个都不许补（包括天气、地点、时间、心理活动、过往经历、第三方人物）。如果某条记录提供的信息不足 40 字，就写多短算多短，绝不为了凑字数加戏。`;
     if (!promptTemplate.includes("假戏真做") && !promptTemplate.includes("玩笑边界")) {
         promptTemplate += ruleEnforcement;
     }
@@ -464,14 +464,14 @@ export async function runSummarizationPipeline(
         let result = await simpleLLMCall(
             apiConfig,
             [{ role: "user", content: summaryPrompt }],
-            { temperature: 0.3, label: `记忆总结·${characterName}·${dayKey}` },
+            { temperature: 0.15, label: `记忆总结·${characterName}·${dayKey}` },
         );
         if (!result.content && !result.wasTruncated) {
             await new Promise(r => setTimeout(r, 1200));
             result = await simpleLLMCall(
                 apiConfig,
                 [{ role: "user", content: summaryPrompt }],
-                { temperature: 0.3, label: `记忆总结重试·${characterName}·${dayKey}` },
+                { temperature: 0.1, label: `记忆总结重试·${characterName}·${dayKey}` },
             );
         }
 
@@ -719,36 +719,9 @@ export async function runSummarizationPipeline(
     }
     resetEventCounter(characterId);
 
-    // Enforce long-term limit (only on ordinary active long_term entries.
-    // Never count or evict: trashed / core memories / 事件盒相关条目!)
-    const activeLongTerm = (await loadMemoryEntriesByType(characterId, "long_term"))
-        .filter(e => !isEntryTrashed(e));
-    // 事件盒是用户亲手策展的档案，盒总结条目与盒内条目一律不参与淘汰与计数。
-    // 原先它们和其他条目一起排队：盒总结的 createdAt 被设成盒内最早那条的时间、已归档条目也保留
-    // 原始的早年时间，而淘汰是「越老越先删」，于是一个时间久远的事件盒会被整盒清空，
-    // 盒记录（存在独立 kv 里）却还在，界面就只剩一个空壳。
-    const evictableEntries = activeLongTerm.filter(e => isEntryEvictable(resolveMemoryEntryState(e)));
-    if (evictableEntries.length > config.maxLongTermEntries) {
-        const evictionSorted = [...evictableEntries].sort((a, b) => {
-            // 用「修订后的有效重要性」排序：已被改写的旧版本会先被淘汰，
-            // 不会因为原始重要性高就赖在库里占额度。
-            const impA = effectiveImportance(a, 0.8);
-            const impB = effectiveImportance(b, 0.8);
-            // Protect milestone memories (>= 0.9) from eviction unless everything is a milestone
-            const milestoneA = impA >= 0.9 ? 1 : 0;
-            const milestoneB = impB >= 0.9 ? 1 : 0;
-            if (milestoneA !== milestoneB) return milestoneA - milestoneB;
-            return a.createdAt.localeCompare(b.createdAt);
-        });
-        const excess = evictionSorted.slice(0, evictableEntries.length - config.maxLongTermEntries);
-        // 超限淘汰走「最近删除」而不是硬删：此前是 deleteMemoryEntries 直接 drop，
-        // 一次总结就可能让一批老记忆彻底消失且无法找回。软删除后不再注入 Prompt，
-        // 用户仍能在回收站里恢复，满 TRASH_RETENTION_DAYS 天才真正清理。
-        // （回收站只认 user / character 两种操作者，系统动作归到 user 并在理由里写明）
-        for (const entry of excess) {
-            await trashMemoryEntry(entry, { by: "user", reason: "长期记忆数量超出上限，已自动移入最近删除" });
-        }
-    }
+    // 长期记忆数量上限淘汰已整体移除（用户明确要求：不做任何自动清除）。
+    // 记忆条目只会因为「用户自己删除」「角色主动弃用」「溯源重总结后原条目进回收站」而离开生效列表，
+    // 总结管道不再有任何隐式删除路径。config.maxLongTermEntries 保留在类型里仅为兼容旧存档，已无任何代码读取。
 
     await maybeRunCoreMemoryPipeline(characterId, characterName);
 
