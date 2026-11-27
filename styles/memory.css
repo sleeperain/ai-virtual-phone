@@ -214,7 +214,7 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
   width: 100%;
   min-width: 0;
 }
@@ -246,6 +246,11 @@
 .mem-char-field.is-open {
   border-color: color-mix(in srgb, var(--c-icon-active) 55%, transparent);
   cursor: text;
+}
+
+/* 展开后点在输入框上不该闪一下变淡 */
+.mem-char-field.is-open:active {
+  opacity: 1;
 }
 
 .mem-char-value {
@@ -302,8 +307,22 @@
   cursor: pointer;
 }
 
+/* 首页卡片原本是 overflow: hidden，会把绝对定位的浮层裁掉；
+   卡片无圆角、封面图由 .mem-picker-cover-clip 自己裁，放开裁剪不影响撕纸缺口。
+   （components.css 里那条保留原样，这里后加载直接覆盖） */
+.mem-picker-card,
+.mem-picker {
+  overflow: visible;
+}
+
+/* 浮层下拉：绝对定位贴在方框下方，不占文档流，
+   展开时下方的撕纸线/按钮一个都不移动，列表直接盖在上面 */
 .mem-char-dropdown {
-  width: 100%;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 30;
   box-sizing: border-box;
   /* 4.5 行 + 上下各 1px 边框：让第 5 行只露半行，提示还能继续滑 */
   max-height: calc(var(--mem-char-row) * 4.5 + 2px);

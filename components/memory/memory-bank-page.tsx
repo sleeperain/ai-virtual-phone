@@ -376,6 +376,9 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     /** 首页角色选择器：展开下拉 + 方框里输入的人名检索词 */
     const [charPickerOpen, setCharPickerOpen] = useState(false);
     const [charPickerQuery, setCharPickerQuery] = useState("");
+    /** 首页角色选择器：容器（判断点外面收起）与输入框（选中后收键盘） */
+    const charSelectRef = useRef<HTMLDivElement | null>(null);
+    const charFieldInputRef = useRef<HTMLInputElement | null>(null);
     const [entryMenuId, setEntryMenuId] = useState<string | null>(null);
     const [memoryEditor, setMemoryEditor] = useState<MemoryEditorState | null>(null);
     const [savingMemory, setSavingMemory] = useState(false);
@@ -603,6 +606,20 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         window.addEventListener("resize", measure);
         return () => window.removeEventListener("resize", measure);
     }, [memoryEditor ? memoryEditor.entry?.id ?? "new" : null, boxes.length]);
+
+    // 下拉展开时点页面别处收起：用 pointerdown 捕获阶段，先于按钮自身的 onClick
+    useEffect(() => {
+        if (!charPickerOpen) return;
+        const handlePointerDown = (event: Event) => {
+            const node = charSelectRef.current;
+            const target = event.target;
+            if (node && target instanceof Node && node.contains(target)) return;
+            setCharPickerOpen(false);
+            setCharPickerQuery("");
+        };
+        document.addEventListener("pointerdown", handlePointerDown, true);
+        return () => document.removeEventListener("pointerdown", handlePointerDown, true);
+    }, [charPickerOpen]);
 
     const handleSelectChar = (char: Character) => {
         onSelectChar(char.id);
@@ -4220,17 +4237,19 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                             ? characters.filter(item => item.character.name.toLowerCase().includes(keyword))
                             : characters;
                         return (
-                            <div className="mem-char-select">
+                            <div className="mem-char-select" ref={charSelectRef}>
                                 {charPickerOpen ? (
                                     <div className="mem-char-field is-open">
                                         <Search size={15} strokeWidth={1.8} className="mem-char-field-icon" />
+                                        {/* 展开时不自动聚焦：一弹键盘就顶掉半屏，列表根本看不见。
+                                            想看全部人名就直接点；想检索再点方框输入 */}
                                         <input
+                                            ref={charFieldInputRef}
                                             type="text"
                                             className="mem-char-input"
                                             value={charPickerQuery}
                                             placeholder="输入人名检索…"
                                             aria-label="检索角色人名"
-                                            autoFocus
                                             onChange={event => setCharPickerQuery(event.target.value)}
                                         />
                                         <button
@@ -4238,6 +4257,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                             className="mem-char-field-toggle"
                                             aria-label="收起人名列表"
                                             onClick={() => {
+                                                charFieldInputRef.current?.blur();
                                                 setCharPickerOpen(false);
                                                 setCharPickerQuery("");
                                             }}
@@ -4269,6 +4289,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                     aria-selected={pickedCharId === character.id}
                                                     className={`mem-char-option${pickedCharId === character.id ? " is-selected" : ""}`}
                                                     onClick={() => {
+                                                        charFieldInputRef.current?.blur();
                                                         setPickedCharId(character.id);
                                                         setCharPickerOpen(false);
                                                         setCharPickerQuery("");
