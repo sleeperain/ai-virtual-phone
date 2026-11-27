@@ -573,7 +573,7 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
         </span>
       </header>
 
-      <main className="diary-entry-main">
+      <main className="diary-entry-main diary-hub-main">
         {/* 不参与滚动的工具条：输入卡片 + 按钮行 + 三个页签 */}
         <div className="diary-hub-toolbar">
           {/* 输入卡片：上边线贴在顶部栏下框线上；头像常驻，标题行点正文后才展开 */}

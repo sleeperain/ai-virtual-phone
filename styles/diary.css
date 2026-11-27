@@ -532,10 +532,16 @@
   line-height: 1.25;
 }
 
-/* 主区域不再整块滚动：工具条固定在上，只有列表区滚动 */
+/* 主区域默认整块滚动——片刻纪事等沿用这个公共类 */
 .diary-entry-main {
   flex: 1;
   min-height: 0;
+  overflow: auto;
+  padding: 10px 16px 94px;
+}
+
+/* 只有手记首页是「工具条固定 + 列表区单独滚动」，别让公共类带上这段 */
+.diary-entry-main.diary-hub-main {
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -5101,6 +5107,31 @@
 .diary-hub-send-btn:disabled {
   opacity: 0.42;
   cursor: default;
+}
+
+/* 片刻纪事复用手记版式：没有输入卡片和页签，工具条里只在左侧放一个 Bookmark 标签 */
+.diary-moment-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 5px;
+  width: 100%;
+  box-sizing: border-box;
+  height: 42px;
+  padding: 0 2px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 8px 8px 0 0;
+  background: rgba(248, 249, 250, 0.92);
+  color: rgba(37, 37, 37, 0.46);
+  font-family: "Courier New", monospace;
+  font-size: calc(11.5px * var(--app-text-scale, 1));
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+}
+
+.diary-moment-label-row svg {
+  flex: 0 0 auto;
+  opacity: 0.7;
 }
 
 /* 三个页签：等分宽度、选中变蓝（#8fb2c8）；浅灰边框描出这一行，下边线即列表滚动起点 */

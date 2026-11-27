@@ -141,7 +141,8 @@ export function MomentsApp({ onBack, onNotice }: MomentsAppProps) {
   const [profiles, setProfiles] = useState<MomentProfiles>(() => ({ user: { name: "" }, characters: {}, userByCharacter: {} }));
   // 自己设的署名头像（阅读图片库里的 blob → objectURL），没设的不在这里
   const [profileAvatars, setProfileAvatars] = useState<Record<MomentProfileOwner, string>>({});
-  const mainRef = useRef<HTMLElement | null>(null);
+  // 拖拽删除锁的是列表滚动容器（div）
+  const mainRef = useRef<HTMLDivElement | null>(null);
   const fontFileRef = useRef<HTMLInputElement | null>(null);
   /** 三份字体共用一个文件选择框，点了哪一份就传给哪一份 */
   const fontTargetRef = useRef<MomentFontKind>("moment");
@@ -382,56 +383,66 @@ export function MomentsApp({ onBack, onNotice }: MomentsAppProps) {
         )}
       </header>
 
-      <main ref={mainRef} className="diary-entry-main">
-        {moments.length === 0 ? (
-          <div className="diary-entry-empty">
-            <Bookmark size={34} strokeWidth={1.5} />
-            <h2>还没有收下的片刻</h2>
-            <p>在剧情正篇、番外里长按一段，点「收藏」就会收到这里。</p>
+      <main className="diary-entry-main diary-hub-main">
+        {/* 复用手记的版式：上方固定一条工具条（这里只有左侧 Bookmark 标签，没有输入卡片和页签） */}
+        <div className="diary-hub-toolbar">
+          <div className="diary-moment-label-row">
+            <Bookmark size={13} strokeWidth={1.9} aria-hidden="true" />
+            <span>Bookmark</span>
           </div>
-        ) : (
-          <div className="diary-flat-entry-list">
-            {[...moments]
-              .sort((a, b) => momentTime(b) - momentTime(a))
-              .map((moment) => {
-                const char = characters.find(c => c.id === moment.characterId);
-                const phone = char?.wechatID || char?.id || "";
-                const avatar = char?.avatar || "";
-                const contentText = moment.source === "chat"
-                  ? (moment.lines ?? []).map(l => (l.kind === "text" ? `${l.speaker === "user" ? "我" : moment.characterName}: ${l.text}` : "[图片]")).join("\n")
-                  : moment.paragraphs.join("\n");
+        </div>
 
-                return (
-                  <article
-                    key={moment.id}
-                    className="diary-flat-card"
-                    onClick={() => setActiveMoment({ moment, tone: "yellow" })}
-                  >
-                    <div className="diary-flat-card-inner">
-                      <div className="diary-flat-card-author-row">
-                        <div className="diary-flat-card-avatar">
-                          {avatar ? <img src={avatar} alt={moment.characterName} /> : <Bot size={18} />}
+        <div ref={mainRef} className="diary-hub-scroll">
+          <div className="diary-hub-entries">
+            {moments.length === 0 ? (
+              <div className="diary-entry-empty">
+                <Bookmark size={34} strokeWidth={1.5} />
+                <h2>还没有收下的片刻</h2>
+                <p>在剧情正篇、番外里长按一段，点「收藏」就会收到这里。</p>
+              </div>
+            ) : (
+              [...moments]
+                .sort((a, b) => momentTime(b) - momentTime(a))
+                .map((moment) => {
+                  const char = characters.find(c => c.id === moment.characterId);
+                  const phone = char?.wechatID || char?.id || "";
+                  const avatar = char?.avatar || "";
+                  const contentText = moment.source === "chat"
+                    ? (moment.lines ?? []).map(l => (l.kind === "text" ? `${l.speaker === "user" ? "我" : moment.characterName}: ${l.text}` : "[图片]")).join("\n")
+                    : moment.paragraphs.join("\n");
+
+                  return (
+                    <article
+                      key={moment.id}
+                      className="diary-flat-card"
+                      onClick={() => setActiveMoment({ moment, tone: "yellow" })}
+                    >
+                      <div className="diary-flat-card-inner">
+                        <div className="diary-flat-card-author-row">
+                          <div className="diary-flat-card-avatar">
+                            {avatar ? <img src={avatar} alt={moment.characterName} /> : <Bot size={18} />}
+                          </div>
+                          <div className="diary-flat-card-author-info">
+                            <span className="diary-flat-card-author-name">{moment.characterName}</span>
+                            <span className="diary-flat-card-author-id">@{phone}</span>
+                          </div>
                         </div>
-                        <div className="diary-flat-card-author-info">
-                          <span className="diary-flat-card-author-name">{moment.characterName}</span>
-                          <span className="diary-flat-card-author-id">@{phone}</span>
+
+                        <div className="diary-flat-card-body">
+                          {contentText}
+                        </div>
+
+                        <div className="diary-flat-card-footer">
+                          <Clock3 size={13} className="diary-flat-clock-svg" aria-hidden="true" />
+                          <time className="diary-flat-card-time">{momentDate(moment)}</time>
                         </div>
                       </div>
-
-                      <div className="diary-flat-card-body">
-                        {contentText}
-                      </div>
-
-                      <div className="diary-flat-card-footer">
-                        <Clock3 size={13} className="diary-flat-clock-svg" aria-hidden="true" />
-                        <time className="diary-flat-card-time">{momentDate(moment)}</time>
-                      </div>
-                    </div>
-                  </article>
-                );
-              })}
+                    </article>
+                  );
+                })
+            )}
           </div>
-        )}
+        </div>
       </main>
 
       {activeBook && !picking && activeBook.moments.filter(moment => moment.source !== "chat").length > 1 ? (
