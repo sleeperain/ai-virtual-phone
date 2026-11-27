@@ -8,7 +8,6 @@ import {
     loadMemoryConfig,
     loadMemoryEntriesByType,
     saveMemoryEntry,
-    deleteMemoryEntries,
     getEventCounter,
     resetEventCounter,
     getLastSummarizedTimestamp,
@@ -715,11 +714,17 @@ export async function runSummarizationPipeline(
     }
     resetEventCounter(characterId);
 
-    // Enforce long-term limit (only on active long_term entries — never count or evict trashed / core memories!)
+    // Enforce long-term limit (only on ordinary active long_term entries.
+    // Never count or evict: trashed / core memories / 事件盒相关条目!)
     const activeLongTerm = (await loadMemoryEntriesByType(characterId, "long_term"))
         .filter(e => !isEntryTrashed(e));
-    if (activeLongTerm.length > config.maxLongTermEntries) {
-        const evictionSorted = [...activeLongTerm].sort((a, b) => {
+    // 事件盒是用户亲手策展的档案，盒总结条目与盒内条目一律不参与淘汰与计数。
+    // 原先它们和其他条目一起排队：盒总结的 createdAt 被设成盒内最早那条的时间、已归档条目也保留
+    // 原始的早年时间，而淘汰是「越老越先删」，于是一个时间久远的事件盒会被整盒清空，
+    // 盒记录（存在独立 kv 里）却还在，界面就只剩一个空壳。
+    const evictableEntries = activeLongTerm.filter(e => !belongsToEventBox(e));
+    if (evictableEntries.length > config.maxLongTermEntries) {
+        const evictionSorted = [...evictableEntries].sort((a, b) => {
             // 用「修订后的有效重要性」排序：已被改写的旧版本会先被淘汰，
             // 不会因为原始重要性高就赖在库里占额度。
             const impA = effectiveImportance(a, 0.8);
@@ -730,8 +735,14 @@ export async function runSummarizationPipeline(
             if (milestoneA !== milestoneB) return milestoneA - milestoneB;
             return a.createdAt.localeCompare(b.createdAt);
         });
-        const excess = evictionSorted.slice(0, activeLongTerm.length - config.maxLongTermEntries);
-        await deleteMemoryEntries(excess.map(e => e.id));
+        const excess = evictionSorted.slice(0, evictableEntries.length - config.maxLongTermEntries);
+        // 超限淘汰走「最近删除」而不是硬删：此前是 deleteMemoryEntries 直接 drop，
+        // 一次总结就可能让一批老记忆彻底消失且无法找回。软删除后不再注入 Prompt，
+        // 用户仍能在回收站里恢复，满 TRASH_RETENTION_DAYS 天才真正清理。
+        // （回收站只认 user / character 两种操作者，系统动作归到 user 并在理由里写明）
+        for (const entry of excess) {
+            await trashMemoryEntry(entry, { by: "user", reason: "长期记忆数量超出上限，已自动移入最近删除" });
+        }
     }
 
     await maybeRunCoreMemoryPipeline(characterId, characterName);
@@ -965,6 +976,18 @@ export async function trashAllLegacyResplitFragments(
         await trashMemoryEntry(entry, { by: "user", reason: "清理旧版拆分遗留碎片" });
     }
     return { count: targets.length, ids: targets.map(entry => entry.id) };
+}
+
+/**
+ * 这条记忆是否属于某个事件盒（盒内成员 / 已归档成员 / 盒总结条目）。
+ * 直接读 metadata 键而不 import memory-event-boxes，避免与本文件形成循环依赖
+ * （memory-event-boxes 反过来 import 了本文件的 resolveSummarizationApiConfig 等）。
+ */
+function belongsToEventBox(entry: MemoryEntry): boolean {
+    const meta = entry.metadata ?? {};
+    return typeof meta.eventBoxId === "string"
+        || typeof meta.eventBoxDigestOf === "string"
+        || typeof meta.eventBoxArchivedInto === "string";
 }
 
 /** 取一条记忆的事件日期（YYYY-MM-DD），缺失时退回 createdAt */
