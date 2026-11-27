@@ -642,47 +642,49 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
           </div>
         </div>
 
-        {/* 只有这一块滚动：起点就是三个页签的下边线 */}
+        {/* 只有这一块滚动：起点就是三个页签的下边线；条目仍收回一张圆角白卡里 */}
         <div ref={entryMainRef} className="diary-hub-scroll">
-          {tab === "notices" ? (
-            <DiaryHubNoticeList entries={entries} characters={characters} userIdentity={userIdentity} />
-          ) : null}
+          <div className="diary-hub-entries">
+            {tab === "notices" ? (
+              <DiaryHubNoticeList entries={entries} characters={characters} userIdentity={userIdentity} />
+            ) : null}
 
-          {tab !== "notices" && (tab === "mine" ? mySortedEntries : friendSortedEntries).length === 0 ? (
-            <div className="diary-entry-empty">
-              <NotebookPen size={34} strokeWidth={1.5} />
-              <h2>{tab === "mine" ? "还没有日记" : "还没有TA的日记"}</h2>
-              <p>{tab === "mine" ? "在上面写一句，或者点右下角写下第一篇。" : "让角色先写一篇，纸面会从这里开始铺开。"}</p>
-              <button type="button" onClick={() => (tab === "mine" ? openUserCompose() : setWritePanelOpen(true))}>
-                {tab === "mine" ? "写下第一篇" : "让TA写一篇"}
-              </button>
-            </div>
-          ) : null}
+            {tab !== "notices" && (tab === "mine" ? mySortedEntries : friendSortedEntries).length === 0 ? (
+              <div className="diary-entry-empty">
+                <NotebookPen size={34} strokeWidth={1.5} />
+                <h2>{tab === "mine" ? "还没有日记" : "还没有TA的日记"}</h2>
+                <p>{tab === "mine" ? "在上面写一句，或者点右下角写下第一篇。" : "让角色先写一篇，纸面会从这里开始铺开。"}</p>
+                <button type="button" onClick={() => (tab === "mine" ? openUserCompose() : setWritePanelOpen(true))}>
+                  {tab === "mine" ? "写下第一篇" : "让TA写一篇"}
+                </button>
+              </div>
+            ) : null}
 
-          {tab !== "notices"
-            ? (tab === "mine" ? mySortedEntries : friendSortedEntries).map(entry => (
-              <DiaryEntryCard
-                key={entry.id}
-                entry={entry}
-                character={characters.find(c => c.id === entry.characterId)}
-                userIdentity={userIdentity}
-                isDragSource={trash.drag?.item.id === entry.id}
-                onPointerDown={(event) => trash.onPointerDown(event, entry)}
-                onPointerMove={trash.onPointerMove}
-                onPointerUp={trash.onPointerUp}
-                onPointerCancel={trash.onPointerCancel}
-                onPointerLeave={trash.onPointerLeave}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  if (trash.isClickSuppressed()) {
-                    event.preventDefault();
-                    return;
-                  }
-                  setActiveEntry(entry);
-                }}
-              />
-            ))
-            : null}
+            {tab !== "notices"
+              ? (tab === "mine" ? mySortedEntries : friendSortedEntries).map(entry => (
+                <DiaryEntryCard
+                  key={entry.id}
+                  entry={entry}
+                  character={characters.find(c => c.id === entry.characterId)}
+                  userIdentity={userIdentity}
+                  isDragSource={trash.drag?.item.id === entry.id}
+                  onPointerDown={(event) => trash.onPointerDown(event, entry)}
+                  onPointerMove={trash.onPointerMove}
+                  onPointerUp={trash.onPointerUp}
+                  onPointerCancel={trash.onPointerCancel}
+                  onPointerLeave={trash.onPointerLeave}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (trash.isClickSuppressed()) {
+                      event.preventDefault();
+                      return;
+                    }
+                    setActiveEntry(entry);
+                  }}
+                />
+              ))
+              : null}
+          </div>
         </div>
       </main>
 

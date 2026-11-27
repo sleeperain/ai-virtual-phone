@@ -638,7 +638,7 @@
 
 .diary-flat-card-author-id {
   font-size: calc(12px * var(--app-text-scale, 1));
-  color: #8c8c8c;
+  color: #b4b4b4;
   margin-top: 1px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -725,14 +725,14 @@
   align-items: center;
   gap: 5px;
   margin-top: 10px;
-  color: #8c8c8c;
+  color: #bcbcbc;
   font-size: calc(12px * var(--app-text-scale, 1));
   line-height: 1;
 }
 
 .diary-flat-clock-svg {
   flex-shrink: 0;
-  color: #8c8c8c;
+  color: #c2c2c2;
 }
 
 .diary-flat-card-time {
@@ -4749,18 +4749,30 @@
   padding: 0 16px;
 }
 
-/* 滚动区：起点就是三个页签的下边线，日记再多也只滚这一块 */
+/* 滚动区：起点就是三个页签的下边线，日记再多也只滚这一块。
+   背景保持页面浅灰，条目自己成一张圆角白卡，才有卡片感 */
 .diary-hub-scroll {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 0 16px 94px;
-  background: #ffffff;
+  padding: 12px 16px 94px;
+  background: transparent;
   -webkit-overflow-scrolling: touch;
 }
 
-.diary-hub-scroll > .diary-entry-empty {
+/* 条目白卡：宽度与输入卡片一致，圆角 + 细投影，条目之间用细分割线 */
+.diary-hub-entries {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  background: #ffffff;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(24, 30, 34, 0.06);
+}
+
+.diary-hub-entries > .diary-entry-empty {
   min-height: 260px;
   background: #ffffff;
 }
