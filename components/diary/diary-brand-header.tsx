@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import { Bell, Globe, UserRound } from "lucide-react";
+import { Globe, UserRound } from "lucide-react";
 
 import { resolveUserIdentity } from "@/lib/settings-storage";
 import type { UserIdentity } from "@/components/settings/user-identity";
@@ -54,8 +54,11 @@ export function DiaryBrandHeader({ view, onClose, onSwitch, avatarLabel, onAvata
           aria-label="TA的手记"
           aria-pressed={view === "entries"}
         >
-          {/* 实心铃铛：填充当前颜色、去掉描边 */}
-          <Bell size={18} fill="currentColor" stroke="none" aria-hidden="true" />
+          {/* 实心铃铛：自绘，钟身 + 顶钮 + 底部长缝 + 铃舌，比 lucide 那版更接近系统铃铛图标 */}
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M12 2.25a1.5 1.5 0 0 1 1.5 1.5v.4a6.75 6.75 0 0 1 5.25 6.6v3.4c0 .9.28 1.77.8 2.5l.66.92a1.2 1.2 0 0 1-.98 1.9H4.77a1.2 1.2 0 0 1-.98-1.9l.66-.92c.52-.73.8-1.6.8-2.5v-3.4a6.75 6.75 0 0 1 5.25-6.6v-.4a1.5 1.5 0 0 1 1.5-1.5z" />
+            <path d="M9.4 20.25h5.2a2.6 2.6 0 0 1-5.2 0z" />
+          </svg>
         </button>
         {children}
         <button type="button" className="diary-brand-avatar" onClick={onAvatarClick} aria-label={avatarLabel}>

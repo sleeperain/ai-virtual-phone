@@ -5423,14 +5423,14 @@
   background: #f4f5f7;
 }
 
-/* 详情页滚动区：顶部不留白，卡片上边线与顶部栏下框线贴边；
+/* 详情页滚动区：卡片上边线与顶部栏下框线之间留 3px；
    底部留一段页面底色，卡片下边线不贴屏幕底 */
 .diary-detail-scroll {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 0 16px calc(28px + var(--safe-area-bottom, 0px));
+  padding: 3px 16px calc(28px + var(--safe-area-bottom, 0px));
   background: transparent;
   -webkit-overflow-scrolling: touch;
 }
@@ -5440,7 +5440,8 @@
   width: 100%;
   cursor: default;
   border-bottom: 0;
-  border-radius: 0 0 8px 8px;
+  /* 上边线和顶部栏拉开 3px，所以四个角都圆 */
+  border-radius: 8px;
   box-shadow: 0 1px 3px rgba(24, 30, 34, 0.06);
   /* 底部按钮行就是最后一行，不要再留卡片自身的下内边距
      （.diary-flat-card 的 padding 带 !important，这里必须同样加权才生效） */
