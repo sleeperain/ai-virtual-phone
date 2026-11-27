@@ -5292,13 +5292,14 @@
   background: #f4f5f7;
 }
 
-/* 详情页滚动区：顶部不留白，卡片上边线与顶部栏下框线贴边；下边距 1px */
+/* 详情页滚动区：顶部不留白，卡片上边线与顶部栏下框线贴边；
+   底部留一段页面底色，卡片下边线不贴屏幕底 */
 .diary-detail-scroll {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 0 16px 1px;
+  padding: 0 16px calc(28px + var(--safe-area-bottom, 0px));
   background: transparent;
   -webkit-overflow-scrolling: touch;
 }

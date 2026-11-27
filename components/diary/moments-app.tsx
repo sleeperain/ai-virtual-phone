@@ -71,6 +71,18 @@ function momentDate(moment: Moment): string {
   return formatDate(moment.messageAt) || formatDate(moment.createdAt);
 }
 
+/** 卡片/详情时间戳：和手记一致，用 YYYY-MM-DD HH:mm */
+function momentTimestamp(moment: Moment): string {
+  const date = new Date(moment.messageAt || moment.createdAt);
+  if (Number.isNaN(date.getTime())) return momentDate(moment);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day} ${hours}:${minutes}`;
+}
+
 /** 剧情里那个「我」：和剧情 App 一样先找剧情身份，再找这个角色的、全局的 */
 function storyIdentity(characterId: string) {
   return resolveUserIdentity(characterId, "story") ?? resolveUserIdentity(characterId) ?? resolveUserIdentity();
@@ -430,7 +442,7 @@ export function MomentsApp({ onBack, onNotice }: MomentsAppProps) {
 
                         <div className="diary-flat-card-footer">
                           <Clock3 size={13} className="diary-flat-clock-svg" aria-hidden="true" />
-                          <time className="diary-flat-card-time">{momentDate(moment)}</time>
+                          <time className="diary-flat-card-time">{momentTimestamp(moment)}</time>
                         </div>
                       </div>
                     </article>
@@ -758,7 +770,7 @@ function MomentDetailPage({ moment, tone, assetUrls, character, fontStyle, onBac
 
             <div className="diary-flat-card-footer">
               <Clock3 size={13} className="diary-flat-clock-svg" aria-hidden="true" />
-              <time className="diary-flat-card-time">{momentDate(moment)}</time>
+              <time className="diary-flat-card-time">{momentTimestamp(moment)}</time>
             </div>
 
             <div className="diary-detail-actions">
