@@ -203,6 +203,8 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
   const [publishVisibility, setPublishVisibility] = useState<DiaryEntryVisibility>("private");
   const [publishVisibleTo, setPublishVisibleTo] = useState<string[]>([]);
   const [permissionOpen, setPermissionOpen] = useState(false);
+  // 标题输入行默认收起，点正文/输入后才展开
+  const [composeTitleOpen, setComposeTitleOpen] = useState(false);
 
   const notify = useCallback((message: string) => {
     onNotice?.(message);
@@ -407,6 +409,7 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
     setPublishVisibility("private");
     setPublishVisibleTo([]);
     setPermissionOpen(false);
+    setComposeTitleOpen(false);
     setTab("mine");
     refreshEntries();
     scheduleDiaryReply(created);
@@ -527,92 +530,98 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
       <main className="diary-entry-main">
         {/* 不参与滚动的工具条：输入卡片 + 按钮行 + 三个页签 */}
         <div className="diary-hub-toolbar">
-          {/* 输入卡片：上边线贴在顶部栏下框线上 */}
-          <section className="diary-hub-compose">
-            <div className="diary-hub-compose-head">
-              <span className="diary-hub-compose-avatar" aria-hidden="true">
-                {userIdentity?.avatarUrl ? <img src={userIdentity.avatarUrl} alt="" /> : <UserRound size={14} />}
-              </span>
-              <input
-                type="text"
-                className="diary-hub-compose-title"
-                value={publishTitle}
-                onChange={event => setPublishTitle(event.target.value)}
-                placeholder="标题"
-                maxLength={80}
-                aria-label="日记标题"
-              />
-            </div>
-            <div className="diary-hub-compose-divider" aria-hidden="true" />
+          {/* 输入卡片：上边线贴在顶部栏下框线上；头像常驻，标题行点正文后才展开 */}
+          <section
+            className={`diary-hub-compose ${composeTitleOpen ? "is-expanded" : "is-collapsed"}`}
+            onFocusCapture={() => setComposeTitleOpen(true)}
+            onClick={() => setComposeTitleOpen(true)}
+          >
+            <span className="diary-hub-compose-avatar" aria-hidden="true">
+              {userIdentity?.avatarUrl ? <img src={userIdentity.avatarUrl} alt="" /> : <UserRound size={14} />}
+            </span>
+            {composeTitleOpen ? (
+              <>
+                <input
+                  type="text"
+                  className="diary-hub-compose-title"
+                  value={publishTitle}
+                  onChange={event => setPublishTitle(event.target.value)}
+                  placeholder="标题"
+                  maxLength={80}
+                  aria-label="日记标题"
+                />
+                <div className="diary-hub-compose-divider" aria-hidden="true" />
+              </>
+            ) : null}
             <textarea
               className="diary-hub-compose-body"
               value={publishBody}
               onChange={event => setPublishBody(event.target.value)}
               placeholder="写点什么…"
-              rows={4}
+              rows={composeTitleOpen ? 4 : 1}
               aria-label="日记正文"
             />
 
-            {/* 权限 + 发送：属于这张输入卡片的一部分，靠右一行 */}
-            <div className="diary-hub-compose-actions">
-            <div className="diary-hub-permission">
+            {/* 权限 + 发送：属于这张输入卡片的一部分，靠右一行（点按钮不触发展开标题） */}
+            <div className="diary-hub-compose-actions" onClick={event => event.stopPropagation()}>
+              <div className="diary-hub-permission">
+                <button
+                  type="button"
+                  className="diary-hub-permission-btn"
+                  onClick={() => setPermissionOpen(open => !open)}
+                  aria-haspopup="true"
+                  aria-expanded={permissionOpen}
+                >
+                  {DIARY_VISIBILITY_LABELS[publishVisibility]}
+                  <ChevronDown size={12} />
+                </button>
+                {permissionOpen ? (
+                  <>
+                    <div className="diary-hub-permission-backdrop" onClick={() => setPermissionOpen(false)} />
+                    <div className="diary-hub-permission-menu" role="menu">
+                      {(Object.keys(DIARY_VISIBILITY_LABELS) as DiaryEntryVisibility[]).map(mode => (
+                        <button
+                          key={mode}
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={publishVisibility === mode}
+                          className={publishVisibility === mode ? "is-active" : ""}
+                          onClick={() => {
+                            setPublishVisibility(mode);
+                            if (mode !== "partial") setPermissionOpen(false);
+                          }}
+                        >
+                          {DIARY_VISIBILITY_LABELS[mode]}
+                        </button>
+                      ))}
+                      {publishVisibility === "partial" ? (
+                        <div className="diary-hub-permission-people">
+                          {characters.length === 0 ? (
+                            <p>暂无角色可选</p>
+                          ) : characters.map(character => (
+                            <label key={character.id}>
+                              <input
+                                type="checkbox"
+                                checked={publishVisibleTo.includes(character.id)}
+                                onChange={() => togglePublishVisibleTo(character.id)}
+                              />
+                              <span>{character.name}</span>
+                            </label>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  </>
+                ) : null}
+              </div>
               <button
                 type="button"
-                className="diary-hub-permission-btn"
-                onClick={() => setPermissionOpen(open => !open)}
-                aria-haspopup="true"
-                aria-expanded={permissionOpen}
+                className="diary-hub-send-btn"
+                onClick={publishEntry}
+                disabled={!publishTitle.trim() && !publishBody.trim()}
               >
-                {DIARY_VISIBILITY_LABELS[publishVisibility]}
-                <ChevronDown size={12} />
+                发送
               </button>
-              {permissionOpen ? (
-                <>
-                  <div className="diary-hub-permission-backdrop" onClick={() => setPermissionOpen(false)} />
-                  <div className="diary-hub-permission-menu" role="menu">
-                    {(Object.keys(DIARY_VISIBILITY_LABELS) as DiaryEntryVisibility[]).map(mode => (
-                      <button
-                        key={mode}
-                        type="button"
-                        role="menuitemradio"
-                        aria-checked={publishVisibility === mode}
-                        className={publishVisibility === mode ? "is-active" : ""}
-                        onClick={() => {
-                          setPublishVisibility(mode);
-                          if (mode !== "partial") setPermissionOpen(false);
-                        }}
-                      >
-                        {DIARY_VISIBILITY_LABELS[mode]}
-                      </button>
-                    ))}
-                    {publishVisibility === "partial" ? (
-                      <div className="diary-hub-permission-people">
-                        {characters.length === 0 ? (
-                          <p>暂无角色可选</p>
-                        ) : characters.map(character => (
-                          <label key={character.id}>
-                            <input
-                              type="checkbox"
-                              checked={publishVisibleTo.includes(character.id)}
-                              onChange={() => togglePublishVisibleTo(character.id)}
-                            />
-                            <span>{character.name}</span>
-                          </label>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                </>
-              ) : null}
-            </div>
-            <button
-              type="button"
-              className="diary-hub-send-btn"
-              onClick={publishEntry}
-              disabled={!publishTitle.trim() && !publishBody.trim()}
-            >
-              发送
-            </button>
             </div>
           </section>
 

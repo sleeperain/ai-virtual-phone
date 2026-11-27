@@ -4765,33 +4765,32 @@
   background: #ffffff;
 }
 
-/* 输入区整张卡片：头像+标题 / 分割线 / 正文 / 权限+发送 全在这一张里，上边线贴着顶部栏下框线 */
+/* 输入区整张卡片：头像常驻左侧，标题行点开正文后才出现；整卡尖角（圆角 0） */
 .diary-hub-compose {
   display: grid;
+  /* 左列固定 26px 放头像，右列其余宽度 */
+  grid-template-columns: 26px minmax(0, 1fr);
+  column-gap: 8px;
+  row-gap: 8px;
   width: 100%;
   padding: 14px 16px 14px;
   background: #ffffff;
   border: 0;
-  /* 上沿是顶部栏那条深灰线，所以只圆下面两个角 */
-  border-radius: 0 0 8px 8px;
+  border-radius: 0;
   box-sizing: border-box;
   position: relative;
   z-index: 1;
-  /* 向下投影 + 与下方按钮行拉开 */
+  /* 向下投影 + 与下方页签行拉开 */
   box-shadow: 0 4px 10px rgba(24, 30, 34, 0.1), 0 1px 2px rgba(24, 30, 34, 0.06);
   margin: 0 0 14px;
+  cursor: text;
 }
 
-.diary-hub-compose-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-/* 第一行左侧 26×26 用户头像 */
+/* 第一行左侧 26×26 用户头像：收起态也一直在（和正文同一行） */
 .diary-hub-compose-avatar {
-  flex: 0 0 auto;
+  grid-column: 1;
+  grid-row: 1;
+  align-self: center;
   width: 26px;
   height: 26px;
   border-radius: 50%;
@@ -4811,7 +4810,9 @@
 
 /* 头像右侧是标题输入，未输入时显示占位「标题」，可以为空 */
 .diary-hub-compose-title {
-  flex: 1;
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
   min-width: 0;
   border: 0;
   background: transparent;
@@ -4829,18 +4830,21 @@
   font-weight: 400;
 }
 
-/* 标题行与正文之间的细分割线，与标题左对齐 */
+/* 标题行与正文之间的细分割线，横跨整张卡（正文/标题都在右列，天然左对齐） */
 .diary-hub-compose-divider {
+  grid-column: 1 / -1;
+  grid-row: 2;
   height: 1px;
-  margin: 8px 0 8px 34px;
+  margin: 0;
   background: rgba(0, 0, 0, 0.08);
 }
 
-/* 正文与标题行左对齐（让开 26px 头像 + 8px 间距） */
+/* 正文：默认落在右列第一行（和头像同一行）；展开后移到分割线下面 */
 .diary-hub-compose-body {
-  width: calc(100% - 34px);
-  min-height: 76px;
-  margin-left: 34px;
+  grid-column: 2;
+  grid-row: 1;
+  width: 100%;
+  min-height: 30px;
   border: 0;
   background: transparent;
   color: #252525;
@@ -4850,6 +4854,12 @@
   resize: none;
   outline: none;
   box-sizing: border-box;
+  padding: 0;
+}
+
+.diary-hub-compose.is-expanded .diary-hub-compose-body {
+  grid-row: 3;
+  min-height: 76px;
 }
 
 .diary-hub-compose-body::placeholder {
@@ -4858,6 +4868,8 @@
 
 /* 权限 + 发送：输入卡片内的一行，与正文拉开 6px，靠右 */
 .diary-hub-compose-actions {
+  grid-column: 1 / -1;
+  grid-row: 2;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -4868,6 +4880,11 @@
   border: 0;
   background: transparent;
   margin: 6px 0 0;
+}
+
+/* 展开后：分割线在第 2 行、正文第 3 行，按钮行排到第 4 行 */
+.diary-hub-compose.is-expanded .diary-hub-compose-actions {
+  grid-row: 4;
 }
 
 .diary-hub-permission {
