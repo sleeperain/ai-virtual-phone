@@ -1951,20 +1951,25 @@ function DiaryBlockView({ block }: { block: DiaryEntryBlock }) {
     return <blockquote className="diary-entry-quote">{block.text}</blockquote>;
   }
   if (block.type === "correction") {
+    // 默认显示改写后的句子；点「（有更改）」换成改写前的原句，再点「（恢复）」换回来。
+    // 没有改写后的内容时退回原句，按钮就不显示了。
+    const revised = (block.replacement ?? "").trim();
+    const shown = correctionOpen || !revised ? block.text : revised;
+    const canToggle = Boolean(revised) && revised !== block.text;
     return (
-      <div className="diary-entry-correction">
-        <button
-          type="button"
-          className="diary-entry-correction-toggle"
-          onClick={() => setCorrectionOpen(open => !open)}
-          aria-expanded={correctionOpen}
-        >
-          （有更改）
-        </button>
-        {correctionOpen ? (
-          <p className="diary-entry-correction-text">{block.text}</p>
+      <p className="diary-entry-correction">
+        <span className="diary-entry-correction-text">{shown}</span>
+        {canToggle ? (
+          <button
+            type="button"
+            className="diary-entry-correction-toggle"
+            onClick={() => setCorrectionOpen(open => !open)}
+            aria-expanded={correctionOpen}
+          >
+            {correctionOpen ? "（恢复）" : "（有更改）"}
+          </button>
         ) : null}
-      </div>
+      </p>
     );
   }
   if (block.type === "todo") {
