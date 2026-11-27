@@ -10,6 +10,7 @@ import {
   Clock3,
   Globe,
   Heart,
+  Lock,
   NotebookPen,
   Share,
   Trash2,
@@ -40,6 +41,8 @@ import {
   resolveDiaryReplyRule,
   saveDiaryEntryTimerSettings,
   saveDiaryReplyRules,
+  loadDiaryUsername,
+  saveDiaryUsername,
   updateDiaryEntry,
 } from "@/lib/diary-entry-storage";
 import type {
@@ -93,15 +96,11 @@ function formatRelativeTime(value: string): string {
   return formatEntryTime(value);
 }
 
-/** 我写的日记卡片第二行：显示可见范围 */
-function visibilitySummary(entry: DiaryEntry): string {
+/** 时间戳行最右侧的权限状态：公开的不显示，只显示「私密」和「仅部分人可见」 */
+function visibilityBadge(entry: DiaryEntry): string | null {
   const visibility = entry.visibility ?? "private";
-  if (visibility === "public") return "公开";
-  if (visibility === "partial") {
-    const count = entry.visibleTo?.length ?? 0;
-    return count > 0 ? `仅 ${count} 人可见` : "仅部分人可见";
-  }
-  return "私密";
+  if (visibility === "public") return null;
+  return DIARY_VISIBILITY_LABELS[visibility];
 }
 
 function sortEntriesByTime(entries: DiaryEntry[]): DiaryEntry[] {
@@ -336,6 +335,7 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
   const saveComposeEntry = useCallback((input: {
     characterId: string;
     authorType?: DiaryEntryAuthorType;
+    username: string;
     title: string;
     mood: string;
     weather: string;
@@ -345,6 +345,8 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
   }, editingId?: string) => {
     // 表单传来的 authorType 优先（首页两个页签共用一套表单），兜底才用 kind
     const authorType = input.authorType ?? kind;
+    // 填过的 ID 记住，下次新写一篇自动带出来
+    if (authorType === "user") saveDiaryUsername(input.username);
     // body 是给"近期日记"这类只读纯文本上下文用的摊平版本；用 blockPlainText 而不是只拼
     // paragraph/quote，这样 correction/todo/image 这些板块的内容也不会在摊平时丢掉。
     const body = input.blocks.map(blockPlainText).filter(Boolean).join("\n\n");
@@ -354,6 +356,7 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
         characterId: input.characterId,
         characterName: character?.name ?? "角色",
         authorType,
+        username: input.username,
         title: input.title,
         mood: input.mood,
         weather: input.weather,
@@ -372,6 +375,7 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
       return;
     }
     const updated = updateDiaryEntry(editingId, {
+      username: input.username,
       title: input.title,
       mood: input.mood,
       weather: input.weather,
@@ -404,6 +408,7 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
       characterId: target.id,
       characterName: target.name,
       authorType: "user",
+      username: loadDiaryUsername(),
       title,
       body,
       blocks: body ? [{ type: "paragraph", text: body }] : [],
@@ -898,11 +903,13 @@ function DiaryEntryCardContent({ entry, character, userIdentity }: {
   }, [preview]);
 
   const isMine = entry.authorType === "user";
-  // 我写的日记：作者名/头像跟「当前账号」走，第二行换成可见范围；TA 的日记照旧显示 @手机号
+  // 我写的日记：作者名/头像跟「当前账号」走，第二行是表单里填的 ID；TA 的日记照旧显示 @手机号
   const phone = character?.wechatID || character?.id || "";
   const authorName = isMine ? (userIdentity?.name || "我") : entry.characterName;
   const avatar = isMine ? (userIdentity?.avatarUrl || "") : (character?.avatar || "");
-  const subline = isMine ? visibilitySummary(entry) : `@${phone}`;
+  const username = (entry.username ?? "").trim();
+  const subline = isMine ? (username ? `@${username}` : "") : `@${phone}`;
+  const permission = isMine ? visibilityBadge(entry) : null;
 
   return (
     <div className="diary-flat-card-inner">
@@ -913,7 +920,7 @@ function DiaryEntryCardContent({ entry, character, userIdentity }: {
         </div>
         <div className="diary-flat-card-author-info">
           <span className="diary-flat-card-author-name">{authorName}</span>
-          <span className="diary-flat-card-author-id">{subline}</span>
+          {subline ? <span className="diary-flat-card-author-id">{subline}</span> : null}
         </div>
       </div>
 
@@ -939,10 +946,16 @@ function DiaryEntryCardContent({ entry, character, userIdentity }: {
         </div>
       ) : null}
 
-      {/* 最后一行最左侧为小字“🕓 YYYY-MM-DD hh:mm”，字体颜色为灰色，其中“🕓”采用SVG图标，图标与角色头像左侧对齐 */}
+      {/* 最后一行最左侧为小字“🕓 YYYY-MM-DD hh:mm”，最右侧放权限状态（公开不显示） */}
       <div className="diary-flat-card-footer">
         <Clock3 size={13} className="diary-flat-clock-svg" aria-hidden="true" />
         <time className="diary-flat-card-time">{formatEntryDateTime(entry.createdAt)}</time>
+        {permission ? (
+          <span className="diary-entry-permission">
+            <Lock size={11} strokeWidth={1.8} aria-hidden="true" />
+            <span>{permission}</span>
+          </span>
+        ) : null}
       </div>
     </div>
   );
@@ -1430,6 +1443,7 @@ function DiaryEntryComposeForm({ target, characters, defaultSignature, onSave, o
   onSave: (input: {
     characterId: string;
     authorType?: DiaryEntryAuthorType;
+    username: string;
     title: string;
     mood: string;
     weather: string;
@@ -1451,6 +1465,8 @@ function DiaryEntryComposeForm({ target, characters, defaultSignature, onSave, o
   const [weather, setWeather] = useState(editingEntry?.weather ?? "");
   const [tagsText, setTagsText] = useState(editingEntry?.tags.join("、") ?? "");
   const [signature, setSignature] = useState(editingEntry?.signature ?? (isUserAuthor ? (defaultSignature ?? "我") : ""));
+  // 作者名下方那行灰色 ID：编辑已有日记带它自己的，新写一篇带上次填过的（记住状态）
+  const [username, setUsername] = useState(() => editingEntry?.username ?? loadDiaryUsername());
   // 编辑已有日记时直接从它原来的 blocks 起步——引用/涂改/待办/配图这些板块原样保留，
   // 不会因为编辑就被压平成纯段落。
   const [draftBlocks, setDraftBlocks] = useState<DraftBlock[]>(() =>
@@ -1503,7 +1519,17 @@ function DiaryEntryComposeForm({ target, characters, defaultSignature, onSave, o
     if (!canSave) return;
     const tags = tagsText.split(/[,，、\s]+/).map(tag => tag.trim()).filter(Boolean);
     const blocks = stripDraftBlocks(draftBlocks.filter(draftBlockHasContent));
-    onSave({ characterId, authorType, title: title.trim(), mood: mood.trim(), weather: weather.trim(), tags, signature: signature.trim(), blocks }, editingEntry?.id);
+    onSave({
+      characterId,
+      authorType,
+      username: username.trim().replace(/^@+/, ""),
+      title: title.trim(),
+      mood: mood.trim(),
+      weather: weather.trim(),
+      tags,
+      signature: signature.trim(),
+      blocks,
+    }, editingEntry?.id);
   };
 
   return (
@@ -1536,6 +1562,19 @@ function DiaryEntryComposeForm({ target, characters, defaultSignature, onSave, o
           <span>标签（用顿号或逗号分隔）</span>
           <input type="text" value={tagsText} onChange={event => setTagsText(event.target.value)} placeholder="例如：日常、碎碎念" />
         </label>
+
+        {isUserAuthor ? (
+          <label className="diary-compose-field diary-compose-tint-field">
+            <span>username（写在名字下方的 ID，不带 @）</span>
+            <input
+              type="text"
+              value={username}
+              onChange={event => setUsername(event.target.value)}
+              placeholder="例如：list"
+              maxLength={40}
+            />
+          </label>
+        ) : null}
 
         <div className="diary-compose-blocks">
           {draftBlocks.map(block => (
@@ -1818,7 +1857,10 @@ function DiaryEntryDetailPage({ entry, character, userIdentity, fontStyle, onBac
   const authorName = isMine ? (userIdentity?.name || "我") : entry.characterName;
   const avatar = isMine ? (userIdentity?.avatarUrl || "") : (character?.avatar || "");
   const phone = character?.wechatID || character?.id || "";
-  const subline = isMine ? visibilitySummary(entry) : `@${phone}`;
+  const username = (entry.username ?? "").trim();
+  const subline = isMine ? (username ? `@${username}` : "") : `@${phone}`;
+  // 权限状态放在时间戳行最右侧；公开的不显示
+  const permission = isMine ? visibilityBadge(entry) : null;
 
   return (
     <section className="diary-app diary-entry-app diary-detail-page" style={fontStyle}>
@@ -1842,7 +1884,7 @@ function DiaryEntryDetailPage({ entry, character, userIdentity, fontStyle, onBac
               </div>
               <div className="diary-flat-card-author-info">
                 <span className="diary-flat-card-author-name">{authorName}</span>
-                <span className="diary-flat-card-author-id">{subline}</span>
+                {subline ? <span className="diary-flat-card-author-id">{subline}</span> : null}
               </div>
             </div>
 
@@ -1860,6 +1902,12 @@ function DiaryEntryDetailPage({ entry, character, userIdentity, fontStyle, onBac
             <div className="diary-flat-card-footer">
               <Clock3 size={13} className="diary-flat-clock-svg" aria-hidden="true" />
               <time className="diary-flat-card-time">{formatEntryDateTime(entry.createdAt)}</time>
+              {permission ? (
+                <span className="diary-entry-permission">
+                  <Lock size={11} strokeWidth={1.8} aria-hidden="true" />
+                  <span>{permission}</span>
+                </span>
+              ) : null}
             </div>
 
             {/* 时间戳下方一行伪按钮装饰：按文字宽度比例分格，格间分割线用相邻元素左侧 1px 阴影画 */}

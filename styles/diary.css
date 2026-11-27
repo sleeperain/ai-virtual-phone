@@ -736,6 +736,24 @@
   line-height: 1;
 }
 
+/* 时间戳行最右侧的权限状态：字号与时间戳一致，前面一个锁图标 */
+.diary-entry-permission {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+  color: inherit;
+  font-size: inherit;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.diary-entry-permission svg {
+  flex: 0 0 auto;
+  opacity: 0.85;
+}
+
 .diary-flat-clock-svg {
   flex-shrink: 0;
   color: #c2c2c2;
@@ -5260,13 +5278,13 @@
   flex-direction: column;
 }
 
-/* 详情页滚动区：顶部不留白，卡片上边线与顶部栏下框线贴边 */
+/* 详情页滚动区：顶部不留白，卡片上边线与顶部栏下框线贴边；下边距 1px */
 .diary-detail-scroll {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 0 16px calc(24px + var(--safe-area-bottom, 0px));
+  padding: 0 16px 1px;
   background: transparent;
   -webkit-overflow-scrolling: touch;
 }

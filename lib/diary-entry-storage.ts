@@ -19,6 +19,8 @@ import {
 const ENTRIES_KEY = "ai_phone_diary_entries_v1";
 const TIMER_KEY = "ai_phone_diary_entry_timer_settings_v1";
 const REPLY_RULES_KEY = "ai_phone_diary_reply_rules_v1";
+/** 上次填过的「我」的 ID，新写日记时自动带出来 */
+const DIARY_USERNAME_KEY = "ai_phone_diary_username_v1";
 // "character" 字体沿用日记还没分裂成两本之前就有的老 key，老用户设置过的字体不会丢；
 // "user" 字体是新加的独立一份，跟角色那份互不影响。
 export const DIARY_ENTRY_FONT_ASSET_KEY = "ai_phone_diary_entry_font_asset_v1";
@@ -33,6 +35,7 @@ export const MOMENT_CHAR_FONT_ASSET_KEY = "ai_phone_moment_char_font_asset_v1";
 registerKvMigration(ENTRIES_KEY);
 registerKvMigration(TIMER_KEY);
 registerKvMigration(REPLY_RULES_KEY);
+registerKvMigration(DIARY_USERNAME_KEY);
 registerKvMigration(DIARY_ENTRY_FONT_ASSET_KEY);
 registerKvMigration(DIARY_ENTRY_FONT_SCALE_KEY);
 registerKvMigration(DIARY_ENTRY_USER_FONT_ASSET_KEY);
@@ -213,6 +216,20 @@ function normalizeTrigger(value: unknown): DiaryEntryTrigger {
   return value === "timer" ? "timer" : "manual";
 }
 
+/** 用户写日记时填的 ID（作者名下方那行灰色小字）：记住上次填的，下次新写一篇自动带出来 */
+export function loadDiaryUsername(): string {
+  if (typeof window === "undefined") return "";
+  const raw = kvGet(DIARY_USERNAME_KEY);
+  return typeof raw === "string" ? raw.trim().slice(0, 40) : "";
+}
+
+export function saveDiaryUsername(username: string): void {
+  if (typeof window === "undefined") return;
+  const value = String(username ?? "").trim().replace(/^@+/, "").slice(0, 40);
+  if (value) kvSet(DIARY_USERNAME_KEY, value);
+  else kvRemove(DIARY_USERNAME_KEY);
+}
+
 export function loadDiaryEntryFontAssetId(kind: DiaryFontKind = "character"): string | null {
   const raw = kvGet(fontAssetKey(kind));
   const id = typeof raw === "string" ? raw.trim() : "";
@@ -267,6 +284,7 @@ export function normalizeDiaryEntry(raw: unknown): DiaryEntry | null {
     characterName: cleanText(record.characterName ?? record.character_name, 80) || "角色",
     // 老数据没有这个字段：一律当成角色自己写的日记，跟以前行为一致。
     authorType: normalizeAuthorType(record.authorType ?? record.author_type),
+    username: cleanText(record.username ?? record.userId ?? record.user_id, 40),
     visibility: normalizeVisibility(record.visibility),
     visibleTo: normalizeVisibleTo(record.visibleTo ?? record.visible_to),
     title,
@@ -321,6 +339,7 @@ export function createDiaryEntry(input: DiaryEntryInput): DiaryEntry {
     characterId: cleanText(input.characterId, 120),
     characterName: cleanText(input.characterName, 80) || "角色",
     authorType: normalizeAuthorType(input.authorType),
+    username: cleanText(input.username, 40),
     visibility: normalizeVisibility(input.visibility),
     visibleTo: normalizeVisibleTo(input.visibleTo),
     title: cleanText(input.title, 80) || body.slice(0, 20) || "未命名日记",
@@ -351,6 +370,7 @@ export function updateDiaryEntry(id: string, patch: DiaryEntryPatch): DiaryEntry
   const blocks = patch.blocks !== undefined ? normalizeBlocks(patch.blocks, body) : current.blocks;
   const updated: DiaryEntry = {
     ...current,
+    username: patch.username !== undefined ? cleanText(patch.username, 40) : current.username,
     visibility: patch.visibility !== undefined ? normalizeVisibility(patch.visibility) : current.visibility,
     visibleTo: patch.visibleTo !== undefined ? normalizeVisibleTo(patch.visibleTo) : current.visibleTo,
     title: patch.title !== undefined ? (cleanText(patch.title, 80) || body.slice(0, 20) || "未命名日记") : current.title,
