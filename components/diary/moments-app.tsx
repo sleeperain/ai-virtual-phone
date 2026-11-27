@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { Bookmark, Bot, Clock3, Heart, Share, Trash2, X } from "lucide-react";
 
 import { ReadingShareDialog } from "@/components/reading/reading-share-dialog";
@@ -29,7 +29,6 @@ import { READING_AVATAR_MAX_SIZE, compressReadingImage } from "@/lib/reading-ima
 import { resolveUserIdentity } from "@/lib/settings-storage";
 import { DiaryBrandHeader, type DiaryBrandView } from "./diary-brand-header";
 import { useDiaryFont } from "./use-diary-font";
-import { useDragToTrash } from "./use-drag-to-trash";
 
 type MomentsAppProps = {
   /** 顶部栏 iFloat 点了回桌面 */
@@ -43,13 +42,6 @@ function formatDate(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, "0")}.${String(date.getDate()).padStart(2, "0")}`;
-}
-
-/** 封面上的月.日；书只有手机半屏宽，带年份的话左边的段数会被挤成省略号 */
-function formatMonthDay(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return `${String(date.getMonth() + 1).padStart(2, "0")}.${String(date.getDate()).padStart(2, "0")}`;
 }
 
 function momentDate(moment: Moment): string {
@@ -105,8 +97,6 @@ export function MomentsApp({ onClose, onSwitch, onNotice }: MomentsAppProps) {
   const [profiles, setProfiles] = useState<MomentProfiles>(() => ({ user: { name: "" }, characters: {}, userByCharacter: {} }));
   // 自己设的署名头像（阅读图片库里的 blob → objectURL），没设的不在这里
   const [profileAvatars, setProfileAvatars] = useState<Record<MomentProfileOwner, string>>({});
-  // 拖拽删除锁的是列表滚动容器（整块 main）
-  const mainRef = useRef<HTMLElement | null>(null);
   const fontFileRef = useRef<HTMLInputElement | null>(null);
   /** 三份字体共用一个文件选择框，点了哪一份就传给哪一份 */
   const fontTargetRef = useRef<MomentFontKind>("moment");
@@ -125,13 +115,6 @@ export function MomentsApp({ onClose, onSwitch, onNotice }: MomentsAppProps) {
     user: userFont.hasCustomFont ? userFont.family : font.family,
     char: charFont.hasCustomFont ? charFont.family : font.family,
   };
-  const trash = useDragToTrash<Moment>({
-    // 列表页一直可拖（原来这里要求先进某个本子，书架删掉后条件恒为假，拖拽会整个失效）
-    enabled: true,
-    scrollRef: mainRef,
-    onDrop: setDeleteCandidate,
-  });
-
   useEffect(() => {
     let cancelled = false;
     let current: string[] = [];
@@ -243,11 +226,6 @@ export function MomentsApp({ onClose, onSwitch, onNotice }: MomentsAppProps) {
       avatar: profileAvatars.user || identity?.avatarUrl || undefined,
     };
   }, [profileAvatars, profiles]);
-  /** 分享图出处那行「《正篇》· 我 · 角色」：写两人本来的名字（身份里的名字、角色名），不用署名 ID */
-  const realNames = useCallback((characterId: string, fallbackName: string) => {
-    const character = characters.find(item => item.id === characterId);
-    return `${storyIdentity(characterId)?.name?.trim() || "我"} · ${character?.name || fallbackName}`;
-  }, [characters]);
   const userSignature = useCallback((characterId: string) => {
     const base = userBase(characterId);
     return {
@@ -255,9 +233,13 @@ export function MomentsApp({ onClose, onSwitch, onNotice }: MomentsAppProps) {
       avatar: profileAvatars[momentUserOwner(characterId)] || base.avatar,
     };
   }, [profileAvatars, profiles, userBase]);
+  /** 分享图出处那行「《正篇》· 我 · 角色」：用署名设置里的名字，没设才退回身份名 / 角色卡名 */
+  const realNames = useCallback((characterId: string, fallbackName: string) => {
+    return `${userSignature(characterId).name} · ${charSignature(characterId, fallbackName).name}`;
+  }, [charSignature, userSignature]);
 
   return (
-    <section className={`diary-app diary-entry-app ${trash.drag ? "is-entry-dragging" : ""}`} style={{ ...font.style, ...userFont.style, ...charFont.style }}>
+    <section className="diary-app diary-entry-app" style={{ ...font.style, ...userFont.style, ...charFont.style }}>
       <input
         ref={fontFileRef}
         type="file"
@@ -284,7 +266,7 @@ export function MomentsApp({ onClose, onSwitch, onNotice }: MomentsAppProps) {
       </DiaryBrandHeader>
 
       {/* Bookmark 标签跟着内容一起滚：整块 main 就是滚动区，上沿从顶部栏下边线开始 */}
-      <main ref={mainRef} className="diary-entry-main diary-moment-main">
+      <main className="diary-entry-main diary-moment-main">
         <div className="diary-moment-label-row">
           <span>Bookmark</span>
         </div>
@@ -456,54 +438,7 @@ export function MomentsApp({ onClose, onSwitch, onNotice }: MomentsAppProps) {
         </div>
       ) : null}
 
-      <div
-        ref={trash.trashRef}
-        className={`diary-entry-trash-bin ${trash.drag ? "is-visible" : ""} ${trash.drag?.isOverTrash ? "is-over" : ""}`}
-        aria-hidden={!trash.drag}
-      >
-        <Trash2 size={30} strokeWidth={1.8} />
-      </div>
-
-      {trash.drag ? (
-        <div
-          className="diary-entry-card moment-card diary-entry-drag-ghost"
-          style={{
-            left: trash.drag.x,
-            top: trash.drag.y,
-            width: trash.drag.width,
-            minHeight: trash.drag.height,
-          }}
-        >
-          <MomentCardContent moment={trash.drag.item} assetUrls={assetUrls} />
-        </div>
-      ) : null}
     </section>
-  );
-}
-
-function MomentBookCover({ book, onOpen }: { book: MomentBook; onOpen: () => void }) {
-  const latest = book.moments[0];
-  return (
-    <button
-      type="button"
-      className="diary-book"
-      data-cover={hashText(book.characterId) % BOOK_COVER_COUNT}
-      onClick={onOpen}
-    >
-      <span className="diary-book-spine" aria-hidden="true" />
-      <span className="diary-book-frame" aria-hidden="true" />
-      <span className="diary-book-label">
-        <span className="diary-book-avatar">
-          {book.avatar ? <img src={book.avatar} alt="" /> : <Bot size={20} />}
-        </span>
-        <strong>{book.characterName}</strong>
-        <em>的片刻纪事</em>
-      </span>
-      <span className="diary-book-meta">
-        <span>{book.moments.length} 段</span>
-        <time>{formatMonthDay(latest.createdAt)}</time>
-      </span>
-    </button>
   );
 }
 
@@ -515,43 +450,6 @@ function MomentChatSnap({ line, url, scale = 1 }: { line: Extract<MomentChatLine
   return url
     ? <img className="moment-chat-snap" data-speaker={line.speaker} src={url} alt="" style={{ width }} />
     : <span className="moment-chat-snap" data-speaker={line.speaker} style={{ width, height }} />;
-}
-
-function MomentCardContent({ moment, assetUrls }: { moment: Moment; assetUrls: Record<string, string> }) {
-  if (moment.source === "chat") {
-    const lines = moment.lines ?? [];
-    // 纸条外面：他靠左、我靠右，不加框，放前几条，多了渐隐
-    return (
-      <>
-        <span className="diary-entry-card-kicker">CHAT</span>
-        <span className="diary-entry-card-markers">
-          <span className="diary-entry-marker">{sourceLabel(moment)}</span>
-        </span>
-        <span className={`moment-chat-lines${lines.length > 5 || moment.paragraphs.join("").length > 70 ? " is-clipped" : ""}`}>
-          {lines.slice(0, 6).map((line, index) => line.kind === "text"
-            ? <span key={index} className="moment-chat-line" data-speaker={line.speaker}>{line.text}</span>
-            : <MomentChatSnap key={index} line={line} url={assetUrls[line.asset]} scale={0.6} />)}
-        </span>
-        <span className="diary-entry-card-meta">
-          <span>{lines.length} 条</span>
-          <time>{momentDate(moment)}</time>
-        </span>
-      </>
-    );
-  }
-  return (
-    <>
-      <span className="diary-entry-card-kicker">{moment.source === "extra" ? "EXTRA" : "STORY"}</span>
-      <span className="diary-entry-card-markers">
-        <span className="diary-entry-marker">{sourceLabel(moment)}</span>
-      </span>
-      <span className="diary-entry-card-text" data-speaker={moment.speaker}>{clipText(moment.paragraphs.join(" "), 130)}</span>
-      <span className="diary-entry-card-meta">
-        <span>{moment.speakerName}</span>
-        <time>{momentDate(moment)}</time>
-      </span>
-    </>
-  );
 }
 
 /** 片刻纪事详情：复用手记详情页那套版式（独立整页 + 卡片 + 底部按钮行） */
@@ -739,12 +637,9 @@ function MomentFontPanel({ tiers, scale, onUpload, onReset, onScaleChange, onClo
   );
 }
 
-/** 署名设置：最外面是自己 + 所有角色；点进某一本就只管这个角色（和日记的定时设置一样分两层） */
-function MomentProfilePanel({ characters, bookCharacterName, bookUser, profiles, avatars, onClose, notify }: {
+/** 署名设置：按角色分别设置分享卡片上用的名字和头像（不填就退回角色卡 / 身份里的名字） */
+function MomentProfilePanel({ characters, profiles, avatars, onClose, notify }: {
   characters: Character[];
-  bookCharacterName?: string;
-  /** 在某一本里：自己这一行改的是这一本单独的，空着就用 fallback（外面设的） */
-  bookUser?: { characterId: string; fallback: { name: string; avatar?: string } };
   profiles: MomentProfiles;
   avatars: Record<MomentProfileOwner, string>;
   onClose: () => void;
@@ -780,48 +675,53 @@ function MomentProfilePanel({ characters, bookCharacterName, bookUser, profiles,
       <section className="diary-entry-settings" onClick={event => event.stopPropagation()}>
         <header>
           <div>
-            <h2>{bookCharacterName ? `${bookCharacterName} 的署名` : "署名"}</h2>
-            <p>{bookUser ? "只用在这一本。我的不填就用外面设的。" : "分享摘抄时用的 ID 和头像。不填就用原来的名字和头像。"}</p>
+            <h2>署名</h2>
+            <p>分享卡片上用的名字和头像。每个角色可以单独设，不填就用角色卡的名字。</p>
           </div>
           <button type="button" className="diary-icon-btn" onClick={onClose} aria-label="关闭">
             <X size={18} />
           </button>
         </header>
         <div className="moment-profile-list">
-          {bookUser ? (
+          {/* 默认的「我」：某个角色没单独设时用它 */}
+          <div className="moment-profile-group">
+            <strong className="moment-profile-group-title">默认</strong>
             <MomentProfileRow
               label="我"
-              placeholder={bookUser.fallback.name}
-              name={draft.userByCharacter[bookUser.characterId]?.name ?? ""}
-              avatar={avatars[momentUserOwner(bookUser.characterId)]}
-              fallbackAvatar={bookUser.fallback.avatar}
-              initial="我"
-              onName={name => setBookUserName(bookUser.characterId, name)}
-              onAvatar={file => void pickAvatar(momentUserOwner(bookUser.characterId), file)}
-            />
-          ) : (
-            <MomentProfileRow
-              label="我"
-              placeholder="默认用你在这个角色那里的身份名"
+              placeholder="不填就用当前账号名"
               name={draft.user.name}
               avatar={avatars.user}
               initial="我"
               onName={name => save({ ...draft, user: { name } })}
               onAvatar={file => void pickAvatar("user", file)}
             />
-          )}
+          </div>
+
+          {/* 每个角色一组：这一段的署名 + 我在这本里的署名 */}
           {characters.map(character => (
-            <MomentProfileRow
-              key={character.id}
-              label={character.name}
-              placeholder={character.name}
-              name={draft.characters[character.id]?.name ?? ""}
-              avatar={avatars[character.id]}
-              fallbackAvatar={character.avatar || undefined}
-              initial={Array.from(character.name)[0] || "?"}
-              onName={name => setCharacterName(character.id, name)}
-              onAvatar={file => void pickAvatar(character.id, file)}
-            />
+            <div key={character.id} className="moment-profile-group">
+              <strong className="moment-profile-group-title">{character.name}</strong>
+              <MomentProfileRow
+                label="角色署名"
+                placeholder={character.name}
+                name={draft.characters[character.id]?.name ?? ""}
+                avatar={avatars[character.id]}
+                fallbackAvatar={character.avatar || undefined}
+                initial={Array.from(character.name)[0] || "?"}
+                onName={name => setCharacterName(character.id, name)}
+                onAvatar={file => void pickAvatar(character.id, file)}
+              />
+              <MomentProfileRow
+                label="我"
+                placeholder={draft.user.name || "不填就用上面的默认"}
+                name={draft.userByCharacter[character.id]?.name ?? ""}
+                avatar={avatars[momentUserOwner(character.id)]}
+                fallbackAvatar={avatars.user || character.avatar || undefined}
+                initial="我"
+                onName={name => setBookUserName(character.id, name)}
+                onAvatar={file => void pickAvatar(momentUserOwner(character.id), file)}
+              />
+            </div>
           ))}
         </div>
       </section>

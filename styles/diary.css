@@ -977,10 +977,23 @@
   color: rgba(42, 39, 34, 0.78);
 }
 
-/* 片刻纪事 · 署名设置：一行一个人，左边头像点了换，右边填 ID */
+/* 片刻纪事 · 署名设置：按角色分组，一组里两行（角色署名 / 我） */
 .moment-profile-list {
   display: grid;
-  gap: 10px;
+  gap: 14px;
+}
+
+.moment-profile-group {
+  display: grid;
+  gap: 8px;
+}
+
+.moment-profile-group-title {
+  font-size: calc(13px * var(--app-text-scale, 1));
+  font-weight: 600;
+  color: rgba(52, 39, 29, 0.72);
+  padding-bottom: 2px;
+  border-bottom: 1px dashed rgba(67, 54, 35, 0.16);
 }
 
 .moment-profile-row {
