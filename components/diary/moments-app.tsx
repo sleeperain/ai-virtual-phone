@@ -1,13 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { Bookmark, Bot, ChevronLeft, Clock3, Heart, Layers, Share, Trash2, X } from "lucide-react";
+import { Bookmark, Bot, Clock3, Heart, Share, Trash2, X } from "lucide-react";
 
 import { ReadingShareDialog } from "@/components/reading/reading-share-dialog";
 import { ContentDialog } from "@/components/ui/modal";
 import { downloadFile } from "@/lib/download-utils";
 import type { DiaryFontKind } from "@/lib/diary-entry-types";
-import type { ReadingShareSegment } from "@/lib/reading-share-card";
 import { loadCharacters } from "@/lib/character-storage";
 import type { Character } from "@/lib/character-types";
 import {
@@ -39,23 +38,6 @@ type MomentsAppProps = {
   onSwitch: (view: DiaryBrandView) => void;
   onNotice?: (message: string) => void;
 };
-
-type MomentBook = {
-  characterId: string;
-  characterName: string;
-  avatar: string;
-  moments: Moment[];
-};
-
-const BOOK_COVER_COUNT = 6;
-
-function hashText(value: string): number {
-  let hash = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
-  }
-  return hash;
-}
 
 function formatDate(value: string): string {
   const date = new Date(value);
@@ -96,22 +78,6 @@ function momentTime(moment: Moment): number {
   return Number.isNaN(time) ? 0 : time;
 }
 
-/** 合并分享的日期：同一天写一个，跨天写「2026.10.15–10.16」（同年省掉后一个年份） */
-function momentDateRange(list: Moment[]): string {
-  const first = momentDate(list[0]);
-  const last = momentDate(list[list.length - 1]);
-  if (!first || !last || first === last) return first || last;
-  return first.slice(0, 5) === last.slice(0, 5) ? `${first}–${last.slice(5)}` : `${first}–${last}`;
-}
-
-/** 出处小字里的时间：月.日 时:分 */
-function formatCaptionTime(moment: Moment): string {
-  const date = new Date(moment.messageAt || moment.createdAt);
-  if (Number.isNaN(date.getTime())) return "";
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${pad(date.getMonth() + 1)}.${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
 /** 纸条右上角那枚小标 */
 function sourceLabel(moment: Moment): string {
   if (moment.source === "chat") return "聊天";
@@ -123,28 +89,11 @@ type PaperTone = "yellow" | "green" | "blue";
 /** 片刻纪事那三份字体 */
 type MomentFontKind = Extract<DiaryFontKind, "moment" | "moment-user" | "moment-char">;
 
-/** 纸条在列表里排第几就是什么颜色（和 .diary-entry-card:nth-child(2n / 3n) 一致，6n 算蓝） */
-function paperTone(index: number): PaperTone {
-  const n = index + 1;
-  if (n % 3 === 0) return "blue";
-  return n % 2 === 0 ? "green" : "yellow";
-}
-
-function clipText(value: string, maxLength: number): string {
-  const text = value.replace(/\s+/g, " ").trim();
-  return text.length > maxLength ? `${text.slice(0, maxLength)}…` : text;
-}
-
 export function MomentsApp({ onClose, onSwitch, onNotice }: MomentsAppProps) {
   const [moments, setMoments] = useState<Moment[]>([]);
   const [characters, setCharacters] = useState<Character[]>([]);
-  const [activeCharacterId, setActiveCharacterId] = useState<string | null>(null);
   const [activeMoment, setActiveMoment] = useState<{ moment: Moment; tone: PaperTone } | null>(null);
   const [sharingMoment, setSharingMoment] = useState<Moment | null>(null);
-  // 合并：勾几段拼成一张图分享。picking 时点纸条是勾选，不打开、不能拖去删
-  const [picking, setPicking] = useState(false);
-  const [pickedIds, setPickedIds] = useState<string[]>([]);
-  const [mergeSharing, setMergeSharing] = useState<Moment[] | null>(null);
   // 聊天那张纸点分享：就是收的时候存下的那张聊天截图
   const [chatShot, setChatShot] = useState<{ blob: Blob; url: string; name: string } | null>(null);
   useEffect(() => () => { if (chatShot) URL.revokeObjectURL(chatShot.url); }, [chatShot]);
@@ -177,7 +126,8 @@ export function MomentsApp({ onClose, onSwitch, onNotice }: MomentsAppProps) {
     char: charFont.hasCustomFont ? charFont.family : font.family,
   };
   const trash = useDragToTrash<Moment>({
-    enabled: Boolean(activeCharacterId) && !picking,
+    // 列表页一直可拖（原来这里要求先进某个本子，书架删掉后条件恒为假，拖拽会整个失效）
+    enabled: true,
     scrollRef: mainRef,
     onDrop: setDeleteCandidate,
   });
@@ -224,32 +174,14 @@ export function MomentsApp({ onClose, onSwitch, onNotice }: MomentsAppProps) {
     return () => window.removeEventListener(MOMENTS_UPDATED_EVENT, refresh);
   }, []);
 
-  const books = useMemo<MomentBook[]>(() => {
-    const map = new Map<string, Moment[]>();
-    for (const moment of moments) {
-      const list = map.get(moment.characterId);
-      if (list) list.push(moment);
-      else map.set(moment.characterId, [moment]);
-    }
-    return Array.from(map.entries()).map(([characterId, list]) => {
-      const character = characters.find(item => item.id === characterId);
-      return {
-        characterId,
-        characterName: character?.name || list[0].characterName,
-        avatar: character?.avatar ?? "",
-        moments: list,
-      };
-    });
-  }, [moments, characters]);
-
-  const activeBook = useMemo(
-    () => (activeCharacterId ? books.find(book => book.characterId === activeCharacterId) ?? null : null),
-    [activeCharacterId, books],
-  );
-
+  // 聊天纸条里的小图（表情、转账等）：直接把当前列表里所有需要的资源都读出来。
+  // 注意别再依赖 activeBook——书架视图删掉后它恒为 null，会导致小图一张都不显示。
   useEffect(() => {
-    const keys = (activeBook?.moments ?? []).flatMap(moment => (moment.lines ?? []).flatMap(line => (line.kind === "snap" ? [line.asset] : [])));
-    if (keys.length === 0) return;
+    const keys = moments.flatMap(moment => (moment.lines ?? []).flatMap(line => (line.kind === "snap" ? [line.asset] : [])));
+    if (keys.length === 0) {
+      setAssetUrls({});
+      return;
+    }
     let cancelled = false;
     const made: string[] = [];
     void Promise.all(keys.map(async key => [key, await loadMomentAsset(key)] as const)).then((entries) => {
@@ -267,7 +199,7 @@ export function MomentsApp({ onClose, onSwitch, onNotice }: MomentsAppProps) {
       cancelled = true;
       made.forEach(url => URL.revokeObjectURL(url));
     };
-  }, [activeBook?.moments]);
+  }, [moments]);
 
   const openChatShot = useCallback(async (moment: Moment) => {
     const blob = moment.shotAsset ? await loadMomentAsset(moment.shotAsset) : null;
@@ -287,29 +219,6 @@ export function MomentsApp({ onClose, onSwitch, onNotice }: MomentsAppProps) {
       notify(error instanceof Error ? error.message : "保存失败");
     }
   }, [chatShot, notify]);
-
-  // 换本子、本子没了都退出勾选
-  useEffect(() => {
-    setPicking(false);
-    setPickedIds([]);
-  }, [activeCharacterId]);
-
-  const stopPicking = useCallback(() => {
-    setPicking(false);
-    setPickedIds([]);
-  }, []);
-
-  const togglePicked = useCallback((id: string) => {
-    setPickedIds(current => current.includes(id) ? current.filter(item => item !== id) : [...current, id]);
-  }, []);
-
-  /** 勾了一段就照常分享这一段；两段以上按原消息时间排好合成一张 */
-  const sharePicked = useCallback(() => {
-    if (!activeBook) return;
-    const list = activeBook.moments.filter(moment => pickedIds.includes(moment.id)).sort((a, b) => momentTime(a) - momentTime(b));
-    if (list.length === 1) setSharingMoment(list[0]);
-    else if (list.length > 1) setMergeSharing(list);
-  }, [activeBook, pickedIds]);
 
   const removeMoment = useCallback((moment: Moment) => {
     deleteMoment(moment.id);
@@ -360,7 +269,7 @@ export function MomentsApp({ onClose, onSwitch, onNotice }: MomentsAppProps) {
         view="moments"
         onClose={onClose}
         onSwitch={onSwitch}
-        avatarLabel={activeBook ? `${activeBook.characterName} 的署名` : "署名设置"}
+        avatarLabel="署名设置"
         onAvatarClick={() => setProfilePanelOpen(true)}
       >
         <button
@@ -376,14 +285,6 @@ export function MomentsApp({ onClose, onSwitch, onNotice }: MomentsAppProps) {
 
       {/* Bookmark 标签跟着内容一起滚：整块 main 就是滚动区，上沿从顶部栏下边线开始 */}
       <main ref={mainRef} className="diary-entry-main diary-moment-main">
-        {/* 合并时顶部栏换成这条：取消 / 已选几段 / 分享 */}
-        {picking ? (
-          <div className="diary-moment-pick-bar">
-            <button type="button" onClick={stopPicking}>取消</button>
-            <span>{`已选 ${pickedIds.length} 段`}</span>
-            <button type="button" disabled={pickedIds.length === 0} onClick={sharePicked}>分享</button>
-          </div>
-        ) : null}
         <div className="diary-moment-label-row">
           <span>Bookmark</span>
         </div>
@@ -439,13 +340,6 @@ export function MomentsApp({ onClose, onSwitch, onNotice }: MomentsAppProps) {
             )}
         </div>
       </main>
-
-      {activeBook && !picking && activeBook.moments.filter(moment => moment.source !== "chat").length > 1 ? (
-        <button type="button" className="diary-entry-write-btn" onClick={() => setPicking(true)}>
-          <Layers size={18} strokeWidth={1.7} />
-          <span>合并</span>
-        </button>
-      ) : null}
 
       {fontPanelOpen ? (
         <MomentFontPanel
@@ -526,47 +420,9 @@ export function MomentsApp({ onClose, onSwitch, onNotice }: MomentsAppProps) {
         />
       ) : null}
 
-      {mergeSharing ? (() => {
-        const first = mergeSharing[0];
-        const char = charSignature(first.characterId, first.characterName);
-        const user = userSignature(first.characterId);
-        const sources = Array.from(new Set(mergeSharing.map(sourceLabel)));
-        const speakers = new Set(mergeSharing.map(moment => moment.speaker));
-        const segments: ReadingShareSegment[] = mergeSharing.map(moment => ({
-          paragraphs: moment.paragraphs,
-          speaker: moment.speaker,
-          caption: [moment.speaker === "user" ? user.name : char.name, sourceLabel(moment), formatCaptionTime(moment)].filter(Boolean).join(" · "),
-        }));
-        return (
-          <ReadingShareDialog
-            title={`分享 ${mergeSharing.length} 段`}
-            filePrefix="片刻纪事"
-            quoteParagraphs={mergeSharing.flatMap(moment => moment.paragraphs)}
-            quoteSegments={segments}
-            bookTitle={sources.join("·")}
-            bookAuthor={realNames(first.characterId, first.characterName)}
-            chapterTitle=""
-            progressPercent={0}
-            progressLabel={momentDateRange(mergeSharing)}
-            annotations={[]}
-            signatureChoices={{
-              char,
-              user,
-              // 你我的话都有就默认两人署名
-              initial: speakers.size > 1 ? "both" : first.speaker === "user" ? "user" : "char",
-            }}
-            fonts={{ body: font.family, userAnnotation: font.family, charAnnotation: font.family }}
-            speakerFonts={speakerFonts}
-            onClose={() => setMergeSharing(null)}
-          />
-        );
-      })() : null}
-
       {profilePanelOpen ? (
         <MomentProfilePanel
-          characters={activeBook ? characters.filter(item => item.id === activeBook.characterId) : characters}
-          bookCharacterName={activeBook?.characterName}
-          bookUser={activeBook ? { characterId: activeBook.characterId, fallback: userBase(activeBook.characterId) } : undefined}
+          characters={characters}
           profiles={profiles}
           avatars={profileAvatars}
           onClose={() => setProfilePanelOpen(false)}
