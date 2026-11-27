@@ -1825,8 +1825,6 @@ function DiaryEntryDetailPage({ entry, character, userIdentity, fontStyle, onBac
   const [liked, setLiked] = useState(false);
   const [bookmarked, setBookmarked] = useState(false);
   const isMine = entry.authorType === "user";
-  // 用户写的日记署名是自己：优先用填写的署名，其次当前账号名
-  const authorLine = isMine ? (entry.signature || userIdentity?.name || "我") : entry.characterName;
   const authorName = isMine ? (userIdentity?.name || "我") : entry.characterName;
   const avatar = isMine ? (userIdentity?.avatarUrl || "") : (character?.avatar || "");
   const phone = character?.wechatID || character?.id || "";
@@ -1871,10 +1869,6 @@ function DiaryEntryDetailPage({ entry, character, userIdentity, fontStyle, onBac
               {entry.blocks.map((block, index) => (
                 <DiaryBlockView key={`${block.type}-${index}`} block={block} />
               ))}
-            </div>
-
-            <div className="diary-detail-signature">
-              <span>{authorLine}</span>
             </div>
 
             <div className="diary-flat-card-footer">
@@ -1951,15 +1945,26 @@ function DiaryEntryDetailPage({ entry, character, userIdentity, fontStyle, onBac
 }
 
 function DiaryBlockView({ block }: { block: DiaryEntryBlock }) {
+  // 涂改默认只显示「（有更改）」，点开才露出原句（不加删除线）
+  const [correctionOpen, setCorrectionOpen] = useState(false);
   if (block.type === "quote") {
     return <blockquote className="diary-entry-quote">{block.text}</blockquote>;
   }
   if (block.type === "correction") {
     return (
-      <p className="diary-entry-correction">
-        <del>{block.text}</del>
-        {block.replacement ? <ins>{block.replacement}</ins> : null}
-      </p>
+      <div className="diary-entry-correction">
+        <button
+          type="button"
+          className="diary-entry-correction-toggle"
+          onClick={() => setCorrectionOpen(open => !open)}
+          aria-expanded={correctionOpen}
+        >
+          （有更改）
+        </button>
+        {correctionOpen ? (
+          <p className="diary-entry-correction-text">{block.text}</p>
+        ) : null}
+      </div>
     );
   }
   if (block.type === "todo") {

@@ -1067,7 +1067,10 @@
 .moment-card .diary-entry-card-text[data-speaker="user"],
 .diary-entry-blocks[data-speaker="user"] .diary-entry-paragraph {
   font-family: var(--moment-user-font-family, var(--diary-entry-font-family));
+  color: #252525;
 }
+
+/* 日记详情不显示落款署名（.diary-detail-signature 已不再渲染，样式保留兼容旧引用） */
 
 /* 非文字的那条：聊天里原样截下来的小图 */
 .moment-chat-snap {
@@ -2085,6 +2088,7 @@
   flex: 0 0 auto;
 }
 
+/* 正文、引用、涂改统一正文色 #252525 */
 .diary-entry-paragraph,
 .diary-entry-quote,
 .diary-entry-correction {
@@ -2093,30 +2097,48 @@
   font-size: calc(18px*var(--app-text-scale,1)*var(--diary-entry-font-scale,1));
   line-height: 1.72;
   letter-spacing: 0.02em;
+  color: #252525;
 }
 
+/* 引用：字体与正文一致，句子下方一条灰色虚线 */
 .diary-entry-quote {
-  border-left: 2px solid rgba(58, 49, 35, 0.22);
-  padding-left: 12px;
-  color: rgba(47, 42, 35, 0.7);
+  border-left: 0;
+  padding: 0 0 4px;
+  color: #252525;
+  border-bottom: 1px dashed rgba(37, 37, 37, 0.32);
 }
 
+/* 涂改：默认只显示灰色的「（有更改）」，点开才露出原句（不加划线） */
 .diary-entry-correction {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 8px;
+  display: grid;
+  gap: 2px;
 }
 
-.diary-entry-correction del {
-  color: rgba(47, 42, 35, 0.42);
-  text-decoration-thickness: 2px;
+.diary-entry-correction-toggle {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #9a9a9a;
+  font-family: inherit;
+  font-size: calc(15px*var(--app-text-scale,1)*var(--diary-entry-font-scale,1));
+  line-height: 1.6;
+  letter-spacing: inherit;
+  cursor: pointer;
 }
 
-.diary-entry-correction ins {
-  color: #302d28;
+.diary-entry-correction-toggle:active {
+  opacity: 0.7;
+}
+
+.diary-entry-correction-text {
+  margin: 0;
+  color: #252525;
+  font-size: calc(18px*var(--app-text-scale,1)*var(--diary-entry-font-scale,1));
+  line-height: 1.72;
+  letter-spacing: 0.02em;
   text-decoration: none;
-  transform: rotate(-1deg);
+  white-space: pre-wrap;
 }
 
 .diary-entry-todo {
@@ -5114,24 +5136,21 @@
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 5px;
   width: 100%;
   box-sizing: border-box;
   height: 42px;
-  padding: 0 2px;
+  /* 与顶部栏下边线留出间距，不贴边 */
+  margin-top: 12px;
+  padding: 0 12px;
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 8px 8px 0 0;
   background: rgba(248, 249, 250, 0.92);
-  color: rgba(37, 37, 37, 0.46);
-  font-family: "Courier New", monospace;
-  font-size: calc(11.5px * var(--app-text-scale, 1));
-  letter-spacing: 1.4px;
-  text-transform: uppercase;
-}
-
-.diary-moment-label-row svg {
-  flex: 0 0 auto;
-  opacity: 0.7;
+  /* 深灰、加粗、字号调大 */
+  color: #3a3a3c;
+  font-family: var(--app-font-family);
+  font-size: calc(15px * var(--app-text-scale, 1));
+  font-weight: 600;
+  letter-spacing: 0.2px;
 }
 
 /* 三个页签：等分宽度、选中变蓝（#8fb2c8）；浅灰边框描出这一行，下边线即列表滚动起点 */

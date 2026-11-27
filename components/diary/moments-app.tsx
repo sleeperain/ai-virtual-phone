@@ -387,7 +387,6 @@ export function MomentsApp({ onBack, onNotice }: MomentsAppProps) {
         {/* 复用手记的版式：上方固定一条工具条（这里只有左侧 Bookmark 标签，没有输入卡片和页签） */}
         <div className="diary-hub-toolbar">
           <div className="diary-moment-label-row">
-            <Bookmark size={13} strokeWidth={1.9} aria-hidden="true" />
             <span>Bookmark</span>
           </div>
         </div>
