@@ -4799,11 +4799,12 @@
   cursor: text;
 }
 
-/* 第一行左侧 26×26 用户头像：收起态也一直在（和正文同一行） */
+/* 第一行左侧 26×26 用户头像：始终贴在第一行顶部，折叠/展开都不移动 */
 .diary-hub-compose-avatar {
   grid-column: 1;
   grid-row: 1;
-  align-self: center;
+  align-self: start;
+  margin-top: 1px;
   width: 26px;
   height: 26px;
   border-radius: 50%;
@@ -4857,9 +4858,9 @@
   grid-column: 2;
   grid-row: 1;
   width: 100%;
-  /* 收起态也要够高，像一条正经输入栏 */
+  /* 收起态也要够高，像一条正经输入栏；上内边距与头像顶部留白对齐 */
   min-height: 48px;
-  padding: 11px 0;
+  padding: 2px 0 14px;
   border: 0;
   background: transparent;
   color: #252525;

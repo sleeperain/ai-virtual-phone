@@ -842,18 +842,15 @@ function DiaryEntryCardContent({ entry, character, userIdentity }: {
   const [canExpand, setCanExpand] = useState(false);
   const bodyRef = useRef<HTMLDivElement | null>(null);
 
+  // 列表卡片只显示段落和引用；待办/要点/涂改/配图这些要进详情页才看得到
   const preview = useMemo(() => {
-    // 过滤掉日程相关内容（待办/清单类 todo、bullet 等做某事相关板块）
-    const filteredBlocks = entry.blocks.filter(b => b.type !== "todo" && b.type !== "bullet");
-    const fromBlocks = filteredBlocks.map(blockPlainText).filter(Boolean).join("\n");
-    if (fromBlocks) return fromBlocks;
-    // 如果没有 blocks 或直接读取 body，过滤常见的待办/日程清单行（如以 - [ ] 或 待办: 等开头的行）
-    return (entry.body || "")
-      .split("\n")
-      .filter(line => !/^\s*(-\s*\[[ xX]\]|待办|日程|清单|TODO|todo|[0-9]+[、.][\s]*待办)/.test(line))
+    return entry.blocks
+      .filter(block => block.type === "paragraph" || block.type === "quote")
+      .map(blockPlainText)
+      .filter(Boolean)
       .join("\n")
       .trim();
-  }, [entry.blocks, entry.body]);
+  }, [entry.blocks]);
 
   useEffect(() => {
     const el = bodyRef.current;
@@ -884,25 +881,27 @@ function DiaryEntryCardContent({ entry, character, userIdentity }: {
         </div>
       </div>
 
-      {/* 日记正文：去掉卡片条目标题，只显示正文，字体颜色为黑（#252525）。展开/收起按钮直接跟在文本后 */}
-      <div
-        ref={bodyRef}
-        className={`diary-flat-card-body ${!isExpanded ? "is-clamped" : ""}`}
-      >
-        <span>{preview}</span>
-        {canExpand && (
-          <button
-            type="button"
-            className="diary-flat-card-expand-inline-btn"
-            onClick={(e) => {
-              e.stopPropagation();
-              setIsExpanded(!isExpanded);
-            }}
-          >
-            {isExpanded ? "收起" : "展开"}
-          </button>
-        )}
-      </div>
+      {/* 日记正文：只铺段落和引用，其余板块进详情页看。展开/收起按钮直接跟在文本后 */}
+      {preview ? (
+        <div
+          ref={bodyRef}
+          className={`diary-flat-card-body ${!isExpanded ? "is-clamped" : ""}`}
+        >
+          <span>{preview}</span>
+          {canExpand && (
+            <button
+              type="button"
+              className="diary-flat-card-expand-inline-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsExpanded(!isExpanded);
+              }}
+            >
+              {isExpanded ? "收起" : "展开"}
+            </button>
+          )}
+        </div>
+      ) : null}
 
       {/* 最后一行最左侧为小字“🕓 YYYY-MM-DD hh:mm”，字体颜色为灰色，其中“🕓”采用SVG图标，图标与角色头像左侧对齐 */}
       <div className="diary-flat-card-footer">
