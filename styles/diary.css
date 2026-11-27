@@ -4765,11 +4765,11 @@
   background: #ffffff;
 }
 
-/* 输入区单独一张卡片：宽度与日记卡片一致，上边线贴着顶部栏下框线 */
+/* 输入区整张卡片：头像+标题 / 分割线 / 正文 / 权限+发送 全在这一张里，上边线贴着顶部栏下框线 */
 .diary-hub-compose {
   display: grid;
   width: 100%;
-  padding: 14px 16px 16px;
+  padding: 14px 16px 14px;
   background: #ffffff;
   border: 0;
   /* 上沿是顶部栏那条深灰线，所以只圆下面两个角 */
@@ -4856,7 +4856,7 @@
   color: rgba(37, 37, 37, 0.3);
 }
 
-/* 按钮单独一行：浅灰边框描出这一行，与上面的输入卡片分开 */
+/* 权限 + 发送：输入卡片内的一行，与正文拉开 6px，靠右 */
 .diary-hub-compose-actions {
   display: flex;
   align-items: center;
@@ -4864,11 +4864,10 @@
   gap: 10px;
   width: 100%;
   box-sizing: border-box;
-  padding: 7px 12px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 8px;
-  background: rgba(248, 249, 250, 0.7);
-  margin: 0 0 12px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  margin: 6px 0 0;
 }
 
 .diary-hub-permission {
@@ -4987,12 +4986,17 @@
   cursor: default;
 }
 
-/* 三个页签：等分宽度，选中变蓝（#8fb2c8）；它的下边线就是列表滚动的起点 */
+/* 三个页签：等分宽度、选中变蓝（#8fb2c8）；浅灰边框描出这一行，下边线即列表滚动起点 */
 .diary-hub-tabs {
   display: flex;
   width: 100%;
-  background: #ffffff;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  box-sizing: border-box;
+  background: rgba(248, 249, 250, 0.92);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 8px;
+  /* 不留外边距：这一行的下边线就是列表滚动的起点 */
+  margin: 0;
+  overflow: hidden;
 }
 
 .diary-hub-tab {

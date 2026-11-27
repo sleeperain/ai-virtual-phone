@@ -552,10 +552,9 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
               rows={4}
               aria-label="日记正文"
             />
-          </section>
 
-          {/* 按钮单独一行：下移一段距离、自带浅灰边框，和上面的输入卡片分开 */}
-          <div className="diary-hub-compose-actions">
+            {/* 权限 + 发送：属于这张输入卡片的一部分，靠右一行 */}
+            <div className="diary-hub-compose-actions">
             <div className="diary-hub-permission">
               <button
                 type="button"
@@ -614,7 +613,8 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
             >
               发送
             </button>
-          </div>
+            </div>
+          </section>
 
           {/* 三个页签：日记 / 朋友 / 通知，等分宽度，选中变蓝 */}
           <div className="diary-hub-tabs" role="tablist" aria-label="手记分类">
