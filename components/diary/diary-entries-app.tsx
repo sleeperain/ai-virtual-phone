@@ -1,7 +1,23 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent, type PointerEvent } from "react";
-import { Bot, ChevronDown, ChevronLeft, ChevronRight, Clock3, Globe, NotebookPen, Trash2, UserRound, WandSparkles, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent, type PointerEvent } from "react";
+import {
+  Bookmark,
+  Bot,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Clock3,
+  Globe,
+  Heart,
+  MoreHorizontal,
+  NotebookPen,
+  Share,
+  Trash2,
+  UserRound,
+  WandSparkles,
+  X,
+} from "lucide-react";
 import { DotsThree } from "@phosphor-icons/react";
 
 import { loadCharacters } from "@/lib/character-storage";
@@ -474,6 +490,36 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
     [activeCharacterId, books],
   );
 
+  // 日记详情是一整页（不再是弹窗）：进入后整页替换列表
+  if (activeEntry) {
+    return (
+      <>
+        <DiaryEntryDetailPage
+          entry={activeEntry}
+          character={characters.find(character => character.id === activeEntry.characterId)}
+          userIdentity={userIdentity}
+          fontStyle={font.style}
+          onBack={() => setActiveEntry(null)}
+          onEdit={() => setComposeTarget({ mode: "edit", entry: activeEntry })}
+          onDelete={() => {
+            const entryToDelete = activeEntry;
+            setActiveEntry(null);
+            setDeleteCandidateEntry(entryToDelete);
+          }}
+        />
+        {composeTarget ? (
+          <DiaryEntryComposeForm
+            target={composeTarget}
+            characters={characters}
+            defaultSignature={userIdentity?.name || "我"}
+            onSave={saveComposeEntry}
+            onClose={() => setComposeTarget(null)}
+          />
+        ) : null}
+      </>
+    );
+  }
+
   return (
     <section className={`diary-app diary-entry-app ${trash.drag ? "is-entry-dragging" : ""}`} style={font.style}>
       {generatingCharacterIds.length > 0 && (
@@ -774,20 +820,6 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
           onScaleChange={font.changeScale}
           onReset={font.reset}
           onClose={() => setFontPanelOpen(false)}
-        />
-      ) : null}
-
-      {activeEntry ? (
-        <DiaryEntryDetail
-          entry={activeEntry}
-          userIdentity={userIdentity}
-          onClose={() => setActiveEntry(null)}
-          onEdit={() => { setComposeTarget({ mode: "edit", entry: activeEntry }); setActiveEntry(null); }}
-          onDelete={() => {
-            const entryToDelete = activeEntry;
-            setActiveEntry(null);
-            setDeleteCandidateEntry(entryToDelete);
-          }}
         />
       ) : null}
 
@@ -1777,57 +1809,135 @@ function CharacterAvatarGrid({ characters, selectedIds, busyIds, disabled, onTog
   );
 }
 
-function DiaryEntryDetail({ entry, userIdentity, onClose, onEdit, onDelete }: {
+/** 日记详情：独立整页，顶部栏沿用「TA的手记」那套，下面是完整内容的日记卡片 */
+function DiaryEntryDetailPage({ entry, character, userIdentity, fontStyle, onBack, onEdit, onDelete }: {
   entry: DiaryEntry;
-  userIdentity?: Pick<UserIdentity, "name"> | null;
-  onClose: () => void;
+  character?: Character;
+  userIdentity?: Pick<UserIdentity, "name" | "avatarUrl"> | null;
+  fontStyle?: CSSProperties;
+  onBack: () => void;
   onEdit: () => void;
   onDelete?: () => void;
 }) {
   const markers = getEntryMarkers(entry);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const isMine = entry.authorType === "user";
   // 用户写的日记署名是自己：优先用填写的署名，其次当前账号名
-  const authorLine = entry.authorType === "user"
-    ? (entry.signature || userIdentity?.name || "我")
-    : entry.characterName;
+  const authorLine = isMine ? (entry.signature || userIdentity?.name || "我") : entry.characterName;
+  const authorName = isMine ? (userIdentity?.name || "我") : entry.characterName;
+  const avatar = isMine ? (userIdentity?.avatarUrl || "") : (character?.avatar || "");
+  const phone = character?.wechatID || character?.id || "";
+  const subline = isMine ? visibilitySummary(entry) : `@${phone}`;
+
   return (
-    <div className="nw-modal-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
-      <article className="diary-entry-detail-paper" onClick={(event) => event.stopPropagation()}>
-        <span className="diary-entry-paper-clip" aria-hidden="true">
-          <span />
-        </span>
-        <div className="diary-entry-detail-scroll">
-          <header>
-            <div className="diary-entry-detail-topline">
-              <span>日记详情</span>
-              <div className="diary-entry-detail-actions">
-                {onDelete ? (
-                  <button type="button" className="diary-detail-delete-btn" onClick={onDelete}>删除</button>
-                ) : null}
-                <button type="button" onClick={onEdit}>编辑</button>
-                <button type="button" onClick={onClose}>关闭</button>
+    <section className="diary-app diary-entry-app diary-detail-page" style={fontStyle}>
+      <header className="diary-app-header diary-entry-header diary-detail-header">
+        <button type="button" className="diary-icon-btn" onClick={onBack} aria-label="返回">
+          <ChevronLeft size={20} />
+        </button>
+        <div>
+          <h1>{`${authorName} • 日记`}</h1>
+        </div>
+        <span className="diary-header-spacer" />
+      </header>
+
+      <div className="diary-detail-scroll">
+        <article className="diary-flat-card diary-detail-card">
+          <div className="diary-flat-card-inner">
+            {/* 第一行：头像 + 作者名 + 副行（可见范围 / @手机号），与主页卡片一致 */}
+            <div className="diary-flat-card-author-row">
+              <div className="diary-flat-card-avatar">
+                {avatar ? <img src={avatar} alt={authorName} /> : isMine ? <UserRound size={17} /> : <Bot size={18} />}
+              </div>
+              <div className="diary-flat-card-author-info">
+                <span className="diary-flat-card-author-name">{authorName}</span>
+                <span className="diary-flat-card-author-id">{subline}</span>
               </div>
             </div>
-            <div className="diary-entry-detail-titleline">
-              <h2>{entry.title}</h2>
-              {markers.length > 0 ? (
-                <span className="diary-entry-detail-markers">
-                  {markers.map(marker => <span key={marker} className="diary-entry-marker">{marker}</span>)}
-                </span>
-              ) : null}
+
+            {entry.title ? <h2 className="diary-detail-title">{entry.title}</h2> : null}
+
+            {markers.length > 0 ? (
+              <span className="diary-entry-detail-markers">
+                {markers.map(marker => <span key={marker} className="diary-entry-marker">{marker}</span>)}
+              </span>
+            ) : null}
+
+            {/* 完整内容：详情页把所有板块都铺开，不再只显示段落和引用 */}
+            <div className="diary-entry-blocks diary-detail-blocks">
+              {entry.blocks.map((block, index) => (
+                <DiaryBlockView key={`${block.type}-${index}`} block={block} />
+              ))}
             </div>
-          </header>
-          <div className="diary-entry-blocks">
-            {entry.blocks.map((block, index) => (
-              <DiaryBlockView key={`${block.type}-${index}`} block={block} />
-            ))}
+
+            <div className="diary-detail-signature">
+              <span>{authorLine}</span>
+            </div>
+
+            <div className="diary-flat-card-footer">
+              <Clock3 size={13} className="diary-flat-clock-svg" aria-hidden="true" />
+              <time className="diary-flat-card-time">{formatEntryDateTime(entry.createdAt)}</time>
+            </div>
+
+            {/* 时间戳下方一行伪按钮装饰 */}
+            <div className="diary-detail-actions">
+              <button type="button" className="diary-detail-action" style={{ flexGrow: 2 }}>
+                <Heart size={15} strokeWidth={1.7} aria-hidden="true" />
+                <span>喜欢</span>
+              </button>
+              <span className="diary-detail-action-divider" aria-hidden="true" />
+              <button type="button" className="diary-detail-action" style={{ flexGrow: 3 }}>
+                <Bookmark size={15} strokeWidth={1.7} aria-hidden="true" />
+                <span>小纸条</span>
+              </button>
+              <span className="diary-detail-action-divider" aria-hidden="true" />
+              <button type="button" className="diary-detail-action" style={{ flexGrow: 4 }}>
+                <Share size={15} strokeWidth={1.7} aria-hidden="true" />
+                <span>存为图片</span>
+              </button>
+              <span className="diary-detail-action-divider" aria-hidden="true" />
+              <div className="diary-detail-more">
+                <button
+                  type="button"
+                  className="diary-detail-action"
+                  style={{ flexGrow: 1 }}
+                  onClick={() => setMenuOpen(open => !open)}
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  aria-label="更多操作"
+                >
+                  <MoreHorizontal size={16} aria-hidden="true" />
+                </button>
+                {menuOpen ? (
+                  <>
+                    <div className="diary-detail-more-backdrop" onClick={() => setMenuOpen(false)} />
+                    <div className="diary-detail-more-menu" role="menu">
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => { setMenuOpen(false); onEdit(); }}
+                      >
+                        编辑
+                      </button>
+                      {onDelete ? (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="is-danger"
+                          onClick={() => { setMenuOpen(false); onDelete(); }}
+                        >
+                          删除
+                        </button>
+                      ) : null}
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            </div>
           </div>
-          <footer className="diary-entry-detail-signature">
-            <span>{authorLine}</span>
-            <time>{formatEntryTime(entry.createdAt)}</time>
-          </footer>
-        </div>
-      </article>
-    </div>
+        </article>
+      </div>
+    </section>
   );
 }
 

@@ -5191,3 +5191,161 @@
   color: rgba(37, 37, 37, 0.38);
   white-space: nowrap;
 }
+
+/* ---- 日记详情页（独立整页，取代原来的弹窗） ---- */
+
+.diary-detail-page {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 详情页滚动区：顶部不留白，卡片上边线与顶部栏下框线贴边 */
+.diary-detail-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 16px calc(24px + var(--safe-area-bottom, 0px));
+  background: transparent;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 卡片：复用主页卡片样式，上沿贴住顶部栏，所以上边不圆角；详情页不可点、不换底色 */
+.diary-flat-card.diary-detail-card {
+  width: 100%;
+  cursor: default;
+  border-bottom: 0;
+  border-radius: 0 0 8px 8px;
+  box-shadow: 0 1px 3px rgba(24, 30, 34, 0.06);
+}
+
+.diary-flat-card.diary-detail-card:hover,
+.diary-flat-card.diary-detail-card:active {
+  background-color: #ffffff;
+}
+
+/* 顶部栏居中标题：名字长了省略，不顶到两边的按钮 */
+.diary-detail-header > div h1 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diary-detail-title {
+  margin: 2px 0 10px;
+  font-size: calc(16px * var(--app-text-scale, 1));
+  font-weight: 500;
+  line-height: 1.4;
+  color: #5B7B9A;
+}
+
+.diary-detail-blocks {
+  display: grid;
+  gap: 14px;
+  margin-top: 4px;
+}
+
+.diary-detail-signature {
+  margin-top: 16px;
+  text-align: right;
+  font-size: calc(13px * var(--app-text-scale, 1));
+  color: rgba(37, 37, 37, 0.5);
+}
+
+/* 时间戳下方那一行伪按钮：按文字宽度比例分格，格之间细分割线 */
+.diary-detail-actions {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  margin-top: 12px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(0, 0, 0, 0.07);
+}
+
+.diary-detail-action {
+  flex: 1 1 0;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 9px 2px;
+  border: 0;
+  background: transparent;
+  color: rgba(37, 37, 37, 0.62);
+  font-family: var(--app-font-family);
+  font-size: calc(12px * var(--app-text-scale, 1));
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.diary-detail-action:active {
+  background: rgba(48, 45, 40, 0.05);
+}
+
+.diary-detail-action svg {
+  flex: 0 0 auto;
+}
+
+/* 分割线比文字略高一点 */
+.diary-detail-action-divider {
+  flex: 0 0 auto;
+  align-self: center;
+  width: 1px;
+  height: calc(16px * var(--app-text-scale, 1));
+  background: rgba(0, 0, 0, 0.08);
+}
+
+/* 「…」菜单 */
+.diary-detail-more {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+}
+
+.diary-detail-more > .diary-detail-action {
+  width: 100%;
+}
+
+.diary-detail-more-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 19;
+}
+
+/* 菜单挂在按钮下方的右侧 */
+.diary-detail-more-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 20;
+  min-width: 104px;
+  padding: 5px;
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: 0 8px 22px rgba(24, 30, 34, 0.16), 0 0 0 1px rgba(24, 30, 34, 0.06);
+  display: grid;
+  gap: 2px;
+}
+
+.diary-detail-more-menu > button {
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: rgba(37, 37, 37, 0.78);
+  font-family: var(--app-font-family);
+  font-size: calc(12.5px * var(--app-text-scale, 1));
+  text-align: left;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.diary-detail-more-menu > button:active {
+  background: rgba(48, 45, 40, 0.06);
+}
+
+.diary-detail-more-menu > button.is-danger {
+  color: #c94040;
+}
