@@ -191,7 +191,8 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
     () => Array.from(new Set([...localGeneratingIds, ...trackedGeneratingIds])),
     [localGeneratingIds, trackedGeneratingIds],
   );
-  const entryMainRef = useRef<HTMLElement | null>(null);
+  // 只滚日记列表这一块（工具条固定在页签下边线以上）
+  const entryMainRef = useRef<HTMLDivElement | null>(null);
   const fontFileRef = useRef<HTMLInputElement | null>(null);
   // 手记首页三页签：日记（我写的）/ 朋友（TA写的）/ 通知（近期动态）
   const [tab, setTab] = useState<DiaryHubTab>("mine");
@@ -523,9 +524,10 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
         </span>
       </header>
 
-      <main ref={entryMainRef} className="diary-entry-main">
-        <div className="diary-flat-entry-list diary-hub-list">
-          {/* 页签上方那张卡片：与日记卡片同宽 */}
+      <main className="diary-entry-main">
+        {/* 不参与滚动的工具条：输入卡片 + 按钮行 + 三个页签 */}
+        <div className="diary-hub-toolbar">
+          {/* 输入卡片：上边线贴在顶部栏下框线上 */}
           <section className="diary-hub-compose">
             <div className="diary-hub-compose-head">
               <span className="diary-hub-compose-avatar" aria-hidden="true">
@@ -629,7 +631,10 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
               </button>
             ))}
           </div>
+        </div>
 
+        {/* 只有这一块滚动：起点就是三个页签的下边线 */}
+        <div ref={entryMainRef} className="diary-hub-scroll">
           {tab === "notices" ? (
             <DiaryHubNoticeList entries={entries} characters={characters} userIdentity={userIdentity} />
           ) : null}

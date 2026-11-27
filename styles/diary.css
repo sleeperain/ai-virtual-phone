@@ -391,6 +391,8 @@
 
 .diary-entry-header {
   justify-content: space-between;
+  /* 顶部栏下框线：比内容区的分割线更深一点，作为输入卡片的上边界 */
+  border-bottom: 1px solid rgba(0, 0, 0, 0.16);
 }
 
 .diary-entry-app {
@@ -530,11 +532,14 @@
   line-height: 1.25;
 }
 
+/* 主区域不再整块滚动：工具条固定在上，只有列表区滚动 */
 .diary-entry-main {
   flex: 1;
   min-height: 0;
-  overflow: auto;
-  padding: 10px 16px 94px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
 }
 
 /* 连续平铺日记列表：卡片拼在一起，中仅用细分割线分割 */
@@ -4738,33 +4743,42 @@
 
 /* ---- 手记首页：发布卡片 + 三个页签 + 通知列表 ---- */
 
-/* 首页整块不再是「一整张白纸」，发布卡片、页签、条目各自成块 */
-.diary-hub-list {
-  background: transparent;
-  border-radius: 0;
-  box-shadow: none;
-  overflow: visible;
+/* 工具条：输入卡片 + 按钮行 + 页签，固定在顶部，不随列表滚动 */
+.diary-hub-toolbar {
+  flex: 0 0 auto;
+  padding: 0 16px;
 }
 
-.diary-hub-list > .diary-entry-empty {
-  min-height: 300px;
+/* 滚动区：起点就是三个页签的下边线，日记再多也只滚这一块 */
+.diary-hub-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 16px 94px;
   background: #ffffff;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  -webkit-overflow-scrolling: touch;
 }
 
-/* 输入区单独一张卡片：宽度与日记卡片一致，自带圆角和向下的阴影 */
+.diary-hub-scroll > .diary-entry-empty {
+  min-height: 260px;
+  background: #ffffff;
+}
+
+/* 输入区单独一张卡片：宽度与日记卡片一致，上边线贴着顶部栏下框线 */
 .diary-hub-compose {
   display: grid;
   width: 100%;
-  padding: 14px 16px 14px;
+  padding: 14px 16px 16px;
   background: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.05);
-  border-radius: 8px;
+  border: 0;
+  /* 上沿是顶部栏那条深灰线，所以只圆下面两个角 */
+  border-radius: 0 0 8px 8px;
   box-sizing: border-box;
   position: relative;
   z-index: 1;
   /* 向下投影 + 与下方按钮行拉开 */
-  box-shadow: 0 3px 10px rgba(24, 30, 34, 0.07), 0 1px 2px rgba(24, 30, 34, 0.05);
+  box-shadow: 0 4px 10px rgba(24, 30, 34, 0.1), 0 1px 2px rgba(24, 30, 34, 0.06);
   margin: 0 0 14px;
 }
 
@@ -4973,12 +4987,12 @@
   cursor: default;
 }
 
-/* 三个页签：等分宽度，选中变蓝（#8fb2c8） */
+/* 三个页签：等分宽度，选中变蓝（#8fb2c8）；它的下边线就是列表滚动的起点 */
 .diary-hub-tabs {
   display: flex;
   width: 100%;
   background: #ffffff;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
 }
 
 .diary-hub-tab {
