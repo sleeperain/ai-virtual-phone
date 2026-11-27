@@ -5283,61 +5283,82 @@
   color: rgba(37, 37, 37, 0.5);
 }
 
-/* 时间戳下方那一行伪按钮：按文字宽度比例分格，格之间细分割线 */
+/* 时间戳下方那一行伪按钮：布局参照参考代码的 .actions
+   三格按文字宽度 1.5 / 1.8 / 2.4 分，菜单 0.6；格间分割线用相邻元素左侧 1px 阴影画 */
 .diary-detail-actions {
   display: flex;
   align-items: stretch;
+  gap: 0;
   width: 100%;
+  min-height: 40px;
   margin-top: 12px;
-  padding-top: 4px;
   border-top: 1px solid rgba(0, 0, 0, 0.07);
 }
 
 .diary-detail-action {
   flex: 1 1 0;
   min-width: 0;
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
   gap: 4px;
-  padding: 9px 2px;
+  padding: 0 8px;
   border: 0;
   background: transparent;
-  color: rgba(37, 37, 37, 0.62);
+  color: #8e8e93;
   font-family: var(--app-font-family);
-  font-size: calc(12px * var(--app-text-scale, 1));
-  line-height: 1;
-  white-space: nowrap;
+  font-size: calc(13px * var(--app-text-scale, 1));
+  line-height: 1.5;
+  white-space: normal;
+  word-break: break-word;
+  text-align: center;
   cursor: pointer;
+  transition: color 0.2s;
 }
 
-.diary-detail-action:active {
-  background: rgba(48, 45, 40, 0.05);
+.diary-detail-action span {
+  white-space: normal;
+  word-break: break-word;
 }
 
 .diary-detail-action svg {
-  flex: 0 0 auto;
+  flex: none;
+  transition: fill 0.2s, stroke 0.2s;
 }
 
-/* 分割线比文字略高一点 */
-.diary-detail-action-divider {
-  flex: 0 0 auto;
-  align-self: center;
-  width: 1px;
-  height: calc(16px * var(--app-text-scale, 1));
-  background: rgba(0, 0, 0, 0.08);
+/* 按文字宽度分配整行：喜欢 1.5、小纸条 1.8、存为图片 2.4、菜单 0.6 */
+.diary-detail-actions > .diary-detail-action:nth-child(1) { flex: 1.5 1 0; }
+.diary-detail-actions > .diary-detail-action:nth-child(2) { flex: 1.8 1 0; }
+.diary-detail-actions > .diary-detail-action:nth-child(3) { flex: 2.4 1 0; }
+.diary-detail-actions > .diary-detail-more { flex: 0.6 1 0; }
+
+/* 格与格之间的细分割线 */
+.diary-detail-actions > * + * {
+  box-shadow: -1px 0 0 rgba(0, 0, 0, 0.08);
+}
+
+/* 点亮状态：喜欢 = 红心，小纸条 = 黄书签 */
+.diary-detail-action.is-liked svg {
+  fill: #ff3b30;
+  stroke: #ff3b30;
+}
+
+.diary-detail-action.is-bookmarked svg {
+  fill: #f7b500;
+  stroke: #f7b500;
 }
 
 /* 「…」菜单 */
 .diary-detail-more {
   position: relative;
-  flex: 1 1 0;
   min-width: 0;
   display: flex;
 }
 
 .diary-detail-more > .diary-detail-action {
+  flex: 1 1 auto;
   width: 100%;
+  padding: 0;
 }
 
 .diary-detail-more-backdrop {
@@ -5346,11 +5367,11 @@
   z-index: 19;
 }
 
-/* 菜单挂在按钮下方的右侧 */
+/* 菜单向上展开：这一行在卡片底部，往下弹会被裁掉 */
 .diary-detail-more-menu {
   position: absolute;
   right: 0;
-  top: calc(100% + 4px);
+  bottom: calc(100% + 6px);
   z-index: 20;
   min-width: 104px;
   padding: 5px;

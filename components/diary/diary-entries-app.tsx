@@ -1821,6 +1821,9 @@ function DiaryEntryDetailPage({ entry, character, userIdentity, fontStyle, onBac
 }) {
   const markers = getEntryMarkers(entry);
   const [menuOpen, setMenuOpen] = useState(false);
+  // 「喜欢」「小纸条」只是点亮状态，不入库（跟参考代码一致）
+  const [liked, setLiked] = useState(false);
+  const [bookmarked, setBookmarked] = useState(false);
   const isMine = entry.authorType === "user";
   // 用户写的日记署名是自己：优先用填写的署名，其次当前账号名
   const authorLine = isMine ? (entry.signature || userIdentity?.name || "我") : entry.characterName;
@@ -1879,34 +1882,40 @@ function DiaryEntryDetailPage({ entry, character, userIdentity, fontStyle, onBac
               <time className="diary-flat-card-time">{formatEntryDateTime(entry.createdAt)}</time>
             </div>
 
-            {/* 时间戳下方一行伪按钮装饰 */}
+            {/* 时间戳下方一行伪按钮装饰：按文字宽度比例分格，格间分割线用相邻元素左侧 1px 阴影画 */}
             <div className="diary-detail-actions">
-              <button type="button" className="diary-detail-action" style={{ flexGrow: 2 }}>
-                <Heart size={15} strokeWidth={1.7} aria-hidden="true" />
+              <button
+                type="button"
+                className={`diary-detail-action ${liked ? "is-liked" : ""}`}
+                onClick={() => setLiked(value => !value)}
+                aria-pressed={liked}
+              >
+                <Heart size={18} strokeWidth={1.5} aria-hidden="true" />
                 <span>喜欢</span>
               </button>
-              <span className="diary-detail-action-divider" aria-hidden="true" />
-              <button type="button" className="diary-detail-action" style={{ flexGrow: 3 }}>
-                <Bookmark size={15} strokeWidth={1.7} aria-hidden="true" />
+              <button
+                type="button"
+                className={`diary-detail-action ${bookmarked ? "is-bookmarked" : ""}`}
+                onClick={() => setBookmarked(value => !value)}
+                aria-pressed={bookmarked}
+              >
+                <Bookmark size={18} strokeWidth={1.5} aria-hidden="true" />
                 <span>小纸条</span>
               </button>
-              <span className="diary-detail-action-divider" aria-hidden="true" />
-              <button type="button" className="diary-detail-action" style={{ flexGrow: 4 }}>
-                <Share size={15} strokeWidth={1.7} aria-hidden="true" />
+              <button type="button" className="diary-detail-action">
+                <Share size={18} strokeWidth={1.5} aria-hidden="true" />
                 <span>存为图片</span>
               </button>
-              <span className="diary-detail-action-divider" aria-hidden="true" />
               <div className="diary-detail-more">
                 <button
                   type="button"
                   className="diary-detail-action"
-                  style={{ flexGrow: 1 }}
                   onClick={() => setMenuOpen(open => !open)}
                   aria-haspopup="menu"
                   aria-expanded={menuOpen}
                   aria-label="更多操作"
                 >
-                  <MoreHorizontal size={16} aria-hidden="true" />
+                  <MoreHorizontal size={18} fill="currentColor" stroke="none" aria-hidden="true" />
                 </button>
                 {menuOpen ? (
                   <>
