@@ -2100,33 +2100,40 @@
   color: #252525;
 }
 
-/* 引用：字体与正文一致，句子下方一条灰色虚线 */
+/* 引用：字体与正文一致，每个字和标点下面都有一条灰色虚线（用文字下划线，而不是整块的 border） */
 .diary-entry-quote {
-  border-left: 0;
-  padding: 0 0 4px;
+  border: 0;
+  padding: 0;
   color: #252525;
-  border-bottom: 1px dashed rgba(37, 37, 37, 0.32);
+  text-decoration-line: underline;
+  text-decoration-style: dashed;
+  text-decoration-color: rgba(37, 37, 37, 0.38);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 5px;
 }
 
-/* 涂改：默认显示改写后的句子，句尾跟一个灰色「（有更改）」；点开换成原句，按钮变「（恢复）」 */
+/* 涂改：默认显示改写后的句子，灰色「（有更改）」紧接在文字后面；点开换成原句，按钮变「（恢复）」 */
 .diary-entry-correction {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 6px;
+  display: block;
+  margin: 0;
+  color: #252525;
+  font-size: calc(18px*var(--app-text-scale,1)*var(--diary-entry-font-scale,1));
+  line-height: 1.72;
+  letter-spacing: 0.02em;
+  white-space: pre-wrap;
 }
 
 .diary-entry-correction-toggle {
-  flex: 0 0 auto;
+  display: inline;
   padding: 0;
   border: 0;
   background: transparent;
   color: #9a9a9a;
   font-family: inherit;
   font-size: calc(15px*var(--app-text-scale,1)*var(--diary-entry-font-scale,1));
-  line-height: 1.6;
+  line-height: inherit;
   letter-spacing: inherit;
-  white-space: nowrap;
+  vertical-align: baseline;
   cursor: pointer;
 }
 
@@ -2136,13 +2143,11 @@
 
 /* 句子本体：和正文同字号同颜色，不加任何划线 */
 .diary-entry-correction-text {
-  flex: 0 1 auto;
-  min-width: 0;
-  margin: 0;
+  display: inline;
   color: #252525;
-  font-size: calc(18px*var(--app-text-scale,1)*var(--diary-entry-font-scale,1));
-  line-height: 1.72;
-  letter-spacing: 0.02em;
+  font-size: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
   text-decoration: none;
   white-space: pre-wrap;
 }
@@ -5315,7 +5320,7 @@
   align-items: stretch;
   gap: 0;
   width: 100%;
-  min-height: 40px;
+  min-height: 46px;
   margin-top: 12px;
   border-top: 1px solid rgba(0, 0, 0, 0.07);
 }
@@ -5326,13 +5331,13 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 5px;
   padding: 0 8px;
   border: 0;
   background: transparent;
   color: #8e8e93;
   font-family: var(--app-font-family);
-  font-size: calc(13px * var(--app-text-scale, 1));
+  font-size: calc(14.5px * var(--app-text-scale, 1));
   line-height: 1.5;
   white-space: normal;
   word-break: break-word;
@@ -5357,9 +5362,21 @@
 .diary-detail-actions > .diary-detail-action:nth-child(3) { flex: 2.4 1 0; }
 .diary-detail-actions > .diary-detail-more { flex: 0.6 1 0; }
 
-/* 格与格之间的细分割线 */
+/* 格与格之间的细分割线：只有一小段，不占满整行高度 */
 .diary-detail-actions > * + * {
-  box-shadow: -1px 0 0 rgba(0, 0, 0, 0.08);
+  position: relative;
+}
+
+.diary-detail-actions > * + *::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 1px;
+  height: calc(20px * var(--app-text-scale, 1));
+  background: rgba(0, 0, 0, 0.1);
+  transform: translateY(-50%);
+  pointer-events: none;
 }
 
 /* 点亮状态：喜欢 = 红心，小纸条 = 黄书签 */

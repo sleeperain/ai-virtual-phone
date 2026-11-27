@@ -10,7 +10,6 @@ import {
   Clock3,
   Globe,
   Heart,
-  MoreHorizontal,
   NotebookPen,
   Share,
   Trash2,
@@ -161,14 +160,6 @@ function blockPlainText(block: DiaryEntryBlock): string {
   if (block.type === "todo") return block.items.map(item => item.text).join(" / ");
   if (block.type === "bullet") return block.items.join(" / ");
   return "";
-}
-
-function getEntryMarkers(entry: DiaryEntry): string[] {
-  return Array.from(new Set([
-    entry.mood,
-    ...entry.tags,
-    entry.weather,
-  ].map(item => item.trim()).filter(Boolean))).slice(0, 4);
 }
 
 function DiaryWritingStatus({ label = "写入中" }: { label?: string }) {
@@ -1819,7 +1810,6 @@ function DiaryEntryDetailPage({ entry, character, userIdentity, fontStyle, onBac
   onEdit: () => void;
   onDelete?: () => void;
 }) {
-  const markers = getEntryMarkers(entry);
   const [menuOpen, setMenuOpen] = useState(false);
   // 「喜欢」「小纸条」只是点亮状态，不入库（跟参考代码一致）
   const [liked, setLiked] = useState(false);
@@ -1858,11 +1848,7 @@ function DiaryEntryDetailPage({ entry, character, userIdentity, fontStyle, onBac
 
             {entry.title ? <h2 className="diary-detail-title">{entry.title}</h2> : null}
 
-            {markers.length > 0 ? (
-              <span className="diary-entry-detail-markers">
-                {markers.map(marker => <span key={marker} className="diary-entry-marker">{marker}</span>)}
-              </span>
-            ) : null}
+            {/* 详情页不显示心情/天气/标签这些记号 */}
 
             {/* 完整内容：详情页把所有板块都铺开，不再只显示段落和引用 */}
             <div className="diary-entry-blocks diary-detail-blocks">
@@ -1884,7 +1870,7 @@ function DiaryEntryDetailPage({ entry, character, userIdentity, fontStyle, onBac
                 onClick={() => setLiked(value => !value)}
                 aria-pressed={liked}
               >
-                <Heart size={18} strokeWidth={1.5} aria-hidden="true" />
+                <Heart size={21} strokeWidth={1.6} aria-hidden="true" />
                 <span>喜欢</span>
               </button>
               <button
@@ -1893,11 +1879,11 @@ function DiaryEntryDetailPage({ entry, character, userIdentity, fontStyle, onBac
                 onClick={() => setBookmarked(value => !value)}
                 aria-pressed={bookmarked}
               >
-                <Bookmark size={18} strokeWidth={1.5} aria-hidden="true" />
+                <Bookmark size={21} strokeWidth={1.6} aria-hidden="true" />
                 <span>小纸条</span>
               </button>
               <button type="button" className="diary-detail-action">
-                <Share size={18} strokeWidth={1.5} aria-hidden="true" />
+                <Share size={21} strokeWidth={1.6} aria-hidden="true" />
                 <span>存为图片</span>
               </button>
               <div className="diary-detail-more">
@@ -1909,7 +1895,12 @@ function DiaryEntryDetailPage({ entry, character, userIdentity, fontStyle, onBac
                   aria-expanded={menuOpen}
                   aria-label="更多操作"
                 >
-                  <MoreHorizontal size={18} fill="currentColor" stroke="none" aria-hidden="true" />
+                  {/* 标准的三点省略号：三个等距实心圆，比 lucide 那版更居中、更规整 */}
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <circle cx="5" cy="12" r="1.9" />
+                    <circle cx="12" cy="12" r="1.9" />
+                    <circle cx="19" cy="12" r="1.9" />
+                  </svg>
                 </button>
                 {menuOpen ? (
                   <>
