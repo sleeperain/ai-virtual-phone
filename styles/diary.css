@@ -5284,6 +5284,14 @@
   flex-direction: column;
 }
 
+/* 片刻纪事详情：盖在列表之上的一整页（列表保持挂载，返回时滚动位置不丢） */
+.diary-detail-page.is-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 24;
+  background: #f4f5f7;
+}
+
 /* 详情页滚动区：顶部不留白，卡片上边线与顶部栏下框线贴边；下边距 1px */
 .diary-detail-scroll {
   flex: 1 1 auto;
@@ -5302,6 +5310,14 @@
   border-bottom: 0;
   border-radius: 0 0 8px 8px;
   box-shadow: 0 1px 3px rgba(24, 30, 34, 0.06);
+  /* 底部按钮行就是最后一行，不要再留卡片自身的下内边距
+     （.diary-flat-card 的 padding 带 !important，这里必须同样加权才生效） */
+  padding-bottom: 0 !important;
+}
+
+/* 按钮行贴到卡片底部时，左右也别再被卡片内边距缩进来 */
+.diary-detail-card .diary-detail-actions {
+  margin-bottom: 0;
 }
 
 .diary-flat-card.diary-detail-card:hover,
@@ -5380,11 +5396,12 @@
   transition: fill 0.2s, stroke 0.2s;
 }
 
-/* 按文字宽度分配整行：喜欢 1.5、小纸条 1.8、存为图片 2.4、菜单 0.6 */
-.diary-detail-actions > .diary-detail-action:nth-child(1) { flex: 1.5 1 0; }
-.diary-detail-actions > .diary-detail-action:nth-child(2) { flex: 1.8 1 0; }
-.diary-detail-actions > .diary-detail-action:nth-child(3) { flex: 2.4 1 0; }
-.diary-detail-actions > .diary-detail-more { flex: 0.6 1 0; }
+/* 按文字宽度分配整行：喜欢 1.5、小纸条 1.8、存为图片 2.4、菜单 0.6（合计 6.3）。
+   存为图片让出 6px 给右侧菜单按钮，两者用 calc 精确对齐，加起来仍正好 100% */
+.diary-detail-actions > .diary-detail-action:nth-child(1) { flex: 0 0 23.8095%; }
+.diary-detail-actions > .diary-detail-action:nth-child(2) { flex: 0 0 28.5714%; }
+.diary-detail-actions > .diary-detail-action:nth-child(3) { flex: 0 0 calc(38.0952% - 6px); }
+.diary-detail-actions > .diary-detail-more { flex: 0 0 calc(9.5238% + 6px); }
 
 /* 格与格之间的细分割线：只有一小段，不占满整行高度 */
 .diary-detail-actions > * + * {

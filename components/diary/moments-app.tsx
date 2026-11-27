@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bookmark, Bot, ChevronLeft, Clock3, Layers, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Bookmark, Bot, ChevronLeft, Clock3, Heart, Layers, Share, Trash2, X } from "lucide-react";
 import { DotsThree } from "@phosphor-icons/react";
 
 import { ReadingShareDialog } from "@/components/reading/reading-share-dialog";
@@ -466,14 +466,21 @@ export function MomentsApp({ onBack, onNotice }: MomentsAppProps) {
       ) : null}
 
       {activeMoment ? (
-        <MomentDetail
+        <MomentDetailPage
           moment={activeMoment.moment}
           tone={activeMoment.tone}
           assetUrls={assetUrls}
-          onClose={() => setActiveMoment(null)}
+          character={characters.find(item => item.id === activeMoment.moment.characterId)}
+          fontStyle={{ ...font.style, ...userFont.style, ...charFont.style }}
+          onBack={() => setActiveMoment(null)}
           onShare={() => {
             if (activeMoment.moment.source === "chat") void openChatShot(activeMoment.moment);
             else setSharingMoment(activeMoment.moment);
+          }}
+          onDelete={() => {
+            const target = activeMoment.moment;
+            setActiveMoment(null);
+            setDeleteCandidate(target);
           }}
         />
       ) : null}
@@ -689,62 +696,132 @@ function MomentCardContent({ moment, assetUrls }: { moment: Moment; assetUrls: R
   );
 }
 
-function MomentDetail({ moment, tone, assetUrls, onClose, onShare }: {
+/** 片刻纪事详情：复用手记详情页那套版式（独立整页 + 卡片 + 底部按钮行） */
+function MomentDetailPage({ moment, tone, assetUrls, character, fontStyle, onBack, onDelete, onShare }: {
   moment: Moment;
   /** 外面那张纸条的颜色：聊天气泡跟着它配色 */
   tone: PaperTone;
   assetUrls: Record<string, string>;
-  onClose: () => void;
+  character?: Character;
+  fontStyle?: CSSProperties;
+  onBack: () => void;
+  onDelete: () => void;
   onShare: () => void;
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  // 「喜欢」「小纸条」只是点亮状态，不入库（跟日记详情一致）
+  const [liked, setLiked] = useState(false);
+  const [bookmarked, setBookmarked] = useState(false);
+  const authorName = character?.name || moment.characterName;
+  const avatar = character?.avatar || "";
+  const phone = character?.wechatID || character?.id || "";
+
   return (
-    <div className="nw-modal-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
-      <article className="diary-entry-detail-paper" onClick={(event) => event.stopPropagation()}>
-        <span className="diary-entry-paper-clip" aria-hidden="true">
-          <span />
-        </span>
-        <div className="diary-entry-detail-scroll">
-          <header>
-            <div className="diary-entry-detail-topline">
-              <span>{`${sourceLabel(moment)}摘录`}</span>
-              <div className="diary-entry-detail-actions">
-                <button
-                  type="button"
-                  className="diary-detail-delete-btn"
-                  onClick={() => {
-                    const toDelete = moment;
-                    onClose();
-                    setDeleteCandidate(toDelete);
-                  }}
-                >
-                  删除
-                </button>
-                <button type="button" onClick={onShare}>分享</button>
-                <button type="button" onClick={onClose}>关闭</button>
+    <section className="diary-app diary-entry-app diary-detail-page is-overlay" style={fontStyle}>
+      <header className="diary-app-header diary-entry-header diary-detail-header">
+        <button type="button" className="diary-icon-btn" onClick={onBack} aria-label="返回">
+          <ChevronLeft size={20} />
+        </button>
+        <div>
+          <h1>{`${authorName} • 片刻`}</h1>
+        </div>
+        <span className="diary-header-spacer" />
+      </header>
+
+      <div className="diary-detail-scroll">
+        <article className="diary-flat-card diary-detail-card">
+          <div className="diary-flat-card-inner">
+            <div className="diary-flat-card-author-row">
+              <div className="diary-flat-card-avatar">
+                {avatar ? <img src={avatar} alt={authorName} /> : <Bot size={18} />}
+              </div>
+              <div className="diary-flat-card-author-info">
+                <span className="diary-flat-card-author-name">{authorName}</span>
+                {phone ? <span className="diary-flat-card-author-id">@{phone}</span> : null}
               </div>
             </div>
-          </header>
-          {moment.source === "chat" ? (
-            // 点开以后：小气泡，颜色跟外面那张纸条；非文字的照聊天里原样
-            <div className="moment-chat-bubbles" data-tone={tone}>
-              {(moment.lines ?? []).map((line, index) => line.kind === "text"
-                ? <p key={index} className="moment-chat-bubble" data-speaker={line.speaker}>{line.text}</p>
-                : <MomentChatSnap key={index} line={line} url={assetUrls[line.asset]} />)}
+
+            {moment.source === "chat" ? (
+              // 点开以后：小气泡，颜色跟外面那张纸条；非文字的照聊天里原样
+              <div className="moment-chat-bubbles" data-tone={tone}>
+                {(moment.lines ?? []).map((line, index) => line.kind === "text"
+                  ? <p key={index} className="moment-chat-bubble" data-speaker={line.speaker}>{line.text}</p>
+                  : <MomentChatSnap key={index} line={line} url={assetUrls[line.asset]} />)}
+              </div>
+            ) : (
+              <div className="diary-entry-blocks diary-detail-blocks" data-speaker={moment.speaker}>
+                {moment.paragraphs.map((paragraph, index) => (
+                  <p key={index} className="diary-entry-paragraph">{paragraph}</p>
+                ))}
+              </div>
+            )}
+
+            <div className="diary-flat-card-footer">
+              <Clock3 size={13} className="diary-flat-clock-svg" aria-hidden="true" />
+              <time className="diary-flat-card-time">{momentDate(moment)}</time>
             </div>
-          ) : (
-            <div className="diary-entry-blocks" data-speaker={moment.speaker}>
-              {moment.paragraphs.map((paragraph, index) => (
-                <p key={index} className="diary-entry-paragraph">{paragraph}</p>
-              ))}
+
+            <div className="diary-detail-actions">
+              <button
+                type="button"
+                className={`diary-detail-action ${liked ? "is-liked" : ""}`}
+                onClick={() => setLiked(value => !value)}
+                aria-pressed={liked}
+              >
+                <Heart size={21} strokeWidth={1.6} aria-hidden="true" />
+                <span>喜欢</span>
+              </button>
+              <button
+                type="button"
+                className={`diary-detail-action ${bookmarked ? "is-bookmarked" : ""}`}
+                onClick={() => setBookmarked(value => !value)}
+                aria-pressed={bookmarked}
+              >
+                <Bookmark size={21} strokeWidth={1.6} aria-hidden="true" />
+                <span>小纸条</span>
+              </button>
+              {/* 片刻纪事的分享就落在「存为图片」上 */}
+              <button type="button" className="diary-detail-action" onClick={onShare}>
+                <Share size={21} strokeWidth={1.6} aria-hidden="true" />
+                <span>存为图片</span>
+              </button>
+              <div className="diary-detail-more">
+                <button
+                  type="button"
+                  className="diary-detail-action"
+                  onClick={() => setMenuOpen(open => !open)}
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  aria-label="更多操作"
+                >
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <circle cx="5" cy="12" r="1.9" />
+                    <circle cx="12" cy="12" r="1.9" />
+                    <circle cx="19" cy="12" r="1.9" />
+                  </svg>
+                </button>
+                {menuOpen ? (
+                  <>
+                    <div className="diary-detail-more-backdrop" onClick={() => setMenuOpen(false)} />
+                    <div className="diary-detail-more-menu" role="menu">
+                      {/* 片刻纪事只能删，没有编辑 */}
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="is-danger"
+                        onClick={() => { setMenuOpen(false); onDelete(); }}
+                      >
+                        删除
+                      </button>
+                    </div>
+                  </>
+                ) : null}
+              </div>
             </div>
-          )}
-          <footer className="diary-entry-detail-signature">
-            <span>{moment.speakerName}</span>
-            <time>{momentDate(moment)}</time>
-          </footer>
-        </div>
-      </article>
-    </div>
+          </div>
+        </article>
+      </div>
+    </section>
   );
 }
 

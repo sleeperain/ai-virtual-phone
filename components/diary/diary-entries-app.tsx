@@ -952,7 +952,7 @@ function DiaryEntryCardContent({ entry, character, userIdentity }: {
         <time className="diary-flat-card-time">{formatEntryDateTime(entry.createdAt)}</time>
         {permission ? (
           <span className="diary-entry-permission">
-            <Lock size={11} strokeWidth={1.8} aria-hidden="true" />
+            <Lock size={14} strokeWidth={1.8} aria-hidden="true" />
             <span>{permission}</span>
           </span>
         ) : null}
@@ -1904,7 +1904,7 @@ function DiaryEntryDetailPage({ entry, character, userIdentity, fontStyle, onBac
               <time className="diary-flat-card-time">{formatEntryDateTime(entry.createdAt)}</time>
               {permission ? (
                 <span className="diary-entry-permission">
-                  <Lock size={11} strokeWidth={1.8} aria-hidden="true" />
+                  <Lock size={14} strokeWidth={1.8} aria-hidden="true" />
                   <span>{permission}</span>
                 </span>
               ) : null}
