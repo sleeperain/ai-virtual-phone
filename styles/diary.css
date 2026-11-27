@@ -422,17 +422,42 @@
   opacity: 0.6;
 }
 
-/* 星星 / 铃铛：当前页面对应的那个高亮成主题蓝 */
+/* 右侧这一排：四个元素统一 30×30 的方框 + 等间距，视觉节奏才一致 */
+.diary-brand-header .diary-entry-header-actions {
+  gap: 4px;
+}
+
+.diary-brand-header .diary-brand-nav,
+.diary-brand-header .note-wall-menu-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(22, 22, 26, 0.62);
+}
+
+/* 地球：当前在片刻纪事时高亮成主题蓝 */
 .diary-brand-nav.is-active {
   color: #8fb2c8;
+}
+
+/* 实心铃铛：常态是灰色，只有当前在 TA的手记 时才压深一档。
+   选择器带 .diary-brand-header 前缀，才压得过上面那条 .note-wall-menu-btn 的默认色 */
+.diary-brand-header .diary-brand-bell {
+  color: #a0a0a8;
+}
+
+.diary-brand-header .diary-brand-bell.is-active {
+  color: #55555c;
 }
 
 /* 最右侧的圆形头像（取代原来的「…」菜单） */
 .diary-brand-avatar {
   flex: 0 0 auto;
-  width: 28px;
-  height: 28px;
-  margin-left: 2px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   border: 1px solid rgba(0, 0, 0, 0.1);
   border-radius: 50%;
@@ -476,6 +501,11 @@
   font-weight: 500;
   line-height: 1;
   letter-spacing: 0;
+}
+
+/* 品牌栏里的 Aa 跟着同一排的节奏缩小一号 */
+.diary-brand-header .diary-font-upload-mark {
+  font-size: calc(13px*var(--app-text-scale,1));
 }
 
 .diary-font-panel {

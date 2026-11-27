@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import { Bell, Star, UserRound } from "lucide-react";
+import { Bell, Globe, UserRound } from "lucide-react";
 
 import { resolveUserIdentity } from "@/lib/settings-storage";
 import type { UserIdentity } from "@/components/settings/user-identity";
@@ -11,7 +11,7 @@ export type DiaryBrandView = "entries" | "moments";
 /**
  * 手记 / 片刻纪事共用的顶部栏：
  * 左侧是 iFloat 文字（点了回桌面，相当于原来的返回），
- * 右侧依次是「收藏（空心星）」→「铃铛」→ 页面自己的按钮（字体 Aa 等）→ 用户圆形头像。
+ * 右侧依次是「片刻纪事（地球）」→「TA的手记（实心铃铛）」→ 页面自己的按钮（字体 Aa 等）→ 用户圆形头像。
  */
 export function DiaryBrandHeader({ view, onClose, onSwitch, avatarLabel, onAvatarClick, children }: {
   view: DiaryBrandView;
@@ -45,20 +45,21 @@ export function DiaryBrandHeader({ view, onClose, onSwitch, avatarLabel, onAvata
           aria-label="片刻纪事"
           aria-pressed={view === "moments"}
         >
-          <Star size={20} strokeWidth={1.7} aria-hidden="true" />
+          <Globe size={18} strokeWidth={1.7} aria-hidden="true" />
         </button>
         <button
           type="button"
-          className={`note-wall-menu-btn diary-brand-nav ${view === "entries" ? "is-active" : ""}`}
+          className={`note-wall-menu-btn diary-brand-nav diary-brand-bell ${view === "entries" ? "is-active" : ""}`}
           onClick={() => onSwitch("entries")}
           aria-label="TA的手记"
           aria-pressed={view === "entries"}
         >
-          <Bell size={20} strokeWidth={1.7} aria-hidden="true" />
+          {/* 实心铃铛：填充当前颜色、去掉描边 */}
+          <Bell size={18} fill="currentColor" stroke="none" aria-hidden="true" />
         </button>
         {children}
         <button type="button" className="diary-brand-avatar" onClick={onAvatarClick} aria-label={avatarLabel}>
-          {identity?.avatarUrl ? <img src={identity.avatarUrl} alt="" /> : <UserRound size={16} aria-hidden="true" />}
+          {identity?.avatarUrl ? <img src={identity.avatarUrl} alt="" /> : <UserRound size={15} aria-hidden="true" />}
         </button>
       </span>
     </header>
