@@ -45,7 +45,11 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
-import { runCoreMemoryPipeline } from "@/lib/core-memory-builder";
+import {
+    resummarizeCoreMemory,
+    resolveCoreMemorySource,
+    runCoreMemoryPipeline,
+} from "@/lib/core-memory-builder";
 import { resolveAuxiliaryApiConfig, resolveUserIdentity } from "@/lib/settings-storage";
 import {
     generateEmbedding,
@@ -376,7 +380,16 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     /** 正在「重新总结」的条目 id */
     const [resplittingEntryId, setResplittingEntryId] = useState<string | null>(null);
     /** 「重新总结」弹窗：先写修正思路，再带着它让模型重新总结 */
-    const [resummarizeDialog, setResummarizeDialog] = useState<{ entry: MemoryEntry; instruction: string } | null>(null);
+    const [resummarizeDialog, setResummarizeDialog] = useState<{ entry: MemoryEntry; instruction: string; isCore?: boolean } | null>(null);
+    /** 核心记忆展开时的原文溯源结果（依据的长期记忆 + 原始记录），异步加载 */
+    const [coreProvenance, setCoreProvenance] = useState<{
+        longTermEntries: MemoryEntry[];
+        rawEntries: Array<{ id: string; timestamp: string; sourceApp: string; content: string }>;
+        earliest: string;
+        latest: string;
+        totalLongTerm: number;
+    } | null>(null);
+    const [coreProvenanceLoading, setCoreProvenanceLoading] = useState(false);
     /** 一键将旧版遗留的拆分碎片移入回收站 */
     const [cleaningFragments, setCleaningFragments] = useState(false);
     const [cleaningManualText, setCleaningManualText] = useState(false);
@@ -543,6 +556,32 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         }
     }, [view]);
 
+    // 事件盒功能已整个移除：任何来源把标签设为 boxes 都直接落回短期列表，不再渲染已废弃的盒子页
+    useEffect(() => {
+        if ((activeTab as string) === "boxes") setActiveTab("short");
+    }, [activeTab]);
+
+    // 核心记忆展开时按需追溯「这条结论是从哪些长期记忆与原始记录里提炼出来的」
+    useEffect(() => {
+        let cancelled = false;
+        setCoreProvenance(null);
+        if (!selectedCharId || !expandedId) return;
+        const target = coreEntries.find(e => e.id === expandedId);
+        if (!target) return;
+        setCoreProvenanceLoading(true);
+        void (async () => {
+            try {
+                const res = await resolveCoreMemorySource(selectedCharId, target);
+                if (!cancelled) setCoreProvenance(res);
+            } catch {
+                if (!cancelled) setCoreProvenance(null);
+            } finally {
+                if (!cancelled) setCoreProvenanceLoading(false);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [selectedCharId, expandedId, coreEntries]);
+
     // 量出「放入事件盒」里单个 chip 的高度，把列表滚动区的最大高度压到三行以内
     useEffect(() => {
         const el = boxChipScrollRef.current;
@@ -682,6 +721,25 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         setResummarizeDialog(null);
         setResplittingEntryId(entry.id);
         try {
+            // 核心记忆与长期记忆的重新总结走不同链路：
+            // 核心记忆依据的是「当时的长期记忆 + 它们的原始记录」，长期记忆依据的是自己的原文存档。
+            if (entry.type === "core") {
+                const coreRes = await resummarizeCoreMemory(
+                    selectedCharId,
+                    selectedChar?.name ?? "角色",
+                    entry.id,
+                    instruction,
+                );
+                if (coreRes.success) {
+                    await loadDetailData(selectedCharId);
+                    loadCharacterList();
+                    showNotice("已按依据的长期记忆与原始记录重新提炼核心记忆，旧版本标记为历史记录（可回看）");
+                } else {
+                    showNotice(coreRes.error || "核心记忆重新总结失败");
+                }
+                return;
+            }
+
             const res = await resplitMergedMemory(
                 selectedCharId,
                 selectedChar?.name ?? "角色",
@@ -2008,14 +2066,20 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                         <Edit3 size={13} />
                                                         <span>编辑</span>
                                                     </button>
-                                                    {type === "long_term" && !entryIsDigest && (
+                                                    {!entryIsDigest && (
                                                         <button
                                                             onClick={() => {
                                                                 setEntryMenuId(null);
-                                                                setResummarizeDialog({ entry, instruction: "" });
+                                                                setResummarizeDialog({
+                                                                    entry,
+                                                                    instruction: "",
+                                                                    isCore: type === "core",
+                                                                });
                                                             }}
                                                             disabled={Boolean(resplittingEntryId)}
-                                                            title="回到这条记忆对应的原始对话/事件记录重新总结，可先写下你希望模型修正的思路（没有原文记录时会拒绝执行，绝不对着旧总结二次编造）"
+                                                            title={type === "core"
+                                                                ? "回到这条核心记忆所依据的长期记忆与原始对话记录重新提炼，可先写下你希望模型修正的思路（追溯不到依据时会拒绝执行，绝不对着旧结论二次编造）"
+                                                                : "回到这条记忆对应的原始对话/事件记录重新总结，可先写下你希望模型修正的思路（没有原文记录时会拒绝执行，绝不对着旧总结二次编造）"}
                                                         >
                                                             <RotateCw size={13} />
                                                             <span>
@@ -2156,7 +2220,58 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                         </div>
                                     )}
                                 </div>
-                                {/* 原文溯源：仅在展开时渲染，同时兼容批次快照与手机原生历史时间线回溯 */}
+                                {/* 核心记忆的原文溯源：这条结论依据的长期记忆 + 它们的原始对话记录 */}
+                                {isExpanded && type === "core" && (
+                                    <div className="mem-superseded-note" style={{ display: "block" }} onClick={ev => ev.stopPropagation()}>
+                                        <div className="ts-11 text-secondary" style={{ fontWeight: 600, marginBottom: 4 }}>
+                                            原文溯源{coreProvenance
+                                                ? `（依据 ${coreProvenance.totalLongTerm} 条长期记忆 · ${coreProvenance.earliest} ~ ${coreProvenance.latest}）`
+                                                : ""}
+                                        </div>
+                                        {coreProvenanceLoading ? (
+                                            <div className="ts-11 text-secondary">正在追溯…</div>
+                                        ) : !coreProvenance || coreProvenance.longTermEntries.length === 0 ? (
+                                            <div className="ts-11 text-secondary">
+                                                追溯不到这条核心记忆所依据的长期记忆（可能已被删除），因此无法对这条执行「重新总结」。
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <div className="ts-11 text-secondary" style={{ marginBottom: 2 }}>
+                                                    依据的长期记忆（{coreProvenance.longTermEntries.length} 条）：
+                                                </div>
+                                                <div style={{ maxHeight: 180, overflowY: "auto" }}>
+                                                    {coreProvenance.longTermEntries.slice(-30).map(item => (
+                                                        <div key={item.id} className="ts-11" style={{ padding: "3px 0", borderTop: "1px solid rgba(128,128,128,.15)" }}>
+                                                            <span className="text-secondary" style={{ marginRight: 6 }}>
+                                                                [{String(item.metadata?.eventDate ?? item.createdAt.slice(0, 10))}]
+                                                            </span>
+                                                            <span style={{ opacity: 0.85 }}>
+                                                                {(stripMemoryStructuredSections(item.content) || item.content).slice(0, 90)}
+                                                                {(stripMemoryStructuredSections(item.content) || item.content).length > 90 ? "…" : ""}
+                                                            </span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                                <div className="ts-11 text-secondary" style={{ marginTop: 6, marginBottom: 2 }}>
+                                                    原始对话/事件记录（{coreProvenance.rawEntries.length} 条）：
+                                                </div>
+                                                {coreProvenance.rawEntries.length === 0 ? (
+                                                    <div className="ts-11 text-secondary">这批长期记忆已无对应的原始记录，只能依据上面的长期记忆正文。</div>
+                                                ) : (
+                                                    <div style={{ maxHeight: 220, overflowY: "auto" }}>
+                                                        {coreProvenance.rawEntries.map((item, idx) => (
+                                                            <div key={`${item.id}_${idx}`} className="ts-11" style={{ padding: "3px 0", borderTop: "1px solid rgba(128,128,128,.15)" }}>
+                                                                <span className="text-secondary" style={{ marginRight: 6 }}>[{item.sourceApp}]</span>
+                                                                <span style={{ whiteSpace: "pre-wrap", opacity: 0.85 }}>{item.content}</span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </>
+                                        )}
+                                    </div>
+                                )}
+                                {/* 长期记忆的原文溯源：仅在展开时渲染，同时兼容批次快照与手机原生历史时间线回溯 */}
                                 {isExpanded && type === "long_term" && !entryIsDigest && (() => {
                                     const provenance = resolveMemoryProvenance(selectedCharId!, entry);
                                     if (!provenance || provenance.entries.length === 0) {
@@ -2409,13 +2524,8 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                             />
                         )
                     ) : activeTab === "boxes" ? (
-                        /* 事件盒功能已停用：不再新建/总结/归档，旧数据原样保留为普通长期记忆继续参与召回 */
-                        <div className="mem-empty-card">
-                            <p>
-                                事件盒功能已停用。原来放进事件盒的记忆都还在「长期记忆」列表里，可以照常查看、编辑和召回；
-                                这里不再提供新建、总结或归档。已经留下的空盒子可以直接忽略。
-                            </p>
-                        </div>
+                        /* 事件盒页面已删除：原来放进盒子的记忆都在「长期记忆」里，照常查看与召回 */
+                        null
                     ) : (activeTab as string) === "__event_box_disabled__" ? (
                         /* 旧事件盒界面保留为不可达分支，仅作存档，等待后续整体删除 */
                         (() => {
@@ -3169,7 +3279,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                 >
                                     <X size={18} />
                                 </button>
-                                <h3 className="modal-title">重新总结</h3>
+                                <h3 className="modal-title">{resummarizeDialog.isCore ? "重新提炼核心记忆" : "重新总结"}</h3>
                                 <button
                                     className="modal-header-btn modal-header-btn-action"
                                     disabled={Boolean(resplittingEntryId)}
@@ -3190,7 +3300,9 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                         className="ui-textarea ts-12"
                                         style={{ minHeight: 96 }}
                                         maxLength={2000}
-                                        placeholder={"写清楚这条记忆哪里总结错了、希望模型怎么改。例如：\n· 他不是女生，全文的「她」都要改成「他」\n· 两件事其实没关系，不要写成因为A所以B\n· 「调侃他扮观音」只是玩笑，不要写成真的扮过"}
+                                        placeholder={resummarizeDialog.isCore
+                                            ? "写清楚这条核心记忆哪里判断偏了、希望模型怎么改。例如：\n· 不要把单次争吵写成关系稳定恶化，那只是一次情绪\n· 角色对工作的执着是他自己的原则，不是为了让用户满意\n· 漏掉了搬去城西这件事，它改变了他对这段关系的打算"
+                                            : "写清楚这条记忆哪里总结错了、希望模型怎么改。例如：\n· 他不是女生，全文的「她」都要改成「他」\n· 两件事其实没关系，不要写成因为A所以B\n· 「调侃他扮观音」只是玩笑，不要写成真的扮过"}
                                         value={resummarizeDialog.instruction}
                                         onChange={e => {
                                             const val = e.target.value;
@@ -3198,7 +3310,9 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                         }}
                                     />
                                     <span className="ts-11 text-secondary">
-                                        会以最高优先级注入提示词；模型仍只能依据原始对话/事件记录改写，不会因为这段要求而编造原文没有的事。
+                                        {resummarizeDialog.isCore
+                                            ? "会以最高优先级注入提示词；模型只能依据这条核心记忆当初依据的长期记忆与原始对话记录重写，追溯不到依据时会拒绝执行。旧版本会保留为历史记录，可回看。"
+                                            : "会以最高优先级注入提示词；模型仍只能依据原始对话/事件记录改写，不会因为这段要求而编造原文没有的事。"}
                                     </span>
                                 </div>
                                 <button
