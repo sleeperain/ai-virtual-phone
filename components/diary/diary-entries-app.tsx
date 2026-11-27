@@ -112,7 +112,8 @@ type DiaryBook = {
 };
 
 type ComposeTarget =
-  | { mode: "create"; characterId: string }
+  /** authorType 决定这篇算「我写的」还是「TA 写的」——现在两个页签共用一个页面，不能只靠 kind */
+  | { mode: "create"; characterId: string; authorType: DiaryEntryAuthorType }
   | { mode: "edit"; entry: DiaryEntry };
 
 function formatEntryTime(value: string): string {
@@ -178,7 +179,6 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
   const [replySettingsOpen, setReplySettingsOpen] = useState(false);
   const [writePanelOpen, setWritePanelOpen] = useState(false);
   const [composeTarget, setComposeTarget] = useState<ComposeTarget | null>(null);
-  const [composePickerOpen, setComposePickerOpen] = useState(false);
   const [fontPanelOpen, setFontPanelOpen] = useState(false);
   const [activeEntry, setActiveEntry] = useState<DiaryEntry | null>(null);
   const [deleteCandidateEntry, setDeleteCandidateEntry] = useState<DiaryEntry | null>(null);
@@ -325,6 +325,7 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
 
   const saveComposeEntry = useCallback((input: {
     characterId: string;
+    authorType?: DiaryEntryAuthorType;
     title: string;
     mood: string;
     weather: string;
@@ -332,6 +333,8 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
     signature: string;
     blocks: DiaryEntryBlock[];
   }, editingId?: string) => {
+    // 表单传来的 authorType 优先（首页两个页签共用一套表单），兜底才用 kind
+    const authorType = input.authorType ?? kind;
     // body 是给"近期日记"这类只读纯文本上下文用的摊平版本；用 blockPlainText 而不是只拼
     // paragraph/quote，这样 correction/todo/image 这些板块的内容也不会在摊平时丢掉。
     const body = input.blocks.map(blockPlainText).filter(Boolean).join("\n\n");
@@ -340,12 +343,13 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
       const created = createDiaryEntry({
         characterId: input.characterId,
         characterName: character?.name ?? "角色",
-        authorType: kind,
+        authorType,
         title: input.title,
         mood: input.mood,
         weather: input.weather,
         tags: input.tags,
-        signature: input.signature,
+        // 用户写的日记署名是自己（没填就用当前账号名）
+        signature: input.signature || (authorType === "user" ? (userIdentity?.name ?? "我") : ""),
         body,
         blocks: input.blocks,
         trigger: "manual",
@@ -353,6 +357,7 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
       refreshEntries();
       setComposeTarget(null);
       if (created.authorType === "user") scheduleDiaryReply(created);
+      setTab("mine");
       notify("日记已保存。");
       return;
     }
@@ -369,7 +374,7 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
     setComposeTarget(null);
     if (updated) setActiveEntry(current => (current && current.id === updated.id ? updated : current));
     notify("日记已更新。");
-  }, [kind, notify, refreshEntries, resolveTargets]);
+  }, [kind, notify, refreshEntries, resolveTargets, userIdentity]);
 
   /** 顶部发布卡片的「发送」：直接写一篇「我的」日记，不再走选择角色的弹窗 */
   const publishEntry = useCallback(() => {
@@ -415,6 +420,16 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
     refreshEntries,
   ]);
 
+  /** 写日记：不再弹「写给谁」，署名和可见范围都在发布卡片/表单里定，这里只借第一位角色做条目归属 */
+  const openUserCompose = useCallback(() => {
+    const target = characters[0];
+    if (!target) {
+      notify("还没有角色，先在手机里创建一位角色。");
+      return;
+    }
+    setComposeTarget({ mode: "create", characterId: target.id, authorType: "user" });
+  }, [characters, notify]);
+
   const togglePublishVisibleTo = useCallback((characterId: string) => {
     setPublishVisibleTo(prev => prev.includes(characterId)
       ? prev.filter(id => id !== characterId)
@@ -454,7 +469,6 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
     () => (activeCharacterId ? books.find(book => book.characterId === activeCharacterId) ?? null : null),
     [activeCharacterId, books],
   );
-  const activeBookBusy = Boolean(activeBook && generatingCharacterIds.includes(activeBook.characterId));
 
   return (
     <section className={`diary-app diary-entry-app ${trash.drag ? "is-entry-dragging" : ""}`} style={font.style}>
@@ -623,7 +637,7 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
               <NotebookPen size={34} strokeWidth={1.5} />
               <h2>{tab === "mine" ? "还没有日记" : "还没有TA的日记"}</h2>
               <p>{tab === "mine" ? "在上面写一句，或者点右下角写下第一篇。" : "让角色先写一篇，纸面会从这里开始铺开。"}</p>
-              <button type="button" onClick={() => (tab === "mine" ? setComposePickerOpen(true) : setWritePanelOpen(true))}>
+              <button type="button" onClick={() => (tab === "mine" ? openUserCompose() : setWritePanelOpen(true))}>
                 {tab === "mine" ? "写下第一篇" : "让TA写一篇"}
               </button>
             </div>
@@ -660,11 +674,7 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
         <button
           type="button"
           className="diary-entry-write-btn"
-          onClick={() => {
-            // 已经点进某本日记就写给那一位，否则弹「写给谁」
-            if (activeBook) setComposeTarget({ mode: "create", characterId: activeBook.characterId });
-            else setComposePickerOpen(true);
-          }}
+          onClick={openUserCompose}
         >
           <NotebookPen size={18} strokeWidth={1.7} />
           <span>写日记</span>
@@ -715,21 +725,11 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
         />
       ) : null}
 
-      {composePickerOpen ? (
-        <DiaryComposePickerPanel
-          characters={characters}
-          onPick={(characterId) => {
-            setComposePickerOpen(false);
-            setComposeTarget({ mode: "create", characterId });
-          }}
-          onClose={() => setComposePickerOpen(false)}
-        />
-      ) : null}
-
       {composeTarget ? (
         <DiaryEntryComposeForm
           target={composeTarget}
           characters={characters}
+          defaultSignature={userIdentity?.name || "我"}
           onSave={saveComposeEntry}
           onClose={() => setComposeTarget(null)}
         />
@@ -749,6 +749,7 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
       {activeEntry ? (
         <DiaryEntryDetail
           entry={activeEntry}
+          userIdentity={userIdentity}
           onClose={() => setActiveEntry(null)}
           onEdit={() => { setComposeTarget({ mode: "edit", entry: activeEntry }); setActiveEntry(null); }}
           onDelete={() => {
@@ -811,43 +812,6 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
         </div>
       ) : null}
     </section>
-  );
-}
-
-const DIARY_BOOK_COVER_COUNT = 6;
-
-function hashText(value: string): number {
-  let hash = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
-  }
-  return hash;
-}
-
-function DiaryBookCover({ book, busy, onOpen }: { book: DiaryBook; busy: boolean; onOpen: () => void }) {
-  const hash = hashText(book.characterId);
-  const latest = book.entries[0];
-  return (
-    <button
-      type="button"
-      className="diary-book"
-      data-cover={hash % DIARY_BOOK_COVER_COUNT}
-      onClick={onOpen}
-    >
-      <span className="diary-book-spine" aria-hidden="true" />
-      <span className="diary-book-frame" aria-hidden="true" />
-      <span className="diary-book-label">
-        <span className="diary-book-avatar">
-          {book.avatar ? <img src={book.avatar} alt="" /> : <Bot size={20} />}
-        </span>
-        <strong>{book.characterName}</strong>
-        <em>{busy ? <DiaryWritingStatus /> : "的日记本"}</em>
-      </span>
-      <span className="diary-book-meta">
-        <span>{book.entries.length} 篇</span>
-        <time>{formatEntryTime(latest.createdAt)}</time>
-      </span>
-    </button>
   );
 }
 
@@ -1362,35 +1326,6 @@ function DiaryReplySettingsPanel({ characters, rules, onChange, onClose }: {
   );
 }
 
-function DiaryComposePickerPanel({ characters, onPick, onClose }: {
-  characters: Character[];
-  onPick: (characterId: string) => void;
-  onClose: () => void;
-}) {
-  return (
-    <div className="nw-modal-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
-      <section className="diary-entry-settings" onClick={event => event.stopPropagation()}>
-        <header>
-          <div>
-            <h2>写给谁</h2>
-            <p>选择一位角色，写一篇给TA的日记。</p>
-          </div>
-          <button type="button" className="diary-icon-btn" onClick={onClose} aria-label="关闭">
-            <X size={18} />
-          </button>
-        </header>
-        <CharacterAvatarGrid
-          characters={characters}
-          selectedIds={[]}
-          busyIds={[]}
-          disabled={false}
-          onToggle={onPick}
-        />
-      </section>
-    </div>
-  );
-}
-
 type DraftBlock = { localId: string } & DiaryEntryBlock;
 
 function makeLocalId(): string {
@@ -1434,20 +1369,35 @@ const DIARY_BLOCK_TYPE_LABELS: Record<DiaryEntryBlock["type"], string> = {
   image: "配图",
 };
 
-function DiaryEntryComposeForm({ target, characters, onSave, onClose }: {
+function DiaryEntryComposeForm({ target, characters, defaultSignature, onSave, onClose }: {
   target: ComposeTarget;
   characters: Character[];
-  onSave: (input: { characterId: string; title: string; mood: string; weather: string; tags: string[]; signature: string; blocks: DiaryEntryBlock[] }, editingId?: string) => void;
+  /** 新写一篇时的默认署名：用户写的日记签自己的名字 */
+  defaultSignature?: string;
+  onSave: (input: {
+    characterId: string;
+    authorType?: DiaryEntryAuthorType;
+    title: string;
+    mood: string;
+    weather: string;
+    tags: string[];
+    signature: string;
+    blocks: DiaryEntryBlock[];
+  }, editingId?: string) => void;
   onClose: () => void;
 }) {
   const editingEntry = target.mode === "edit" ? target.entry : null;
   const characterId = target.mode === "edit" ? target.entry.characterId : target.characterId;
   const character = characters.find(item => item.id === characterId);
+  // 新建时的作者类型由调用方指定（首页「日记」「朋友」两个页签共用这套表单）
+  const authorType: DiaryEntryAuthorType = editingEntry ? editingEntry.authorType : target.authorType;
+  // 用户写的日记不选"写给谁"，署名就是自己；角色日记仍沿用角色名
+  const isUserAuthor = authorType === "user";
   const [title, setTitle] = useState(editingEntry?.title ?? "");
   const [mood, setMood] = useState(editingEntry?.mood ?? "");
   const [weather, setWeather] = useState(editingEntry?.weather ?? "");
   const [tagsText, setTagsText] = useState(editingEntry?.tags.join("、") ?? "");
-  const [signature, setSignature] = useState(editingEntry?.signature ?? "");
+  const [signature, setSignature] = useState(editingEntry?.signature ?? (isUserAuthor ? (defaultSignature ?? "我") : ""));
   // 编辑已有日记时直接从它原来的 blocks 起步——引用/涂改/待办/配图这些板块原样保留，
   // 不会因为编辑就被压平成纯段落。
   const [draftBlocks, setDraftBlocks] = useState<DraftBlock[]>(() =>
@@ -1500,7 +1450,7 @@ function DiaryEntryComposeForm({ target, characters, onSave, onClose }: {
     if (!canSave) return;
     const tags = tagsText.split(/[,，、\s]+/).map(tag => tag.trim()).filter(Boolean);
     const blocks = stripDraftBlocks(draftBlocks.filter(draftBlockHasContent));
-    onSave({ characterId, title: title.trim(), mood: mood.trim(), weather: weather.trim(), tags, signature: signature.trim(), blocks }, editingEntry?.id);
+    onSave({ characterId, authorType, title: title.trim(), mood: mood.trim(), weather: weather.trim(), tags, signature: signature.trim(), blocks }, editingEntry?.id);
   };
 
   return (
@@ -1508,7 +1458,7 @@ function DiaryEntryComposeForm({ target, characters, onSave, onClose }: {
       <form className="diary-entry-settings diary-compose-form" onClick={event => event.stopPropagation()} onSubmit={handleSubmit}>
         <header>
           <div>
-            <h2>{editingEntry ? "编辑日记" : `写给 ${character?.name ?? "TA"} 的日记`}</h2>
+            <h2>{editingEntry ? "编辑日记" : isUserAuthor ? "写日记" : `写给 ${character?.name ?? "TA"} 的日记`}</h2>
             <p>{editingEntry?.authorType === "character" ? "改动会覆盖这篇日记的原文。" : "写完后会按你设置的回应方式，让TA看到这篇日记。"}</p>
           </div>
           <button type="button" className="diary-icon-btn" onClick={onClose} aria-label="关闭">
@@ -1517,7 +1467,7 @@ function DiaryEntryComposeForm({ target, characters, onSave, onClose }: {
         </header>
 
         <label className="diary-compose-field diary-compose-title-field">
-          <input type="text" value={title} onChange={event => setTitle(event.target.value)} placeholder="给今天起个标题（留空自动取正文开头）" />
+          <input type="text" value={title} onChange={event => setTitle(event.target.value)} placeholder="标题（可留空）" />
         </label>
         <div className="diary-entry-setting-grid">
           <label className="diary-compose-field diary-compose-tint-field">
@@ -1559,8 +1509,8 @@ function DiaryEntryComposeForm({ target, characters, onSave, onClose }: {
 
         {!editingEntry || editingEntry.authorType === "user" ? (
           <label className="diary-compose-field diary-compose-tint-field">
-            <span>署名（可选）</span>
-            <input type="text" value={signature} onChange={event => setSignature(event.target.value)} placeholder="写在日记末尾的署名" />
+            <span>署名</span>
+            <input type="text" value={signature} onChange={event => setSignature(event.target.value)} placeholder={defaultSignature || "我"} />
           </label>
         ) : null}
 
@@ -1797,8 +1747,18 @@ function CharacterAvatarGrid({ characters, selectedIds, busyIds, disabled, onTog
   );
 }
 
-function DiaryEntryDetail({ entry, onClose, onEdit, onDelete }: { entry: DiaryEntry; onClose: () => void; onEdit: () => void; onDelete?: () => void }) {
+function DiaryEntryDetail({ entry, userIdentity, onClose, onEdit, onDelete }: {
+  entry: DiaryEntry;
+  userIdentity?: Pick<UserIdentity, "name"> | null;
+  onClose: () => void;
+  onEdit: () => void;
+  onDelete?: () => void;
+}) {
   const markers = getEntryMarkers(entry);
+  // 用户写的日记署名是自己：优先用填写的署名，其次当前账号名
+  const authorLine = entry.authorType === "user"
+    ? (entry.signature || userIdentity?.name || "我")
+    : entry.characterName;
   return (
     <div className="nw-modal-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
       <article className="diary-entry-detail-paper" onClick={(event) => event.stopPropagation()}>
@@ -1832,7 +1792,7 @@ function DiaryEntryDetail({ entry, onClose, onEdit, onDelete }: { entry: DiaryEn
             ))}
           </div>
           <footer className="diary-entry-detail-signature">
-            <span>{entry.authorType === "user" ? (entry.signature || "我") : entry.characterName}</span>
+            <span>{authorLine}</span>
             <time>{formatEntryTime(entry.createdAt)}</time>
           </footer>
         </div>

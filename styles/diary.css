@@ -4758,8 +4758,12 @@
   width: 100%;
   padding: 14px 16px 10px;
   background: #ffffff;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
   box-sizing: border-box;
+  /* 向下的柔和阴影：把输入卡片和下方的页签/条目区分开 */
+  box-shadow: 0 3px 8px rgba(24, 30, 34, 0.06);
+  position: relative;
+  z-index: 1;
 }
 
 .diary-hub-compose-head {
@@ -4836,12 +4840,13 @@
   color: rgba(37, 37, 37, 0.3);
 }
 
+/* 正文与按钮行之间留 6px */
 .diary-hub-compose-actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
-  margin-top: 6px;
+  margin: 6px 0 0;
 }
 
 .diary-hub-permission {
@@ -4874,10 +4879,11 @@
   z-index: 19;
 }
 
+/* 下拉挂在按钮下方（挂上方会被顶部栏挡住） */
 .diary-hub-permission-menu {
   position: absolute;
   right: 0;
-  bottom: calc(100% + 6px);
+  top: calc(100% + 6px);
   z-index: 20;
   min-width: 132px;
   padding: 5px;
