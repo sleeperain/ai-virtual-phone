@@ -550,67 +550,69 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
               rows={4}
               aria-label="日记正文"
             />
-            <div className="diary-hub-compose-actions">
-              <div className="diary-hub-permission">
-                <button
-                  type="button"
-                  className="diary-hub-permission-btn"
-                  onClick={() => setPermissionOpen(open => !open)}
-                  aria-haspopup="true"
-                  aria-expanded={permissionOpen}
-                >
-                  {DIARY_VISIBILITY_LABELS[publishVisibility]}
-                  <ChevronDown size={12} />
-                </button>
-                {permissionOpen ? (
-                  <>
-                    <div className="diary-hub-permission-backdrop" onClick={() => setPermissionOpen(false)} />
-                    <div className="diary-hub-permission-menu" role="menu">
-                      {(Object.keys(DIARY_VISIBILITY_LABELS) as DiaryEntryVisibility[]).map(mode => (
-                        <button
-                          key={mode}
-                          type="button"
-                          role="menuitemradio"
-                          aria-checked={publishVisibility === mode}
-                          className={publishVisibility === mode ? "is-active" : ""}
-                          onClick={() => {
-                            setPublishVisibility(mode);
-                            if (mode !== "partial") setPermissionOpen(false);
-                          }}
-                        >
-                          {DIARY_VISIBILITY_LABELS[mode]}
-                        </button>
-                      ))}
-                      {publishVisibility === "partial" ? (
-                        <div className="diary-hub-permission-people">
-                          {characters.length === 0 ? (
-                            <p>暂无角色可选</p>
-                          ) : characters.map(character => (
-                            <label key={character.id}>
-                              <input
-                                type="checkbox"
-                                checked={publishVisibleTo.includes(character.id)}
-                                onChange={() => togglePublishVisibleTo(character.id)}
-                              />
-                              <span>{character.name}</span>
-                            </label>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  </>
-                ) : null}
-              </div>
+          </section>
+
+          {/* 按钮单独一行：下移一段距离、自带浅灰边框，和上面的输入卡片分开 */}
+          <div className="diary-hub-compose-actions">
+            <div className="diary-hub-permission">
               <button
                 type="button"
-                className="diary-hub-send-btn"
-                onClick={publishEntry}
-                disabled={!publishTitle.trim() && !publishBody.trim()}
+                className="diary-hub-permission-btn"
+                onClick={() => setPermissionOpen(open => !open)}
+                aria-haspopup="true"
+                aria-expanded={permissionOpen}
               >
-                发送
+                {DIARY_VISIBILITY_LABELS[publishVisibility]}
+                <ChevronDown size={12} />
               </button>
+              {permissionOpen ? (
+                <>
+                  <div className="diary-hub-permission-backdrop" onClick={() => setPermissionOpen(false)} />
+                  <div className="diary-hub-permission-menu" role="menu">
+                    {(Object.keys(DIARY_VISIBILITY_LABELS) as DiaryEntryVisibility[]).map(mode => (
+                      <button
+                        key={mode}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={publishVisibility === mode}
+                        className={publishVisibility === mode ? "is-active" : ""}
+                        onClick={() => {
+                          setPublishVisibility(mode);
+                          if (mode !== "partial") setPermissionOpen(false);
+                        }}
+                      >
+                        {DIARY_VISIBILITY_LABELS[mode]}
+                      </button>
+                    ))}
+                    {publishVisibility === "partial" ? (
+                      <div className="diary-hub-permission-people">
+                        {characters.length === 0 ? (
+                          <p>暂无角色可选</p>
+                        ) : characters.map(character => (
+                          <label key={character.id}>
+                            <input
+                              type="checkbox"
+                              checked={publishVisibleTo.includes(character.id)}
+                              onChange={() => togglePublishVisibleTo(character.id)}
+                            />
+                            <span>{character.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                </>
+              ) : null}
             </div>
-          </section>
+            <button
+              type="button"
+              className="diary-hub-send-btn"
+              onClick={publishEntry}
+              disabled={!publishTitle.trim() && !publishBody.trim()}
+            >
+              发送
+            </button>
+          </div>
 
           {/* 三个页签：日记 / 朋友 / 通知，等分宽度，选中变蓝 */}
           <div className="diary-hub-tabs" role="tablist" aria-label="手记分类">
