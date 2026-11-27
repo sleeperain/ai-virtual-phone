@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import { Bookmark, Bot, Clock3, Heart, Share, Trash2, X } from "lucide-react";
+import { Bookmark, Bot, ChevronLeft, Clock3, Heart, Share, Trash2, X } from "lucide-react";
 
 import { ReadingShareDialog } from "@/components/reading/reading-share-dialog";
 import { ContentDialog } from "@/components/ui/modal";
@@ -348,8 +348,6 @@ export function MomentsApp({ onClose, onSwitch, onNotice }: MomentsAppProps) {
           assetUrls={assetUrls}
           character={characters.find(item => item.id === activeMoment.moment.characterId)}
           fontStyle={{ ...font.style, ...userFont.style, ...charFont.style }}
-          onClose={onClose}
-          onSwitch={onSwitch}
           onBack={() => setActiveMoment(null)}
           onShare={() => {
             if (activeMoment.moment.source === "chat") void openChatShot(activeMoment.moment);
@@ -453,17 +451,13 @@ function MomentChatSnap({ line, url, scale = 1 }: { line: Extract<MomentChatLine
 }
 
 /** 片刻纪事详情：复用手记详情页那套版式（独立整页 + 卡片 + 底部按钮行） */
-function MomentDetailPage({ moment, tone, assetUrls, character, fontStyle, onClose, onSwitch, onBack, onDelete, onShare }: {
+function MomentDetailPage({ moment, tone, assetUrls, character, fontStyle, onBack, onDelete, onShare }: {
   moment: Moment;
   /** 外面那张纸条的颜色：聊天气泡跟着它配色 */
   tone: PaperTone;
   assetUrls: Record<string, string>;
   character?: Character;
   fontStyle?: CSSProperties;
-  /** 顶部栏 iFloat 回桌面 */
-  onClose: () => void;
-  /** 顶部栏星星/铃铛切换页面 */
-  onSwitch: (view: DiaryBrandView) => void;
   onBack: () => void;
   onDelete: () => void;
   onShare: () => void;
@@ -478,13 +472,16 @@ function MomentDetailPage({ moment, tone, assetUrls, character, fontStyle, onClo
 
   return (
     <section className="diary-app diary-entry-app diary-detail-page is-overlay" style={fontStyle}>
-      <DiaryBrandHeader
-        view="moments"
-        onClose={onClose}
-        onSwitch={onSwitch}
-        avatarLabel="返回列表"
-        onAvatarClick={onBack}
-      />
+      {/* 详情页用普通顶部栏，品牌栏只出现在列表页 */}
+      <header className="diary-app-header diary-entry-header diary-detail-header">
+        <button type="button" className="diary-icon-btn" onClick={onBack} aria-label="返回">
+          <ChevronLeft size={20} />
+        </button>
+        <div>
+          <h1>{`${authorName} • 片刻`}</h1>
+        </div>
+        <span className="diary-header-spacer" />
+      </header>
 
       <div className="diary-detail-scroll">
         <article className="diary-flat-card diary-detail-card">

@@ -499,8 +499,6 @@ export function DiaryEntriesApp({ kind, onClose, onSwitch, onNotice }: DiaryEntr
           character={characters.find(character => character.id === activeEntry.characterId)}
           userIdentity={userIdentity}
           fontStyle={font.style}
-          onClose={onClose}
-          onSwitch={onSwitch}
           onBack={() => setActiveEntry(null)}
           onEdit={() => setComposeTarget({ mode: "edit", entry: activeEntry })}
           onDelete={() => {
@@ -1831,15 +1829,11 @@ function CharacterAvatarGrid({ characters, selectedIds, busyIds, disabled, onTog
 }
 
 /** 日记详情：独立整页，顶部栏沿用「TA的手记」那套，下面是完整内容的日记卡片 */
-function DiaryEntryDetailPage({ entry, character, userIdentity, fontStyle, onClose, onSwitch, onBack, onEdit, onDelete }: {
+function DiaryEntryDetailPage({ entry, character, userIdentity, fontStyle, onBack, onEdit, onDelete }: {
   entry: DiaryEntry;
   character?: Character;
   userIdentity?: Pick<UserIdentity, "name" | "avatarUrl"> | null;
   fontStyle?: CSSProperties;
-  /** 顶部栏 iFloat 回桌面 */
-  onClose: () => void;
-  /** 顶部栏星星/铃铛切换页面 */
-  onSwitch: (view: DiaryBrandView) => void;
   onBack: () => void;
   onEdit: () => void;
   onDelete?: () => void;
@@ -1859,13 +1853,16 @@ function DiaryEntryDetailPage({ entry, character, userIdentity, fontStyle, onClo
 
   return (
     <section className="diary-app diary-entry-app diary-detail-page" style={fontStyle}>
-      <DiaryBrandHeader
-        view="entries"
-        onClose={onClose}
-        onSwitch={onSwitch}
-        avatarLabel="返回列表"
-        onAvatarClick={onBack}
-      />
+      {/* 详情页用普通顶部栏（返回箭头 + 居中标题），品牌栏只出现在两个列表页 */}
+      <header className="diary-app-header diary-entry-header diary-detail-header">
+        <button type="button" className="diary-icon-btn" onClick={onBack} aria-label="返回">
+          <ChevronLeft size={20} />
+        </button>
+        <div>
+          <h1>{`${authorName} • 日记`}</h1>
+        </div>
+        <span className="diary-header-spacer" />
+      </header>
 
       <div className="diary-detail-scroll">
         <article className="diary-flat-card diary-detail-card">
