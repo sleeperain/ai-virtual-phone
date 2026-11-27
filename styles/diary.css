@@ -4756,18 +4756,19 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 12px 16px 94px;
+  /* 顶部不留白：列表卡上边线直接贴住页签行的下边线 */
+  padding: 0 16px 94px;
   background: transparent;
   -webkit-overflow-scrolling: touch;
 }
 
-/* 条目白卡：宽度与输入卡片一致，圆角 + 细投影，条目之间用细分割线 */
+/* 条目白卡：宽度与输入卡片一致；上沿与页签行下边线完全贴合，所以上边不圆角 */
 .diary-hub-entries {
   display: flex;
   flex-direction: column;
   width: 100%;
   background: #ffffff;
-  border-radius: 8px;
+  border-radius: 0 0 8px 8px;
   overflow: hidden;
   box-shadow: 0 1px 3px rgba(24, 30, 34, 0.06);
 }
@@ -4856,7 +4857,9 @@
   grid-column: 2;
   grid-row: 1;
   width: 100%;
-  min-height: 30px;
+  /* 收起态也要够高，像一条正经输入栏 */
+  min-height: 48px;
+  padding: 11px 0;
   border: 0;
   background: transparent;
   color: #252525;
@@ -4866,12 +4869,12 @@
   resize: none;
   outline: none;
   box-sizing: border-box;
-  padding: 0;
 }
 
 .diary-hub-compose.is-expanded .diary-hub-compose-body {
   grid-row: 3;
   min-height: 76px;
+  padding: 0;
 }
 
 .diary-hub-compose-body::placeholder {
@@ -5022,8 +5025,9 @@
   box-sizing: border-box;
   background: rgba(248, 249, 250, 0.92);
   border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 8px;
-  /* 不留外边距：这一行的下边线就是列表滚动的起点 */
+  /* 只圆上面两个角：下沿要和列表卡的上边线贴合 */
+  border-radius: 8px 8px 0 0;
+  /* 不留外边距：这一行的下边线就是列表卡的上边线 */
   margin: 0;
   overflow: hidden;
 }
