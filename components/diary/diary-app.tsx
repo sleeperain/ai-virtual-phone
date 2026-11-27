@@ -1,122 +1,39 @@
 "use client";
 
 import { useState } from "react";
-import { BookOpenText, Bookmark, ChevronLeft, StickyNote } from "lucide-react";
 
 import { DiaryEntriesApp } from "./diary-entries-app";
 import { MomentsApp } from "./moments-app";
-import { NoteWallApp } from "./note-wall-app";
+import type { DiaryBrandView } from "./diary-brand-header";
 
 type DiaryAppProps = {
   onClose: () => void;
   onNotice?: (message: string) => void;
 };
 
-type DiaryView = "home" | "entries" | "moments" | "notewall";
-
-const NOTE_WALL_UI_ENABLED = false;
-
+/**
+ * 手记 App 的入口：不再有「手记首页」那张卡片列表页，
+ * 打开就直接进 TA的手记；和片刻纪事之间用顶部栏的铃铛 / 星星切换。
+ */
 export function DiaryApp({ onClose, onNotice }: DiaryAppProps) {
-  const [view, setView] = useState<DiaryView>("home");
-  const todayLabel = new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "2-digit",
-  }).format(new Date()).toUpperCase();
-
-  if (NOTE_WALL_UI_ENABLED && view === "notewall") {
-    return <NoteWallApp onBack={() => setView("home")} onNotice={onNotice} />;
-  }
-
-  if (view === "entries") {
-    return <DiaryEntriesApp kind="character" onBack={() => setView("home")} onNotice={onNotice} />;
-  }
+  const [view, setView] = useState<DiaryBrandView>("entries");
 
   if (view === "moments") {
-    return <MomentsApp onBack={() => setView("home")} onNotice={onNotice} />;
+    return (
+      <MomentsApp
+        onClose={onClose}
+        onSwitch={setView}
+        onNotice={onNotice}
+      />
+    );
   }
 
   return (
-    <section className="diary-app">
-      <header className="diary-app-header">
-        <button type="button" className="diary-icon-btn" onClick={onClose} aria-label="返回桌面">
-          <ChevronLeft size={20} />
-        </button>
-        <div>
-          <h1>手记</h1>
-          <p>记录角色留下的话</p>
-        </div>
-        <span className="diary-header-spacer" />
-      </header>
-
-      <main className="diary-home">
-        <button type="button" className="diary-feature-card diary-feature-card-entry" onClick={() => setView("entries")}>
-          <span className="diary-feature-punches diary-feature-punches-left" aria-hidden="true" />
-          <span className="diary-feature-punches diary-feature-punches-right" aria-hidden="true" />
-          <span className="diary-feature-card-head">
-            <span className="diary-feature-label">THEIR DIARY</span>
-            <span className="diary-feature-number">{todayLabel}</span>
-          </span>
-          <span className="diary-feature-main">
-            <span className="diary-feature-icon">
-              <BookOpenText size={20} strokeWidth={1.55} />
-            </span>
-            <span>
-              <strong>TA的日记</strong>
-              <em>角色写下的纸页和片段</em>
-            </span>
-          </span>
-          <span className="diary-feature-bottom" aria-hidden="true">
-            <span className="diary-feature-barcode" />
-            <span className="diary-feature-weather">SUNNY 24C / HUM 62%</span>
-          </span>
-        </button>
-
-        <button type="button" className="diary-feature-card diary-feature-card-entry" onClick={() => setView("moments")}>
-          <span className="diary-feature-punches diary-feature-punches-left" aria-hidden="true" />
-          <span className="diary-feature-punches diary-feature-punches-right" aria-hidden="true" />
-          <span className="diary-feature-card-head">
-            <span className="diary-feature-label">OUR DIARY</span>
-            <span className="diary-feature-number">{todayLabel}</span>
-          </span>
-          <span className="diary-feature-main">
-            <span className="diary-feature-icon">
-              <Bookmark size={20} strokeWidth={1.55} />
-            </span>
-            <span>
-              <strong>片刻纪事</strong>
-              <em>我们写下的纸页和片段</em>
-            </span>
-          </span>
-          <span className="diary-feature-bottom" aria-hidden="true">
-            <span className="diary-feature-barcode" />
-            <span className="diary-feature-weather">MOMENTS / BETWEEN US</span>
-          </span>
-        </button>
-
-        {NOTE_WALL_UI_ENABLED ? (
-          <button type="button" className="diary-feature-card diary-feature-card-primary" onClick={() => setView("notewall")}>
-            <span className="diary-feature-punches diary-feature-punches-left" aria-hidden="true" />
-            <span className="diary-feature-punches diary-feature-punches-right" aria-hidden="true" />
-            <span className="diary-feature-card-head">
-              <span className="diary-feature-label">NOTES</span>
-              <span className="diary-feature-number">{todayLabel}</span>
-            </span>
-            <span className="diary-feature-main">
-              <span className="diary-feature-icon">
-                <StickyNote size={20} strokeWidth={1.55} />
-              </span>
-              <span>
-                <strong>便签墙</strong>
-                <em>公开贴上的心情和留言</em>
-              </span>
-            </span>
-            <span className="diary-feature-bottom" aria-hidden="true">
-              <span className="diary-feature-barcode" />
-              <span className="diary-feature-weather">CLOUDY 22C / HUM 68%</span>
-            </span>
-          </button>
-        ) : null}
-      </main>
-    </section>
+    <DiaryEntriesApp
+      kind="character"
+      onClose={onClose}
+      onSwitch={setView}
+      onNotice={onNotice}
+    />
   );
 }

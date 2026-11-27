@@ -18,7 +18,7 @@ import {
   WandSparkles,
   X,
 } from "lucide-react";
-import { DotsThree } from "@phosphor-icons/react";
+
 
 import { loadCharacters } from "@/lib/character-storage";
 import type { Character } from "@/lib/character-types";
@@ -60,6 +60,7 @@ import { inheritedCharacterAppApiLabel, loadCharacterAppApiId } from "@/lib/app-
 import { loadApiConfigs, resolveUserIdentity } from "@/lib/settings-storage";
 import type { UserIdentity } from "@/components/settings/user-identity";
 import { AppApiPickerDialog } from "@/components/settings/app-api-picker-dialog";
+import { DiaryBrandHeader, type DiaryBrandView } from "./diary-brand-header";
 import { useDiaryFont } from "./use-diary-font";
 import { useDragToTrash } from "./use-drag-to-trash";
 
@@ -114,7 +115,10 @@ function sortEntriesByTime(entries: DiaryEntry[]): DiaryEntry[] {
 type DiaryEntriesAppProps = {
   /** "character" = TA的日记（角色自己写，AI 生成）；"user" = 我的日记（用户手写，给角色看） */
   kind: DiaryEntryAuthorType;
-  onBack: () => void;
+  /** 顶部栏 iFloat 点了回桌面 */
+  onClose: () => void;
+  /** 顶部栏星星/铃铛在两个页面间切换 */
+  onSwitch: (view: DiaryBrandView) => void;
   onNotice?: (message: string) => void;
 };
 
@@ -174,7 +178,7 @@ function DiaryWritingStatus({ label = "写入中" }: { label?: string }) {
   );
 }
 
-export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps) {
+export function DiaryEntriesApp({ kind, onClose, onSwitch, onNotice }: DiaryEntriesAppProps) {
   const [entries, setEntries] = useState<DiaryEntry[]>([]);
   const [characters, setCharacters] = useState<Character[]>([]);
   const [settings, setSettings] = useState<DiaryEntryTimerSettings>(() => loadDiaryEntryTimerSettings());
@@ -495,6 +499,8 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
           character={characters.find(character => character.id === activeEntry.characterId)}
           userIdentity={userIdentity}
           fontStyle={font.style}
+          onClose={onClose}
+          onSwitch={onSwitch}
           onBack={() => setActiveEntry(null)}
           onEdit={() => setComposeTarget({ mode: "edit", entry: activeEntry })}
           onDelete={() => {
@@ -524,50 +530,35 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
           正在生成日记{generatingCharacterIds.length > 1 ? `（${generatingCharacterIds.length} 篇）` : ""}…
         </div>
       )}
-      <header className="diary-app-header diary-entry-header">
+      <input
+        ref={fontFileRef}
+        type="file"
+        accept=".ttf,.otf,.woff,.woff2,font/*,application/font-woff,application/font-woff2"
+        className="hidden"
+        onChange={font.upload}
+      />
+      <DiaryBrandHeader
+        view="entries"
+        onClose={onClose}
+        onSwitch={onSwitch}
+        avatarLabel={tab === "mine" ? "聊天回应设置" : "日记设置"}
+        onAvatarClick={() => {
+          // 头像取代了原来的「…」菜单：「日记」页签管我写的日记怎么被回应；「朋友」页签管TA什么时候写、用哪个 API
+          if (tab === "mine") setReplySettingsOpen(true);
+          else if (activeBook) setBookSettingsOpen(true);
+          else setTimerSettingsOpen(true);
+        }}
+      >
         <button
           type="button"
-          className="diary-icon-btn"
-          onClick={() => (kind === "user" && activeBook ? setActiveCharacterId(null) : onBack())}
-          aria-label="返回"
+          className="note-wall-menu-btn diary-font-upload-btn"
+          onClick={() => setFontPanelOpen(true)}
+          aria-label="日记字体设置"
+          title="日记字体设置"
         >
-          <ChevronLeft size={20} />
+          <span className="diary-font-upload-mark" aria-hidden="true">Aa</span>
         </button>
-        <div>
-          <h1>手记</h1>
-        </div>
-        <input
-          ref={fontFileRef}
-          type="file"
-          accept=".ttf,.otf,.woff,.woff2,font/*,application/font-woff,application/font-woff2"
-          className="hidden"
-          onChange={font.upload}
-        />
-        <span className="diary-entry-header-actions">
-          <button
-            type="button"
-            className="note-wall-menu-btn diary-font-upload-btn"
-            onClick={() => setFontPanelOpen(true)}
-            aria-label="日记字体设置"
-            title="日记字体设置"
-          >
-            <span className="diary-font-upload-mark" aria-hidden="true">Aa</span>
-          </button>
-          <button
-            type="button"
-            className="note-wall-menu-btn"
-            onClick={() => {
-              // 「日记」页签管我写的日记怎么被回应；「朋友」页签管TA什么时候写、用哪个 API
-              if (tab === "mine") setReplySettingsOpen(true);
-              else if (activeBook) setBookSettingsOpen(true);
-              else setTimerSettingsOpen(true);
-            }}
-            aria-label={tab === "mine" ? "聊天回应设置" : "日记设置"}
-          >
-            <DotsThree size={28} weight="bold" />
-          </button>
-        </span>
-      </header>
+      </DiaryBrandHeader>
 
       <main className="diary-entry-main diary-hub-main">
         {/* 不参与滚动的工具条：输入卡片 + 按钮行 + 三个页签 */}
@@ -1840,11 +1831,15 @@ function CharacterAvatarGrid({ characters, selectedIds, busyIds, disabled, onTog
 }
 
 /** 日记详情：独立整页，顶部栏沿用「TA的手记」那套，下面是完整内容的日记卡片 */
-function DiaryEntryDetailPage({ entry, character, userIdentity, fontStyle, onBack, onEdit, onDelete }: {
+function DiaryEntryDetailPage({ entry, character, userIdentity, fontStyle, onClose, onSwitch, onBack, onEdit, onDelete }: {
   entry: DiaryEntry;
   character?: Character;
   userIdentity?: Pick<UserIdentity, "name" | "avatarUrl"> | null;
   fontStyle?: CSSProperties;
+  /** 顶部栏 iFloat 回桌面 */
+  onClose: () => void;
+  /** 顶部栏星星/铃铛切换页面 */
+  onSwitch: (view: DiaryBrandView) => void;
   onBack: () => void;
   onEdit: () => void;
   onDelete?: () => void;
@@ -1864,15 +1859,13 @@ function DiaryEntryDetailPage({ entry, character, userIdentity, fontStyle, onBac
 
   return (
     <section className="diary-app diary-entry-app diary-detail-page" style={fontStyle}>
-      <header className="diary-app-header diary-entry-header diary-detail-header">
-        <button type="button" className="diary-icon-btn" onClick={onBack} aria-label="返回">
-          <ChevronLeft size={20} />
-        </button>
-        <div>
-          <h1>{`${authorName} • 日记`}</h1>
-        </div>
-        <span className="diary-header-spacer" />
-      </header>
+      <DiaryBrandHeader
+        view="entries"
+        onClose={onClose}
+        onSwitch={onSwitch}
+        avatarLabel="返回列表"
+        onAvatarClick={onBack}
+      />
 
       <div className="diary-detail-scroll">
         <article className="diary-flat-card diary-detail-card">

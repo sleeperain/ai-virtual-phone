@@ -395,6 +395,67 @@
   border-bottom: 1px solid rgba(0, 0, 0, 0.16);
 }
 
+/* ---- 手记 / 片刻纪事共用的品牌顶部栏 ---- */
+
+.diary-brand-header {
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* 左侧 iFloat：代替原来的返回按钮，字号约占所在行高度的 3/4 */
+.diary-brand-mark {
+  flex: 0 0 auto;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: #16161a;
+  font-family: var(--app-font-family);
+  /* 行高 42px 的 3/4 ≈ 31px */
+  font-size: calc(30px * var(--app-text-scale, 1));
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.8px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.diary-brand-mark:active {
+  opacity: 0.6;
+}
+
+/* 星星 / 铃铛：当前页面对应的那个高亮成主题蓝 */
+.diary-brand-nav.is-active {
+  color: #8fb2c8;
+}
+
+/* 最右侧的圆形头像（取代原来的「…」菜单） */
+.diary-brand-avatar {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  margin-left: 2px;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 50%;
+  overflow: hidden;
+  background: #f0f2f5;
+  color: #8e8e93;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.diary-brand-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.diary-brand-avatar:active {
+  opacity: 0.7;
+}
+
 .diary-entry-app {
   --diary-entry-font-family: "NoteWall Ximai", var(--app-font-family);
   --diary-entry-font-scale: 1;
@@ -5164,6 +5225,34 @@
 .diary-entry-main.diary-moment-main {
   /* 顶部不留白，滚动可视区上沿正好是顶部栏下框线 */
   padding: 0 16px 94px;
+}
+
+/* 合并时的操作条（原顶部栏的取消/分享挪到这里） */
+.diary-moment-pick-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 40px;
+  margin-top: 8px;
+  padding: 0 4px;
+  font-size: calc(13.5px * var(--app-text-scale, 1));
+  color: rgba(37, 37, 37, 0.66);
+}
+
+.diary-moment-pick-bar button {
+  border: 0;
+  background: transparent;
+  color: #8fb2c8;
+  font: inherit;
+  font-size: inherit;
+  padding: 4px 2px;
+  cursor: pointer;
+}
+
+.diary-moment-pick-bar button:disabled {
+  color: rgba(37, 37, 37, 0.28);
+  cursor: default;
 }
 
 /* 标签行：贴着内容一起滚，与列表卡同宽 */

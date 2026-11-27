@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Bookmark, Bot, ChevronLeft, Clock3, Heart, Layers, Share, Trash2, X } from "lucide-react";
-import { DotsThree } from "@phosphor-icons/react";
 
 import { ReadingShareDialog } from "@/components/reading/reading-share-dialog";
 import { ContentDialog } from "@/components/ui/modal";
@@ -29,11 +28,15 @@ import {
 } from "@/lib/moment-storage";
 import { READING_AVATAR_MAX_SIZE, compressReadingImage } from "@/lib/reading-image";
 import { resolveUserIdentity } from "@/lib/settings-storage";
+import { DiaryBrandHeader, type DiaryBrandView } from "./diary-brand-header";
 import { useDiaryFont } from "./use-diary-font";
 import { useDragToTrash } from "./use-drag-to-trash";
 
 type MomentsAppProps = {
-  onBack: () => void;
+  /** 顶部栏 iFloat 点了回桌面 */
+  onClose: () => void;
+  /** 顶部栏星星/铃铛在两个页面间切换 */
+  onSwitch: (view: DiaryBrandView) => void;
   onNotice?: (message: string) => void;
 };
 
@@ -132,7 +135,7 @@ function clipText(value: string, maxLength: number): string {
   return text.length > maxLength ? `${text.slice(0, maxLength)}…` : text;
 }
 
-export function MomentsApp({ onBack, onNotice }: MomentsAppProps) {
+export function MomentsApp({ onClose, onSwitch, onNotice }: MomentsAppProps) {
   const [moments, setMoments] = useState<Moment[]>([]);
   const [characters, setCharacters] = useState<Character[]>([]);
   const [activeCharacterId, setActiveCharacterId] = useState<string | null>(null);
@@ -346,57 +349,41 @@ export function MomentsApp({ onBack, onNotice }: MomentsAppProps) {
 
   return (
     <section className={`diary-app diary-entry-app ${trash.drag ? "is-entry-dragging" : ""}`} style={{ ...font.style, ...userFont.style, ...charFont.style }}>
-      <header className="diary-app-header diary-entry-header">
-        {picking ? (
-          <button type="button" className="moment-pick-action" onClick={stopPicking}>取消</button>
-        ) : (
-          <button
-            type="button"
-            className="diary-icon-btn"
-            onClick={() => (activeBook ? setActiveCharacterId(null) : onBack())}
-            aria-label="返回"
-          >
-            <ChevronLeft size={20} />
-          </button>
-        )}
-        <div>
-          <h1>{picking ? `已选 ${pickedIds.length} 段` : activeBook ? activeBook.characterName : "片刻纪事"}</h1>
-          <p>{picking && activeBook ? activeBook.characterName : activeBook ? `共 ${activeBook.moments.length} 段` : "每个角色一本，点开翻阅"}</p>
-        </div>
-        <input
-          ref={fontFileRef}
-          type="file"
-          accept=".ttf,.otf,.woff,.woff2,font/*,application/font-woff,application/font-woff2"
-          className="hidden"
-          onChange={event => void fontsByKind[fontTargetRef.current].upload(event)}
-        />
-        {picking ? (
-          <button type="button" className="moment-pick-action" disabled={pickedIds.length === 0} onClick={sharePicked}>分享</button>
-        ) : (
-        <span className="diary-entry-header-actions">
-          <button
-            type="button"
-            className="note-wall-menu-btn diary-font-upload-btn"
-            onClick={() => setFontPanelOpen(true)}
-            aria-label="片刻纪事字体设置"
-            title="片刻纪事字体设置"
-          >
-            <span className="diary-font-upload-mark" aria-hidden="true">Aa</span>
-          </button>
-          <button
-            type="button"
-            className="note-wall-menu-btn"
-            onClick={() => setProfilePanelOpen(true)}
-            aria-label={activeBook ? `${activeBook.characterName} 的署名` : "署名设置"}
-          >
-            <DotsThree size={28} weight="bold" />
-          </button>
-        </span>
-        )}
-      </header>
+      <input
+        ref={fontFileRef}
+        type="file"
+        accept=".ttf,.otf,.woff,.woff2,font/*,application/font-woff,application/font-woff2"
+        className="hidden"
+        onChange={event => void fontsByKind[fontTargetRef.current].upload(event)}
+      />
+      <DiaryBrandHeader
+        view="moments"
+        onClose={onClose}
+        onSwitch={onSwitch}
+        avatarLabel={activeBook ? `${activeBook.characterName} 的署名` : "署名设置"}
+        onAvatarClick={() => setProfilePanelOpen(true)}
+      >
+        <button
+          type="button"
+          className="note-wall-menu-btn diary-font-upload-btn"
+          onClick={() => setFontPanelOpen(true)}
+          aria-label="片刻纪事字体设置"
+          title="片刻纪事字体设置"
+        >
+          <span className="diary-font-upload-mark" aria-hidden="true">Aa</span>
+        </button>
+      </DiaryBrandHeader>
 
       {/* Bookmark 标签跟着内容一起滚：整块 main 就是滚动区，上沿从顶部栏下边线开始 */}
       <main ref={mainRef} className="diary-entry-main diary-moment-main">
+        {/* 合并时顶部栏换成这条：取消 / 已选几段 / 分享 */}
+        {picking ? (
+          <div className="diary-moment-pick-bar">
+            <button type="button" onClick={stopPicking}>取消</button>
+            <span>{`已选 ${pickedIds.length} 段`}</span>
+            <button type="button" disabled={pickedIds.length === 0} onClick={sharePicked}>分享</button>
+          </div>
+        ) : null}
         <div className="diary-moment-label-row">
           <span>Bookmark</span>
         </div>
@@ -436,7 +423,8 @@ export function MomentsApp({ onBack, onNotice }: MomentsAppProps) {
                           </div>
                         </div>
 
-                        <div className="diary-flat-card-body">
+                        {/* 列表里最多六行，全文进详情页看 */}
+                        <div className="diary-flat-card-body is-clamped">
                           {contentText}
                         </div>
 
@@ -484,6 +472,8 @@ export function MomentsApp({ onBack, onNotice }: MomentsAppProps) {
           assetUrls={assetUrls}
           character={characters.find(item => item.id === activeMoment.moment.characterId)}
           fontStyle={{ ...font.style, ...userFont.style, ...charFont.style }}
+          onClose={onClose}
+          onSwitch={onSwitch}
           onBack={() => setActiveMoment(null)}
           onShare={() => {
             if (activeMoment.moment.source === "chat") void openChatShot(activeMoment.moment);
@@ -709,13 +699,17 @@ function MomentCardContent({ moment, assetUrls }: { moment: Moment; assetUrls: R
 }
 
 /** 片刻纪事详情：复用手记详情页那套版式（独立整页 + 卡片 + 底部按钮行） */
-function MomentDetailPage({ moment, tone, assetUrls, character, fontStyle, onBack, onDelete, onShare }: {
+function MomentDetailPage({ moment, tone, assetUrls, character, fontStyle, onClose, onSwitch, onBack, onDelete, onShare }: {
   moment: Moment;
   /** 外面那张纸条的颜色：聊天气泡跟着它配色 */
   tone: PaperTone;
   assetUrls: Record<string, string>;
   character?: Character;
   fontStyle?: CSSProperties;
+  /** 顶部栏 iFloat 回桌面 */
+  onClose: () => void;
+  /** 顶部栏星星/铃铛切换页面 */
+  onSwitch: (view: DiaryBrandView) => void;
   onBack: () => void;
   onDelete: () => void;
   onShare: () => void;
@@ -730,15 +724,13 @@ function MomentDetailPage({ moment, tone, assetUrls, character, fontStyle, onBac
 
   return (
     <section className="diary-app diary-entry-app diary-detail-page is-overlay" style={fontStyle}>
-      <header className="diary-app-header diary-entry-header diary-detail-header">
-        <button type="button" className="diary-icon-btn" onClick={onBack} aria-label="返回">
-          <ChevronLeft size={20} />
-        </button>
-        <div>
-          <h1>{`${authorName} • 片刻`}</h1>
-        </div>
-        <span className="diary-header-spacer" />
-      </header>
+      <DiaryBrandHeader
+        view="moments"
+        onClose={onClose}
+        onSwitch={onSwitch}
+        avatarLabel="返回列表"
+        onAvatarClick={onBack}
+      />
 
       <div className="diary-detail-scroll">
         <article className="diary-flat-card diary-detail-card">
