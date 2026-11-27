@@ -52,6 +52,14 @@ const OWNS_SCALE: Record<DiaryFontKind, boolean> = {
 /** 没上传时手记默认的手写体 */
 const DEFAULT_FAMILY = `"NoteWall Ximai"`;
 
+/** 字体在别处（用户设置页）改过：同一 kind 的 hook 收到后重读存储，页面不用重进才生效 */
+const DIARY_FONT_UPDATED_EVENT = "diary-font-updated";
+
+function announceFontUpdate(kind: DiaryFontKind): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(DIARY_FONT_UPDATED_EVENT, { detail: { kind } }));
+}
+
 export function useDiaryFont(kind: DiaryFontKind, notify: (message: string) => void) {
   const [assetId, setAssetId] = useState<string | null>(() => loadDiaryEntryFontAssetId(kind));
   const [dataUrl, setDataUrl] = useState<string | null>(null);
@@ -82,6 +90,18 @@ export function useDiaryFont(kind: DiaryFontKind, notify: (message: string) => v
     return () => { cancelled = true; };
   }, [assetId, kind, label, notify]);
 
+  // 用户设置页用的是另一批 hook 实例，它改完字体会发事件过来，这里跟着重读一次
+  useEffect(() => {
+    const sync = (event: Event) => {
+      const detail = (event as CustomEvent<{ kind?: DiaryFontKind } | undefined>).detail;
+      if (detail?.kind && detail.kind !== kind) return;
+      setAssetId(loadDiaryEntryFontAssetId(kind));
+      setScale(loadDiaryEntryFontScale(kind));
+    };
+    window.addEventListener(DIARY_FONT_UPDATED_EVENT, sync);
+    return () => window.removeEventListener(DIARY_FONT_UPDATED_EVENT, sync);
+  }, [kind]);
+
   useEffect(() => {
     const styleId = FONT_STYLE_ID[kind];
     let node = document.getElementById(styleId) as HTMLStyleElement | null;
@@ -109,6 +129,7 @@ export function useDiaryFont(kind: DiaryFontKind, notify: (message: string) => v
       saveDiaryEntryFontAssetId(nextId, kind);
       setAssetId(nextId);
       setDataUrl(url);
+      announceFontUpdate(kind);
       notify(`${label}已上传：${file.name}`);
     } catch (error) {
       notify(`${label}上传失败：` + String(error));
@@ -129,6 +150,7 @@ export function useDiaryFont(kind: DiaryFontKind, notify: (message: string) => v
       saveDiaryEntryFontScale(1, kind);
       setScale(1);
     }
+    announceFontUpdate(kind);
     notify(`已恢复默认${label}`);
   }, [kind, label, notify]);
 

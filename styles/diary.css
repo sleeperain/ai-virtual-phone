@@ -480,6 +480,47 @@
   opacity: 0.7;
 }
 
+/* 头像下方的方形小菜单（圆角 2px），挂在右侧这一排的右边缘下面 */
+.diary-brand-avatar-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 19;
+}
+
+.diary-brand-avatar-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 20;
+  min-width: 104px;
+  padding: 4px;
+  border-radius: 2px;
+  background: #ffffff;
+  box-shadow: 0 8px 22px rgba(24, 30, 34, 0.16), 0 0 0 1px rgba(24, 30, 34, 0.06);
+  display: grid;
+  gap: 2px;
+}
+
+.diary-brand-avatar-menu > button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: rgba(37, 37, 37, 0.8);
+  font-family: var(--app-font-family);
+  font-size: calc(12.5px * var(--app-text-scale, 1));
+  text-align: left;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.diary-brand-avatar-menu > button:active {
+  background: rgba(48, 45, 40, 0.06);
+}
+
 .diary-entry-app {
   --diary-entry-font-family: "NoteWall Ximai", var(--app-font-family);
   --diary-entry-font-scale: 1;
@@ -676,10 +717,6 @@
   background-color: #f2f4f7;
 }
 
-.diary-flat-card.is-drag-source {
-  opacity: 0.35;
-}
-
 .diary-flat-card-inner {
   display: flex;
   flex-direction: column;
@@ -853,15 +890,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-.diary-entry-app.is-entry-dragging,
-.diary-entry-app.is-entry-dragging .diary-entry-card,
-.diary-entry-app.is-entry-dragging .diary-entry-main {
-  touch-action: none;
-  overscroll-behavior: none;
-  user-select: none;
-  -webkit-user-select: none;
-}
-
 .diary-entry-list {
   display: grid;
   gap: 18px;
@@ -906,26 +934,6 @@
 .diary-entry-card:active {
   transform: translateY(1px) rotate(0deg) scale(0.992);
   box-shadow: 0 2px 5px rgba(56, 45, 27, 0.14), 0 1px 1px rgba(56, 45, 27, 0.08);
-}
-
-.diary-entry-card.is-drag-source {
-  opacity: 0.28;
-  transform: rotate(0deg) scale(0.98);
-}
-
-.diary-entry-drag-ghost {
-  position: fixed;
-  z-index: 70;
-  max-width: min(340px, calc(100vw - 32px));
-  pointer-events: none;
-  opacity: 0.96;
-  transform: translate(-50%, -50%) rotate(0deg) scale(1.02);
-  box-shadow: 0 8px 20px rgba(56, 45, 27, 0.18), 0 2px 5px rgba(56, 45, 27, 0.12);
-  transition: none;
-}
-
-.diary-entry-drag-ghost:active {
-  transform: translate(-50%, -50%) rotate(0deg) scale(1.02);
 }
 
 .diary-entry-card::before {
@@ -1321,37 +1329,6 @@
 
 .diary-entry-card-meta time {
   flex: 0 0 auto;
-}
-
-.diary-entry-trash-bin {
-  position: absolute;
-  left: 50%;
-  bottom: calc(34px + env(safe-area-inset-bottom, 0px));
-  z-index: 65;
-  width: 64px;
-  height: 64px;
-  border-radius: 50%;
-  background: #1a1a1c;
-  color: #ffffff;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 6px 14px rgba(26, 26, 28, 0.2), 0 1px 2px rgba(26, 26, 28, 0.12);
-  opacity: 0;
-  pointer-events: none;
-  transform: translateX(-50%) translateY(12px) scale(0.86);
-  transition: opacity 0.18s ease, transform 0.2s cubic-bezier(.2,.8,.2,1), background-color 0.16s ease, box-shadow 0.16s ease;
-}
-
-.diary-entry-trash-bin.is-visible {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0) scale(1);
-}
-
-.diary-entry-trash-bin.is-over {
-  background: #c94040;
-  box-shadow: 0 8px 18px rgba(201, 64, 64, 0.34), 0 1px 2px rgba(92, 24, 24, 0.16);
-  transform: translateX(-50%) translateY(-8px) scale(1.12);
 }
 
 .diary-entry-empty {
@@ -5616,4 +5593,255 @@
 
 .diary-detail-more-menu > button.is-danger {
   color: #c94040;
+}
+
+/* ---- 用户设置页（定时 / 隐私 / 字体 / 署名） ---- */
+
+/* 整页沿用片刻纪事条目页：标签行 + 页签固定，只有下方的白卡内容滚动 */
+.diary-entry-main.diary-settings-main {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0 16px 0;
+}
+
+/* 标签行左边加一枚返回，右边还是「用户设置」四个字 */
+.diary-settings-label-row {
+  gap: 2px;
+  padding-left: 4px;
+}
+
+.diary-settings-back {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #3a3a3c;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.diary-settings-back:active {
+  opacity: 0.6;
+}
+
+/* 四个页签等分宽度（复用 .diary-hub-tabs / .diary-hub-tab 的等分与选中变蓝） */
+.diary-settings-tabs {
+  flex: 0 0 auto;
+}
+
+/* 页签下沿就是内容卡的上边线，这里只负责滚动 */
+.diary-settings-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 0 calc(94px + var(--safe-area-bottom, 0px));
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 内容白卡：上边不圆角，贴着页签下边线 */
+.diary-settings-body {
+  border-radius: 0 0 8px 8px;
+  padding: 16px;
+}
+
+.diary-settings-section {
+  display: grid;
+  gap: 10px;
+}
+
+.diary-settings-section + .diary-settings-section {
+  margin-top: 18px;
+}
+
+/* 段落之间那条分隔线，和日记本设置的「定时角色」区一致 */
+.diary-settings-body .diary-settings-section + .diary-entry-character-section {
+  border-top: 1px solid rgba(67, 54, 35, 0.1);
+  padding-top: 16px;
+  margin-top: 16px;
+}
+
+.diary-settings-section-title {
+  font-size: calc(15px * var(--app-text-scale, 1));
+  font-weight: 600;
+  color: #3a3a3c;
+  font-family: var(--app-font-family);
+}
+
+.diary-settings-hint {
+  margin: 0;
+  font-family: var(--app-font-family);
+  font-size: calc(12px * var(--app-text-scale, 1));
+  line-height: 1.5;
+  color: rgba(37, 37, 37, 0.5);
+}
+
+/* 设置页里的表单控件换成页面这套中性色，不再用纸感弹窗那套暖色 */
+.diary-settings-body .diary-entry-toggle-row,
+.diary-settings-body .diary-entry-number-field {
+  min-height: 46px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 4px;
+  background: #f8f9fa;
+  font-family: var(--app-font-family);
+  font-size: calc(13.5px * var(--app-text-scale, 1));
+  color: rgba(37, 37, 37, 0.82);
+}
+
+.diary-settings-body .diary-entry-number-field input {
+  border-bottom-color: rgba(0, 0, 0, 0.28);
+  color: #252525;
+  font-size: calc(13.5px * var(--app-text-scale, 1));
+}
+
+.diary-settings-body .diary-entry-section-title strong {
+  font-family: var(--app-font-family);
+  font-size: calc(14px * var(--app-text-scale, 1));
+  color: rgba(37, 37, 37, 0.82);
+}
+
+.diary-settings-body .diary-entry-section-title span {
+  font-family: var(--app-font-family);
+  font-size: calc(12px * var(--app-text-scale, 1));
+  color: rgba(37, 37, 37, 0.44);
+}
+
+.diary-settings-body .diary-entry-character-section {
+  border-top-color: rgba(0, 0, 0, 0.08);
+}
+
+.diary-settings-body .diary-entry-setting-grid {
+  margin-bottom: 0;
+}
+
+.diary-settings-body .diary-entry-note {
+  margin-top: 14px;
+  font-family: var(--app-font-family);
+  font-size: calc(12px * var(--app-text-scale, 1));
+  color: rgba(37, 37, 37, 0.48);
+}
+
+/* 「隐私」页签：按角色单独设置那张小表 */
+.diary-settings-body .diary-reply-rule-row {
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 4px;
+  background: #f8f9fa;
+  font-family: var(--app-font-family);
+}
+
+.diary-settings-body .diary-reply-rule-row select,
+.diary-settings-body .diary-reply-rule-row input[type="number"] {
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+  background: #ffffff;
+  font-family: var(--app-font-family);
+  font-size: calc(12.5px * var(--app-text-scale, 1));
+  color: #252525;
+}
+
+.diary-settings-body .diary-reply-rule-person {
+  font-size: calc(13.5px * var(--app-text-scale, 1));
+  color: rgba(37, 37, 37, 0.82);
+}
+
+/* 「字体」页签：上传按钮、字号滑杆、三份字体行都用页面这套 */
+.diary-settings-body .diary-font-upload-action,
+.diary-settings-body .diary-font-reset-btn {
+  border-radius: 4px;
+  background: #f0f2f5;
+  color: #252525;
+  font-family: var(--app-font-family);
+  font-size: calc(13px * var(--app-text-scale, 1));
+}
+
+.diary-settings-body .diary-font-reset-btn {
+  background: transparent;
+  color: rgba(37, 37, 37, 0.58);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.1);
+}
+
+.diary-settings-body .diary-font-size-control {
+  margin: 0;
+  border-radius: 4px;
+  background: #f8f9fa;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+  font-family: var(--app-font-family);
+}
+
+.diary-settings-body .diary-font-size-control strong {
+  font-size: calc(13px * var(--app-text-scale, 1));
+  color: rgba(37, 37, 37, 0.82);
+}
+
+.diary-settings-body .diary-font-size-control em {
+  color: rgba(37, 37, 37, 0.44);
+}
+
+.diary-settings-body .diary-font-size-control input {
+  accent-color: #8fb2c8;
+}
+
+.diary-settings-body .moment-font-tiers {
+  margin-bottom: 0;
+}
+
+.diary-settings-body .moment-font-tier {
+  border-radius: 4px;
+  background: #f8f9fa;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+
+.diary-settings-body .moment-font-tier strong {
+  font-family: var(--app-font-family);
+  font-size: calc(13px * var(--app-text-scale, 1));
+  color: rgba(37, 37, 37, 0.82);
+}
+
+.diary-settings-body .moment-font-tier em {
+  color: rgba(37, 37, 37, 0.46);
+}
+
+.diary-settings-body .moment-font-tier button {
+  border-radius: 3px;
+  background: #eef0f3;
+  color: #252525;
+  font-family: var(--app-font-family);
+  font-size: calc(12px * var(--app-text-scale, 1));
+}
+
+/* 「署名」页签：分组标题和每行都用页面中性色 */
+.diary-settings-body .moment-profile-group-title {
+  color: rgba(37, 37, 37, 0.6);
+  border-bottom-color: rgba(0, 0, 0, 0.1);
+}
+
+.diary-settings-body .moment-profile-row {
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 4px;
+  background: #f8f9fa;
+}
+
+.diary-settings-body .moment-profile-avatar {
+  border-color: rgba(0, 0, 0, 0.1);
+  background: #eef0f3;
+  color: rgba(37, 37, 37, 0.6);
+}
+
+.diary-settings-body .moment-profile-fields > span {
+  color: rgba(37, 37, 37, 0.58);
+}
+
+.diary-settings-body .moment-profile-fields input {
+  border-bottom-color: rgba(0, 0, 0, 0.28);
+  color: #252525;
+}
+
+.diary-settings-body .moment-profile-reset {
+  color: rgba(37, 37, 37, 0.46);
 }

@@ -1,12 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import { Bookmark, Bot, ChevronLeft, Clock3, Heart, Share, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import { Bookmark, Bot, ChevronLeft, Clock3, Heart, Share, Trash2 } from "lucide-react";
 
 import { ReadingShareDialog } from "@/components/reading/reading-share-dialog";
 import { ContentDialog } from "@/components/ui/modal";
 import { downloadFile } from "@/lib/download-utils";
-import type { DiaryFontKind } from "@/lib/diary-entry-types";
 import { loadCharacters } from "@/lib/character-storage";
 import type { Character } from "@/lib/character-types";
 import {
@@ -18,16 +17,14 @@ import {
   loadMomentProfiles,
   loadMoments,
   momentUserOwner,
-  saveMomentAvatar,
-  saveMomentProfiles,
   type Moment,
   type MomentChatLine,
   type MomentProfileOwner,
   type MomentProfiles,
 } from "@/lib/moment-storage";
-import { READING_AVATAR_MAX_SIZE, compressReadingImage } from "@/lib/reading-image";
 import { resolveUserIdentity } from "@/lib/settings-storage";
 import { DiaryBrandHeader, type DiaryBrandView } from "./diary-brand-header";
+import { DiaryUserSettingsPage, type DiarySettingsTab } from "./diary-user-settings";
 import { useDiaryFont } from "./use-diary-font";
 
 type MomentsAppProps = {
@@ -78,9 +75,6 @@ function sourceLabel(moment: Moment): string {
 
 type PaperTone = "yellow" | "green" | "blue";
 
-/** 片刻纪事那三份字体 */
-type MomentFontKind = Extract<DiaryFontKind, "moment" | "moment-user" | "moment-char">;
-
 export function MomentsApp({ onClose, onSwitch, onNotice }: MomentsAppProps) {
   const [moments, setMoments] = useState<Moment[]>([]);
   const [characters, setCharacters] = useState<Character[]>([]);
@@ -92,14 +86,11 @@ export function MomentsApp({ onClose, onSwitch, onNotice }: MomentsAppProps) {
   // 聊天那几张纸上的小图（表情、转账、拍一拍……）：Blob → objectURL
   const [assetUrls, setAssetUrls] = useState<Record<string, string>>({});
   const [deleteCandidate, setDeleteCandidate] = useState<Moment | null>(null);
-  const [fontPanelOpen, setFontPanelOpen] = useState(false);
-  const [profilePanelOpen, setProfilePanelOpen] = useState(false);
+  /** 用户设置页（定时 / 隐私 / 字体 / 署名）：null = 没打开，否则是当前页签 */
+  const [settingsTab, setSettingsTab] = useState<DiarySettingsTab | null>(null);
   const [profiles, setProfiles] = useState<MomentProfiles>(() => ({ user: { name: "" }, characters: {}, userByCharacter: {} }));
   // 自己设的署名头像（阅读图片库里的 blob → objectURL），没设的不在这里
   const [profileAvatars, setProfileAvatars] = useState<Record<MomentProfileOwner, string>>({});
-  const fontFileRef = useRef<HTMLInputElement | null>(null);
-  /** 三份字体共用一个文件选择框，点了哪一份就传给哪一份 */
-  const fontTargetRef = useRef<MomentFontKind>("moment");
 
   const notify = useCallback((message: string) => {
     onNotice?.(message);
@@ -109,7 +100,6 @@ export function MomentsApp({ onClose, onSwitch, onNotice }: MomentsAppProps) {
   const font = useDiaryFont("moment", notify);
   const userFont = useDiaryFont("moment-user", notify);
   const charFont = useDiaryFont("moment-char", notify);
-  const fontsByKind = { moment: font, "moment-user": userFont, "moment-char": charFont } as const;
   /** 画分享图用的真实字体名：我 / 角色那份没传就是系统字体 */
   const speakerFonts = {
     user: userFont.hasCustomFont ? userFont.family : font.family,
@@ -238,32 +228,32 @@ export function MomentsApp({ onClose, onSwitch, onNotice }: MomentsAppProps) {
     return `${userSignature(characterId).name} · ${charSignature(characterId, fallbackName).name}`;
   }, [charSignature, userSignature]);
 
+  // 用户设置也是一整页：顶部栏品牌 + 「用户设置」标签行 + 四个等分页签
+  if (settingsTab) {
+    return (
+      <DiaryUserSettingsPage
+        view="moments"
+        tab={settingsTab}
+        onTabChange={setSettingsTab}
+        characters={characters}
+        onClose={onClose}
+        onSwitch={onSwitch}
+        onBack={() => setSettingsTab(null)}
+        onNotice={notify}
+      />
+    );
+  }
+
   return (
     <section className="diary-app diary-entry-app" style={{ ...font.style, ...userFont.style, ...charFont.style }}>
-      <input
-        ref={fontFileRef}
-        type="file"
-        accept=".ttf,.otf,.woff,.woff2,font/*,application/font-woff,application/font-woff2"
-        className="hidden"
-        onChange={event => void fontsByKind[fontTargetRef.current].upload(event)}
-      />
       <DiaryBrandHeader
         view="moments"
         onClose={onClose}
         onSwitch={onSwitch}
-        avatarLabel="署名设置"
-        onAvatarClick={() => setProfilePanelOpen(true)}
-      >
-        <button
-          type="button"
-          className="note-wall-menu-btn diary-font-upload-btn"
-          onClick={() => setFontPanelOpen(true)}
-          aria-label="片刻纪事字体设置"
-          title="片刻纪事字体设置"
-        >
-          <span className="diary-font-upload-mark" aria-hidden="true">Aa</span>
-        </button>
-      </DiaryBrandHeader>
+        avatarLabel="账户菜单"
+        // 头像下拉里的「设置」：所有设置都收在用户设置页的四个页签里了
+        onOpenSettings={() => setSettingsTab("timer")}
+      />
 
       {/* Bookmark 标签跟着内容一起滚：整块 main 就是滚动区，上沿从顶部栏下边线开始 */}
       <main className="diary-entry-main diary-moment-main">
@@ -323,24 +313,6 @@ export function MomentsApp({ onClose, onSwitch, onNotice }: MomentsAppProps) {
         </div>
       </main>
 
-      {fontPanelOpen ? (
-        <MomentFontPanel
-          tiers={[
-            { kind: "moment", title: "系统字体", hint: "其它所有的字", custom: font.hasCustomFont },
-            { kind: "moment-user", title: "我的字体", hint: "剧情、聊天里我说的话", custom: userFont.hasCustomFont },
-            { kind: "moment-char", title: "角色字体", hint: "聊天里角色说的话；分享图里可选", custom: charFont.hasCustomFont },
-          ]}
-          scale={font.scale}
-          onUpload={(kind) => {
-            fontTargetRef.current = kind;
-            fontFileRef.current?.click();
-          }}
-          onReset={kind => fontsByKind[kind].reset()}
-          onScaleChange={font.changeScale}
-          onClose={() => setFontPanelOpen(false)}
-        />
-      ) : null}
-
       {activeMoment ? (
         <MomentDetailPage
           moment={activeMoment.moment}
@@ -397,16 +369,6 @@ export function MomentsApp({ onClose, onSwitch, onNotice }: MomentsAppProps) {
           fonts={{ body: font.family, userAnnotation: font.family, charAnnotation: font.family }}
           speakerFonts={speakerFonts}
           onClose={() => setSharingMoment(null)}
-        />
-      ) : null}
-
-      {profilePanelOpen ? (
-        <MomentProfilePanel
-          characters={characters}
-          profiles={profiles}
-          avatars={profileAvatars}
-          onClose={() => setProfilePanelOpen(false)}
-          notify={notify}
         />
       ) : null}
 
@@ -580,199 +542,3 @@ function MomentDetailPage({ moment, tone, assetUrls, character, fontStyle, onBac
   );
 }
 
-/** 片刻纪事的字体：系统 / 我 / 角色三份各自上传，字号共用一个 */
-function MomentFontPanel({ tiers, scale, onUpload, onReset, onScaleChange, onClose }: {
-  tiers: Array<{ kind: MomentFontKind; title: string; hint: string; custom: boolean }>;
-  scale: number;
-  onUpload: (kind: MomentFontKind) => void;
-  onReset: (kind: MomentFontKind) => void;
-  onScaleChange: (scale: number) => void;
-  onClose: () => void;
-}) {
-  return (
-    <div className="nw-modal-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
-      <section className="diary-font-panel" onClick={event => event.stopPropagation()}>
-        <header>
-          <div>
-            <h2>片刻纪事字体</h2>
-            <p>我的、角色的没上传就和系统字体一样</p>
-          </div>
-          <button type="button" className="diary-icon-btn" onClick={onClose} aria-label="关闭">
-            <X size={18} />
-          </button>
-        </header>
-
-        <div className="moment-font-tiers">
-          {tiers.map(tier => (
-            <div key={tier.kind} className="moment-font-tier">
-              <span>
-                <strong>{tier.title}</strong>
-                <em>{tier.custom ? "已上传" : tier.kind === "moment" ? "默认手写体" : "跟系统字体"} · {tier.hint}</em>
-              </span>
-              <button type="button" onClick={() => onUpload(tier.kind)}>上传</button>
-              {tier.custom ? <button type="button" onClick={() => onReset(tier.kind)}>恢复</button> : null}
-            </div>
-          ))}
-        </div>
-
-        <label className="diary-font-size-control">
-          <span>
-            <strong>字号</strong>
-            <em>{Math.round(scale * 100)}%</em>
-          </span>
-          <input
-            type="range"
-            min="0.85"
-            max="1.25"
-            step="any"
-            value={scale}
-            onChange={event => onScaleChange(Number(event.target.value))}
-          />
-        </label>
-      </section>
-    </div>
-  );
-}
-
-/** 署名设置：按角色分别设置分享卡片上用的名字和头像（不填就退回角色卡 / 身份里的名字） */
-function MomentProfilePanel({ characters, profiles, avatars, onClose, notify }: {
-  characters: Character[];
-  profiles: MomentProfiles;
-  avatars: Record<MomentProfileOwner, string>;
-  onClose: () => void;
-  notify: (message: string) => void;
-}) {
-  const [draft, setDraft] = useState(profiles);
-  const save = (next: MomentProfiles) => {
-    setDraft(next);
-    saveMomentProfiles(next);
-  };
-  const setCharacterName = (characterId: string, name: string) => {
-    const characters = { ...draft.characters };
-    if (name.trim()) characters[characterId] = { name };
-    else delete characters[characterId];
-    save({ ...draft, characters });
-  };
-  const setBookUserName = (characterId: string, name: string) => {
-    const userByCharacter = { ...draft.userByCharacter };
-    if (name.trim()) userByCharacter[characterId] = { name };
-    else delete userByCharacter[characterId];
-    save({ ...draft, userByCharacter });
-  };
-  const pickAvatar = async (owner: MomentProfileOwner, file: File | null) => {
-    try {
-      await saveMomentAvatar(owner, file ? await compressReadingImage(file, READING_AVATAR_MAX_SIZE) : null);
-    } catch (error) {
-      notify("头像保存失败：" + String(error));
-    }
-  };
-
-  return (
-    <div className="nw-modal-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
-      <section className="diary-entry-settings" onClick={event => event.stopPropagation()}>
-        <header>
-          <div>
-            <h2>署名</h2>
-            <p>分享卡片上用的名字和头像。每个角色可以单独设，不填就用角色卡的名字。</p>
-          </div>
-          <button type="button" className="diary-icon-btn" onClick={onClose} aria-label="关闭">
-            <X size={18} />
-          </button>
-        </header>
-        <div className="moment-profile-list">
-          {/* 默认的「我」：某个角色没单独设时用它 */}
-          <div className="moment-profile-group">
-            <strong className="moment-profile-group-title">默认</strong>
-            <MomentProfileRow
-              label="我"
-              placeholder="不填就用当前账号名"
-              name={draft.user.name}
-              avatar={avatars.user}
-              initial="我"
-              onName={name => save({ ...draft, user: { name } })}
-              onAvatar={file => void pickAvatar("user", file)}
-            />
-          </div>
-
-          {/* 每个角色一组：这一段的署名 + 我在这本里的署名 */}
-          {characters.map(character => (
-            <div key={character.id} className="moment-profile-group">
-              <strong className="moment-profile-group-title">{character.name}</strong>
-              <MomentProfileRow
-                label="角色署名"
-                placeholder={character.name}
-                name={draft.characters[character.id]?.name ?? ""}
-                avatar={avatars[character.id]}
-                fallbackAvatar={character.avatar || undefined}
-                initial={Array.from(character.name)[0] || "?"}
-                onName={name => setCharacterName(character.id, name)}
-                onAvatar={file => void pickAvatar(character.id, file)}
-              />
-              <MomentProfileRow
-                label="我"
-                placeholder={draft.user.name || "不填就用上面的默认"}
-                name={draft.userByCharacter[character.id]?.name ?? ""}
-                avatar={avatars[momentUserOwner(character.id)]}
-                fallbackAvatar={avatars.user || character.avatar || undefined}
-                initial="我"
-                onName={name => setBookUserName(character.id, name)}
-                onAvatar={file => void pickAvatar(momentUserOwner(character.id), file)}
-              />
-            </div>
-          ))}
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function MomentProfileRow({ label, placeholder, name, avatar, fallbackAvatar, initial, onName, onAvatar }: {
-  label: string;
-  placeholder: string;
-  name: string;
-  /** 自己设的头像 */
-  avatar?: string;
-  /** 没设时显示的原头像 */
-  fallbackAvatar?: string;
-  initial: string;
-  onName: (name: string) => void;
-  onAvatar: (file: File | null) => void;
-}) {
-  const fileRef = useRef<HTMLInputElement | null>(null);
-  const shown = avatar || fallbackAvatar;
-  return (
-    <div className="moment-profile-row">
-      <button type="button" className="moment-profile-avatar" onClick={() => fileRef.current?.click()} aria-label={`更换${label}的头像`}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        {shown ? <img src={shown} alt="" /> : <span>{initial}</span>}
-      </button>
-      <label className="moment-profile-fields">
-        <span>
-          {label}
-          {avatar ? (
-            <button type="button" className="moment-profile-reset" onClick={(event) => { event.preventDefault(); onAvatar(null); }}>
-              用回原头像
-            </button>
-          ) : null}
-        </span>
-        <input
-          value={name}
-          maxLength={40}
-          placeholder={placeholder}
-          onChange={event => onName(event.target.value)}
-        />
-      </label>
-      <input
-        ref={fileRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={(event) => {
-          const file = event.target.files?.[0] || null;
-          event.target.value = "";
-          if (file) onAvatar(file);
-        }}
-      />
-    </div>
-  );
-}

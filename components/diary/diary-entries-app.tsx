@@ -1,14 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent, type PointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent } from "react";
 import {
   Bookmark,
   Bot,
   ChevronDown,
   ChevronLeft,
-  ChevronRight,
   Clock3,
-  Globe,
   Heart,
   Lock,
   NotebookPen,
@@ -24,23 +22,11 @@ import { loadCharacters } from "@/lib/character-storage";
 import type { Character } from "@/lib/character-types";
 import { generateDiaryEntryForCharacter } from "@/lib/diary-entry-engine";
 import { useDiaryGenerating } from "@/lib/diary-generating-tracker";
+import { DIARY_ENTRIES_UPDATED_EVENT } from "@/lib/diary-entry-timer-service";
 import {
-  DIARY_ENTRIES_UPDATED_EVENT,
-  DIARY_ENTRY_TIMER_SETTINGS_UPDATED_EVENT,
-} from "@/lib/diary-entry-timer-service";
-import {
-  clampDiaryIntervalHours,
-  diaryCharacterIntervalHours,
-  isDiaryCharacterScheduled,
-  setDiaryCharacterScheduled,
   createDiaryEntry,
   deleteDiaryEntry,
   loadDiaryEntries,
-  loadDiaryEntryTimerSettings,
-  loadDiaryReplyRules,
-  resolveDiaryReplyRule,
-  saveDiaryEntryTimerSettings,
-  saveDiaryReplyRules,
   loadDiaryUsername,
   saveDiaryUsername,
   updateDiaryEntry,
@@ -49,27 +35,16 @@ import type {
   DiaryEntry,
   DiaryEntryAuthorType,
   DiaryEntryBlock,
-  DiaryEntryTimerSettings,
   DiaryEntryTrigger,
   DiaryEntryVisibility,
-  DiaryReplyMode,
-  DiaryReplyRules,
 } from "@/lib/diary-entry-types";
 import { cancelDiaryReply, scheduleDiaryReply } from "@/lib/diary-reply-service";
-import { inheritedCharacterAppApiLabel, loadCharacterAppApiId } from "@/lib/app-api-binding";
-import { loadApiConfigs, resolveUserIdentity } from "@/lib/settings-storage";
+import { resolveUserIdentity } from "@/lib/settings-storage";
 import type { UserIdentity } from "@/components/settings/user-identity";
-import { AppApiPickerDialog } from "@/components/settings/app-api-picker-dialog";
 import { DiaryBrandHeader, type DiaryBrandView } from "./diary-brand-header";
+import { CharacterAvatarGrid, DiaryWritingStatus } from "./diary-character-grid";
+import { DiaryUserSettingsPage, type DiarySettingsTab } from "./diary-user-settings";
 import { useDiaryFont } from "./use-diary-font";
-import { useDragToTrash } from "./use-drag-to-trash";
-
-const DIARY_REPLY_MODE_LABELS: Record<DiaryReplyMode, string> = {
-  none: "不回应",
-  immediate: "立即回应",
-  delay: "延时回应",
-  merge: "和下次互动合并",
-};
 
 /** 手记首页的三个页签：日记=我写的、朋友=TA写的、通知=近期动态 */
 type DiaryHubTab = "mine" | "friends" | "notices";
@@ -122,13 +97,6 @@ type DiaryEntriesAppProps = {
   onNotice?: (message: string) => void;
 };
 
-type DiaryBook = {
-  characterId: string;
-  characterName: string;
-  avatar: string;
-  entries: DiaryEntry[];
-};
-
 type ComposeTarget =
   /** authorType 决定这篇算「我写的」还是「TA 写的」——现在两个页签共用一个页面，不能只靠 kind */
   | { mode: "create"; characterId: string; authorType: DiaryEntryAuthorType }
@@ -151,11 +119,6 @@ function formatEntryDateTime(value: string): string {
   return `${year}-${month}-${day} ${hours}:${minutes}`;
 }
 
-function clipText(value: string, maxLength: number): string {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized;
-}
-
 function blockPlainText(block: DiaryEntryBlock): string {
   if (block.type === "paragraph" || block.type === "quote") return block.text;
   if (block.type === "correction") return block.replacement || block.text;
@@ -165,34 +128,15 @@ function blockPlainText(block: DiaryEntryBlock): string {
   return "";
 }
 
-function DiaryWritingStatus({ label = "写入中" }: { label?: string }) {
-  return (
-    <span className="diary-writing-status" aria-label={label}>
-      <span>{label}</span>
-      <span className="diary-writing-dots" aria-hidden="true">
-        <i />
-        <i />
-        <i />
-      </span>
-    </span>
-  );
-}
-
 export function DiaryEntriesApp({ kind, onClose, onSwitch, onNotice }: DiaryEntriesAppProps) {
   const [entries, setEntries] = useState<DiaryEntry[]>([]);
   const [characters, setCharacters] = useState<Character[]>([]);
-  const [settings, setSettings] = useState<DiaryEntryTimerSettings>(() => loadDiaryEntryTimerSettings());
-  const [replyRules, setReplyRules] = useState<DiaryReplyRules>(() => loadDiaryReplyRules());
-  const [timerSettingsOpen, setTimerSettingsOpen] = useState(false);
-  // 点进某个角色的日记本后，右上角只管这一本：它的定时和手记 API
-  const [bookSettingsOpen, setBookSettingsOpen] = useState(false);
-  const [replySettingsOpen, setReplySettingsOpen] = useState(false);
   const [writePanelOpen, setWritePanelOpen] = useState(false);
   const [composeTarget, setComposeTarget] = useState<ComposeTarget | null>(null);
-  const [fontPanelOpen, setFontPanelOpen] = useState(false);
   const [activeEntry, setActiveEntry] = useState<DiaryEntry | null>(null);
   const [deleteCandidateEntry, setDeleteCandidateEntry] = useState<DiaryEntry | null>(null);
-  const [activeCharacterId, setActiveCharacterId] = useState<string | null>(null);
+  /** 用户设置页（定时 / 隐私 / 字体 / 署名）：null = 没打开，否则是当前页签 */
+  const [settingsTab, setSettingsTab] = useState<DiarySettingsTab | null>(null);
   const [localGeneratingIds, setGeneratingCharacterIds] = useState<string[]>([]);
   // Merge in the module-level tracker so background generation (timer, or a
   // batch started before leaving the app) is visible again after re-entry.
@@ -201,9 +145,6 @@ export function DiaryEntriesApp({ kind, onClose, onSwitch, onNotice }: DiaryEntr
     () => Array.from(new Set([...localGeneratingIds, ...trackedGeneratingIds])),
     [localGeneratingIds, trackedGeneratingIds],
   );
-  // 只滚日记列表这一块（工具条固定在页签下边线以上）
-  const entryMainRef = useRef<HTMLDivElement | null>(null);
-  const fontFileRef = useRef<HTMLInputElement | null>(null);
   // 手记首页三页签：日记（我写的）/ 朋友（TA写的）/ 通知（近期动态）
   const [tab, setTab] = useState<DiaryHubTab>("mine");
   const [userIdentity, setUserIdentity] = useState<UserIdentity | null>(null);
@@ -221,11 +162,6 @@ export function DiaryEntriesApp({ kind, onClose, onSwitch, onNotice }: DiaryEntr
   }, [onNotice]);
 
   const font = useDiaryFont(kind, notify);
-  const trash = useDragToTrash<DiaryEntry>({
-    enabled: Boolean(activeCharacterId),
-    scrollRef: entryMainRef,
-    onDrop: setDeleteCandidateEntry,
-  });
 
   const refreshEntries = useCallback(() => {
     setEntries(loadDiaryEntries());
@@ -250,19 +186,10 @@ export function DiaryEntriesApp({ kind, onClose, onSwitch, onNotice }: DiaryEntr
     return () => window.removeEventListener("settings-identities-updated", syncIdentity);
   }, [refreshEntries]);
 
-  useEffect(() => {
-    saveDiaryEntryTimerSettings(settings);
-    window.dispatchEvent(new CustomEvent(DIARY_ENTRY_TIMER_SETTINGS_UPDATED_EVENT));
-  }, [settings]);
-
-  useEffect(() => {
-    saveDiaryReplyRules(replyRules);
-  }, [replyRules]);
-
+  // 定时 / 回应 / 字体 / 署名这些设置都搬进用户设置页了，这里只跟着刷新列表
   useEffect(() => {
     const handleEntriesUpdated = () => {
       refreshEntries();
-      setSettings(loadDiaryEntryTimerSettings());
     };
     window.addEventListener(DIARY_ENTRIES_UPDATED_EVENT, handleEntriesUpdated);
     return () => window.removeEventListener(DIARY_ENTRIES_UPDATED_EVENT, handleEntriesUpdated);
@@ -456,10 +383,6 @@ export function DiaryEntriesApp({ kind, onClose, onSwitch, onNotice }: DiaryEntr
       : [...prev, characterId]);
   }, []);
 
-  const kindEntries = useMemo(() => entries.filter(entry => entry.authorType === kind), [entries, kind]);
-
-  const sortedKindEntries = useMemo(() => sortEntriesByTime(kindEntries), [kindEntries]);
-
   /** 「日记」页签：我写的；「朋友」页签：TA 写的 */
   const mySortedEntries = useMemo(
     () => sortEntriesByTime(entries.filter(entry => entry.authorType === "user")),
@@ -470,25 +393,21 @@ export function DiaryEntriesApp({ kind, onClose, onSwitch, onNotice }: DiaryEntr
     [entries],
   );
 
-  const books = useMemo<DiaryBook[]>(() => {
-    const map = new Map<string, DiaryEntry[]>();
-    for (const entry of sortedKindEntries) {
-      const list = map.get(entry.characterId);
-      if (list) list.push(entry);
-      else map.set(entry.characterId, [entry]);
-    }
-    return Array.from(map.entries()).map(([characterId, characterEntries]) => ({
-      characterId,
-      characterName: characterEntries[0].characterName,
-      avatar: characters.find(character => character.id === characterId)?.avatar ?? "",
-      entries: characterEntries,
-    }));
-  }, [sortedKindEntries, characters]);
-
-  const activeBook = useMemo(
-    () => (activeCharacterId ? books.find(book => book.characterId === activeCharacterId) ?? null : null),
-    [activeCharacterId, books],
-  );
+  // 用户设置也是一整页：顶部栏品牌 + 「用户设置」标签行 + 四个等分页签
+  if (settingsTab) {
+    return (
+      <DiaryUserSettingsPage
+        view="entries"
+        tab={settingsTab}
+        onTabChange={setSettingsTab}
+        characters={characters}
+        onClose={onClose}
+        onSwitch={onSwitch}
+        onBack={() => setSettingsTab(null)}
+        onNotice={notify}
+      />
+    );
+  }
 
   // 日记详情是一整页（不再是弹窗）：进入后整页替换列表
   if (activeEntry) {
@@ -521,42 +440,21 @@ export function DiaryEntriesApp({ kind, onClose, onSwitch, onNotice }: DiaryEntr
   }
 
   return (
-    <section className={`diary-app diary-entry-app ${trash.drag ? "is-entry-dragging" : ""}`} style={font.style}>
+    <section className="diary-app diary-entry-app" style={font.style}>
       {generatingCharacterIds.length > 0 && (
         <div className="diary-generating-toast" role="status">
           <span className="diary-generating-toast-spinner" aria-hidden="true" />
           正在生成日记{generatingCharacterIds.length > 1 ? `（${generatingCharacterIds.length} 篇）` : ""}…
         </div>
       )}
-      <input
-        ref={fontFileRef}
-        type="file"
-        accept=".ttf,.otf,.woff,.woff2,font/*,application/font-woff,application/font-woff2"
-        className="hidden"
-        onChange={font.upload}
-      />
       <DiaryBrandHeader
         view="entries"
         onClose={onClose}
         onSwitch={onSwitch}
-        avatarLabel={tab === "mine" ? "聊天回应设置" : "日记设置"}
-        onAvatarClick={() => {
-          // 头像取代了原来的「…」菜单：「日记」页签管我写的日记怎么被回应；「朋友」页签管TA什么时候写、用哪个 API
-          if (tab === "mine") setReplySettingsOpen(true);
-          else if (activeBook) setBookSettingsOpen(true);
-          else setTimerSettingsOpen(true);
-        }}
-      >
-        <button
-          type="button"
-          className="note-wall-menu-btn diary-font-upload-btn"
-          onClick={() => setFontPanelOpen(true)}
-          aria-label="日记字体设置"
-          title="日记字体设置"
-        >
-          <span className="diary-font-upload-mark" aria-hidden="true">Aa</span>
-        </button>
-      </DiaryBrandHeader>
+        avatarLabel="账户菜单"
+        // 头像下拉里的「设置」：所有设置都收在用户设置页的四个页签里了
+        onOpenSettings={() => setSettingsTab("timer")}
+      />
 
       <main className="diary-entry-main diary-hub-main">
         {/* 不参与滚动的工具条：输入卡片 + 按钮行 + 三个页签 */}
@@ -711,18 +609,8 @@ export function DiaryEntriesApp({ kind, onClose, onSwitch, onNotice }: DiaryEntr
                   entry={entry}
                   character={characters.find(c => c.id === entry.characterId)}
                   userIdentity={userIdentity}
-                  isDragSource={trash.drag?.item.id === entry.id}
-                  onPointerDown={(event) => trash.onPointerDown(event, entry)}
-                  onPointerMove={trash.onPointerMove}
-                  onPointerUp={trash.onPointerUp}
-                  onPointerCancel={trash.onPointerCancel}
-                  onPointerLeave={trash.onPointerLeave}
                   onClick={(event) => {
                     event.stopPropagation();
-                    if (trash.isClickSuppressed()) {
-                      event.preventDefault();
-                      return;
-                    }
                     setActiveEntry(entry);
                   }}
                 />
@@ -748,36 +636,6 @@ export function DiaryEntriesApp({ kind, onClose, onSwitch, onNotice }: DiaryEntr
         </button>
       ) : null}
 
-      {bookSettingsOpen && activeBook && kind === "character" ? (
-        <DiaryBookSettingsPanel
-          characterId={activeBook.characterId}
-          characterName={activeBook.characterName}
-          characters={characters}
-          settings={settings}
-          onChange={setSettings}
-          onClose={() => setBookSettingsOpen(false)}
-        />
-      ) : null}
-
-      {timerSettingsOpen ? (
-        <DiaryEntryTimerSettingsPanel
-          characters={characters}
-          settings={settings}
-          generatingCharacterIds={generatingCharacterIds}
-          onChange={setSettings}
-          onClose={() => setTimerSettingsOpen(false)}
-        />
-      ) : null}
-
-      {replySettingsOpen ? (
-        <DiaryReplySettingsPanel
-          characters={characters}
-          rules={replyRules}
-          onChange={setReplyRules}
-          onClose={() => setReplySettingsOpen(false)}
-        />
-      ) : null}
-
       {writePanelOpen ? (
         <DiaryEntryWritePanel
           characters={characters}
@@ -794,17 +652,6 @@ export function DiaryEntriesApp({ kind, onClose, onSwitch, onNotice }: DiaryEntr
           defaultSignature={userIdentity?.name || "我"}
           onSave={saveComposeEntry}
           onClose={() => setComposeTarget(null)}
-        />
-      ) : null}
-
-      {fontPanelOpen ? (
-        <DiaryEntryFontPanel
-          hasCustomFont={font.hasCustomFont}
-          scale={font.scale}
-          onUpload={() => fontFileRef.current?.click()}
-          onScaleChange={font.changeScale}
-          onReset={font.reset}
-          onClose={() => setFontPanelOpen(false)}
         />
       ) : null}
 
@@ -834,31 +681,6 @@ export function DiaryEntriesApp({ kind, onClose, onSwitch, onNotice }: DiaryEntr
         </div>
       ) : null}
 
-      <div
-        ref={trash.trashRef}
-        className={`diary-entry-trash-bin ${trash.drag ? "is-visible" : ""} ${trash.drag?.isOverTrash ? "is-over" : ""}`}
-        aria-hidden={!trash.drag}
-      >
-        <Trash2 size={30} strokeWidth={1.8} />
-      </div>
-
-      {trash.drag ? (
-        <div
-          className="diary-flat-card diary-entry-drag-ghost"
-          style={{
-            left: trash.drag.x,
-            top: trash.drag.y,
-            width: trash.drag.width,
-            minHeight: trash.drag.height,
-          }}
-        >
-          <DiaryEntryCardContent
-            entry={trash.drag.item}
-            character={characters.find(c => c.id === trash.drag?.item.characterId)}
-            userIdentity={userIdentity}
-          />
-        </div>
-      ) : null}
     </section>
   );
 }
@@ -950,39 +772,17 @@ function DiaryEntryCardContent({ entry, character, userIdentity }: {
   );
 }
 
-function DiaryEntryCard({
-  entry,
-  character,
-  userIdentity,
-  isDragSource,
-  onClick,
-  onPointerDown,
-  onPointerMove,
-  onPointerUp,
-  onPointerCancel,
-  onPointerLeave,
-}: {
+function DiaryEntryCard({ entry, character, userIdentity, onClick }: {
   entry: DiaryEntry;
   character?: Character;
   userIdentity?: Pick<UserIdentity, "name" | "avatarUrl"> | null;
-  isDragSource: boolean;
   onClick: (event: MouseEvent<HTMLButtonElement>) => void;
-  onPointerDown: (event: PointerEvent<HTMLButtonElement>) => void;
-  onPointerMove: (event: PointerEvent<HTMLButtonElement>) => void;
-  onPointerUp: (event: PointerEvent<HTMLButtonElement>) => void;
-  onPointerCancel: (event: PointerEvent<HTMLButtonElement>) => void;
-  onPointerLeave: (event: PointerEvent<HTMLButtonElement>) => void;
 }) {
   return (
     <button
       type="button"
-      className={`diary-flat-card ${isDragSource ? "is-drag-source" : ""}`}
+      className="diary-flat-card"
       draggable={false}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerCancel}
-      onPointerLeave={onPointerLeave}
       onContextMenu={event => event.preventDefault()}
       onClick={onClick}
     >
@@ -1058,328 +858,9 @@ function DiaryHubNoticeList({ entries, characters, userIdentity }: {
   );
 }
 
-export function DiaryEntryFontPanel({
-  title = "日记字体",
-  hasCustomFont,
-  scale,
-  onUpload,
-  onScaleChange,
-  onReset,
-  onClose,
-}: {
-  title?: string;
-  hasCustomFont: boolean;
-  scale: number;
-  onUpload: () => void;
-  onScaleChange: (scale: number) => void;
-  onReset: () => void;
-  onClose: () => void;
-}) {
-  return (
-    <div className="nw-modal-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
-      <section className="diary-font-panel" onClick={event => event.stopPropagation()}>
-        <header>
-          <div>
-            <h2>{title}</h2>
-            <p>{hasCustomFont ? "已使用自定义字体" : "当前使用默认手写字体"}</p>
-          </div>
-          <button type="button" className="diary-icon-btn" onClick={onClose} aria-label="关闭">
-            <X size={18} />
-          </button>
-        </header>
+/* 字体、定时、回应、署名四个弹窗都已并入用户设置页（diary-user-settings.tsx），
+   原来那几段整段删掉了，别再往回加。 */
 
-        <button type="button" className="diary-font-upload-action" onClick={onUpload}>
-          <span className="diary-font-upload-mark" aria-hidden="true">Aa</span>
-          <span>上传字体</span>
-        </button>
-
-        <label className="diary-font-size-control">
-          <span>
-            <strong>字号</strong>
-            <em>{Math.round(scale * 100)}%</em>
-          </span>
-          <input
-            type="range"
-            min="0.85"
-            max="1.25"
-            step="any"
-            value={scale}
-            onChange={event => onScaleChange(Number(event.target.value))}
-          />
-        </label>
-
-        <button type="button" className="diary-font-reset-btn" onClick={onReset}>
-          恢复默认
-        </button>
-      </section>
-    </div>
-  );
-}
-
-/** TA的日记 → 某个角色的日记本 → 右上角：只管这一本的定时写日记和手记 API */
-function DiaryBookSettingsPanel({ characterId, characterName, characters, settings, onChange, onClose }: {
-  characterId: string;
-  characterName: string;
-  characters: Character[];
-  settings: DiaryEntryTimerSettings;
-  onChange: (settings: DiaryEntryTimerSettings) => void;
-  onClose: () => void;
-}) {
-  const [apiPickerOpen, setApiPickerOpen] = useState(false);
-  const [apiRevision, setApiRevision] = useState(0);
-  // 和设置 → 绑定里这个角色的「日记」API 是同一份
-  const apiLabel = useMemo(() => {
-    void apiRevision;
-    const ownId = loadCharacterAppApiId(characterId, "diary");
-    const own = ownId ? loadApiConfigs().find(config => config.id === ownId) : undefined;
-    return own ? own.name || own.provider : inheritedCharacterAppApiLabel(characterId, "diary");
-  }, [characterId, apiRevision]);
-
-  return (
-    <div className="nw-modal-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
-      <section className="diary-entry-settings" onClick={event => event.stopPropagation()}>
-        <header>
-          <h2>{characterName} 的日记</h2>
-          <button type="button" className="diary-icon-btn" onClick={onClose} aria-label="关闭">
-            <X size={18} />
-          </button>
-        </header>
-
-        <div className="diary-entry-setting-grid">
-          <label className="diary-entry-toggle-row">
-            <span>
-              <Clock3 size={17} />
-              定时写日记
-            </span>
-            <input
-              type="checkbox"
-              checked={isDiaryCharacterScheduled(settings, characterId)}
-              onChange={event => onChange(setDiaryCharacterScheduled(
-                settings,
-                characterId,
-                event.target.checked,
-                characters.map(character => character.id),
-              ))}
-            />
-          </label>
-          <label className="diary-entry-number-field">
-            <span>间隔小时</span>
-            <input
-              type="number"
-              min={1}
-              max={720}
-              value={diaryCharacterIntervalHours(settings, characterId)}
-              onChange={event => onChange({
-                ...settings,
-                intervalHoursByCharacter: {
-                  ...settings.intervalHoursByCharacter,
-                  [characterId]: clampDiaryIntervalHours(event.target.value),
-                },
-              })}
-            />
-          </label>
-          <button type="button" className="diary-entry-toggle-row diary-entry-api-row" onClick={() => setApiPickerOpen(true)}>
-            <span>
-              <Globe size={17} />
-              手记 API
-            </span>
-            <span className="diary-entry-api-value">
-              <em>{apiLabel}</em>
-              <ChevronRight size={16} />
-            </span>
-          </button>
-        </div>
-      </section>
-      {apiPickerOpen ? (
-        <div onClick={event => event.stopPropagation()}>
-          <AppApiPickerDialog
-            characterId={characterId}
-            appId="diary"
-            title="选择手记 API"
-            onClose={() => {
-              setApiPickerOpen(false);
-              setApiRevision(value => value + 1);
-            }}
-          />
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function DiaryEntryTimerSettingsPanel({ characters, settings, generatingCharacterIds, onChange, onClose }: {
-  characters: Character[];
-  settings: DiaryEntryTimerSettings;
-  generatingCharacterIds: string[];
-  onChange: (settings: DiaryEntryTimerSettings) => void;
-  onClose: () => void;
-}) {
-  const busy = generatingCharacterIds.length > 0;
-
-  const toggleTimerCharacter = (characterId: string) => {
-    onChange({
-      ...settings,
-      characterIds: settings.characterIds.includes(characterId)
-        ? settings.characterIds.filter(id => id !== characterId)
-        : [...settings.characterIds, characterId],
-    });
-  };
-
-  return (
-    <div className="nw-modal-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
-      <section className="diary-entry-settings" onClick={event => event.stopPropagation()}>
-        <header>
-          <div>
-            <h2>定时写日记</h2>
-            <p>默认一天一次；未选择角色时，会按全部角色处理。</p>
-          </div>
-          <button type="button" className="diary-icon-btn" onClick={onClose} aria-label="关闭">
-            <X size={18} />
-          </button>
-        </header>
-
-        <div className="diary-entry-setting-grid">
-          <label className="diary-entry-toggle-row">
-            <span>
-              <Clock3 size={17} />
-              定时写日记
-            </span>
-            <input
-              type="checkbox"
-              checked={settings.enabled}
-              onChange={event => onChange({ ...settings, enabled: event.target.checked })}
-            />
-          </label>
-          <label className="diary-entry-number-field">
-            <span>间隔小时</span>
-            <input
-              type="number"
-              min={1}
-              max={720}
-              value={settings.intervalHours}
-              onChange={event => onChange({ ...settings, intervalHours: Math.max(1, Math.min(720, Number(event.target.value) || 24)) })}
-            />
-          </label>
-        </div>
-
-        <section className="diary-entry-character-section">
-          <div className="diary-entry-section-title">
-            <strong>定时角色</strong>
-            <span>{settings.characterIds.length ? `已选 ${settings.characterIds.length} 个` : "默认全部"}</span>
-          </div>
-          <CharacterAvatarGrid
-            characters={characters}
-            selectedIds={settings.characterIds}
-            busyIds={generatingCharacterIds}
-            disabled={busy}
-            onToggle={toggleTimerCharacter}
-          />
-        </section>
-      </section>
-    </div>
-  );
-}
-
-const DIARY_REPLY_MODE_OPTIONS: DiaryReplyMode[] = ["none", "immediate", "delay", "merge"];
-
-function DiaryReplySettingsPanel({ characters, rules, onChange, onClose }: {
-  characters: Character[];
-  rules: DiaryReplyRules;
-  onChange: (rules: DiaryReplyRules) => void;
-  onClose: () => void;
-}) {
-  return (
-    <div className="nw-modal-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
-      <section className="diary-entry-settings" onClick={event => event.stopPropagation()}>
-        <header>
-          <div>
-            <h2>TA如何在聊天中回应</h2>
-            <p>写完日记后，TA 会从聊天 App 发普通消息回应；可统一设置，也可以为每个角色单独指定。</p>
-          </div>
-          <button type="button" className="diary-icon-btn" onClick={onClose} aria-label="关闭">
-            <X size={18} />
-          </button>
-        </header>
-
-        <div className="diary-entry-setting-grid">
-          <label
-            className="diary-entry-toggle-row"
-            style={rules.default.mode !== "delay" ? { gridColumn: "1 / -1" } : undefined}
-          >
-            <span>默认回应方式</span>
-            <select
-              value={rules.default.mode}
-              onChange={event => onChange({ ...rules, default: { ...rules.default, mode: event.target.value as DiaryReplyMode } })}
-            >
-              {DIARY_REPLY_MODE_OPTIONS.map(mode => (
-                <option key={mode} value={mode}>{DIARY_REPLY_MODE_LABELS[mode]}</option>
-              ))}
-            </select>
-          </label>
-          {rules.default.mode === "delay" ? (
-            <label className="diary-entry-number-field">
-              <span>延时小时</span>
-              <input
-                type="number"
-                min={0.05}
-                max={720}
-                step={0.25}
-                value={rules.default.delayHours}
-                onChange={event => onChange({ ...rules, default: { ...rules.default, delayHours: Math.max(0.05, Math.min(720, Number(event.target.value) || 24)) } })}
-              />
-            </label>
-          ) : null}
-        </div>
-
-        <section className="diary-entry-character-section">
-          <div className="diary-entry-section-title">
-            <strong>按角色单独设置</strong>
-          </div>
-          <div className="diary-reply-rule-list">
-            {characters.map(character => {
-              const own = rules.characters[character.id] ?? { mode: "inherit" as const, delayHours: rules.default.delayHours };
-              return (
-                <div key={character.id} className="diary-reply-rule-row">
-                  <span className="diary-reply-rule-person">
-                    {character.avatar ? <img src={character.avatar} alt="" /> : <Bot size={18} />}
-                    <strong>{character.name}</strong>
-                  </span>
-                  <select
-                    value={own.mode}
-                    onChange={event => {
-                      const mode = event.target.value as DiaryReplyMode | "inherit";
-                      const nextCharacters = { ...rules.characters, [character.id]: { mode, delayHours: own.delayHours } };
-                      onChange({ ...rules, characters: nextCharacters });
-                    }}
-                  >
-                    <option value="inherit">跟随默认</option>
-                    {DIARY_REPLY_MODE_OPTIONS.map(mode => (
-                      <option key={mode} value={mode}>{DIARY_REPLY_MODE_LABELS[mode]}</option>
-                    ))}
-                  </select>
-                  {own.mode === "delay" ? (
-                    <input
-                      type="number"
-                      min={0.05}
-                      max={720}
-                      step={0.25}
-                      value={own.delayHours}
-                      onChange={event => {
-                        const delayHours = Math.max(0.05, Math.min(720, Number(event.target.value) || rules.default.delayHours));
-                        onChange({ ...rules, characters: { ...rules.characters, [character.id]: { mode: own.mode, delayHours } } });
-                      }}
-                    />
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        </section>
-        <p className="diary-entry-note">「和下次互动合并」不会主动发起新对话，只在你们下次真的开口聊天时顺带带出这篇日记；默认设为「不回应」，避免未经确认产生 API 调用。</p>
-      </section>
-    </div>
-  );
-}
 
 type DraftBlock = { localId: string } & DiaryEntryBlock;
 

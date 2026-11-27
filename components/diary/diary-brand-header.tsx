@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import { Globe, UserRound } from "lucide-react";
+import { Globe, Settings, UserRound } from "lucide-react";
 
 import { resolveUserIdentity } from "@/lib/settings-storage";
 import type { UserIdentity } from "@/components/settings/user-identity";
@@ -12,18 +12,21 @@ export type DiaryBrandView = "entries" | "moments";
  * 手记 / 片刻纪事共用的顶部栏：
  * 左侧是 iFloat 文字（点了回桌面，相当于原来的返回），
  * 右侧依次是「片刻纪事（地球）」→「TA的手记（实心铃铛）」→ 页面自己的按钮（字体 Aa 等）→ 用户圆形头像。
+ * 头像点开是一张方形小菜单，菜单里「设置」进用户设置页。
  */
-export function DiaryBrandHeader({ view, onClose, onSwitch, avatarLabel, onAvatarClick, children }: {
+export function DiaryBrandHeader({ view, onClose, onSwitch, avatarLabel = "账户菜单", onOpenSettings, children }: {
   view: DiaryBrandView;
   onClose: () => void;
   onSwitch: (view: DiaryBrandView) => void;
-  /** 头像按钮的无障碍说明，点了打开当前页面的设置 */
-  avatarLabel: string;
-  onAvatarClick: () => void;
+  /** 头像按钮的无障碍说明 */
+  avatarLabel?: string;
+  /** 菜单里的「设置」：进入用户设置页 */
+  onOpenSettings?: () => void;
   /** 页面自己的操作按钮（手记的字体 Aa 等），排在铃铛和头像之间 */
   children?: ReactNode;
 }) {
   const [identity, setIdentity] = useState<UserIdentity | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
     const sync = () => setIdentity(resolveUserIdentity(undefined, "diary"));
@@ -61,9 +64,34 @@ export function DiaryBrandHeader({ view, onClose, onSwitch, avatarLabel, onAvata
           </svg>
         </button>
         {children}
-        <button type="button" className="diary-brand-avatar" onClick={onAvatarClick} aria-label={avatarLabel}>
+        <button
+          type="button"
+          className="diary-brand-avatar"
+          onClick={() => { if (onOpenSettings) setMenuOpen(open => !open); }}
+          aria-label={avatarLabel}
+          aria-haspopup={onOpenSettings ? "menu" : undefined}
+          aria-expanded={onOpenSettings ? menuOpen : undefined}
+        >
           {identity?.avatarUrl ? <img src={identity.avatarUrl} alt="" /> : <UserRound size={15} aria-hidden="true" />}
         </button>
+        {menuOpen ? (
+          <>
+            <div className="diary-brand-avatar-backdrop" onClick={() => setMenuOpen(false)} />
+            <div className="diary-brand-avatar-menu" role="menu" aria-label={avatarLabel}>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setMenuOpen(false);
+                  onOpenSettings?.();
+                }}
+              >
+                <Settings size={15} strokeWidth={1.7} aria-hidden="true" />
+                <span>设置</span>
+              </button>
+            </div>
+          </>
+        ) : null}
       </span>
     </header>
   );
