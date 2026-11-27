@@ -4778,6 +4778,32 @@
   background: #ffffff;
 }
 
+/* 空状态提示里的文字按钮：跟正文同一行、蓝色（#8FB2C8）。
+   选择器带 .diary-entry-empty 前缀，压过 .diary-entry-empty button 那套块状按钮样式 */
+.diary-entry-empty .diary-hub-empty-link {
+  display: inline;
+  width: auto;
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: #8fb2c8;
+  font: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  cursor: pointer;
+  text-decoration: none;
+  vertical-align: baseline;
+}
+
+.diary-entry-empty .diary-hub-empty-link:active {
+  opacity: 0.7;
+  transform: none;
+}
+
 /* 输入区整张卡片：头像常驻左侧，标题行点开正文后才出现；整卡尖角（圆角 0） */
 .diary-hub-compose {
   display: grid;

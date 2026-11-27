@@ -653,10 +653,23 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
               <div className="diary-entry-empty">
                 <NotebookPen size={34} strokeWidth={1.5} />
                 <h2>{tab === "mine" ? "还没有日记" : "还没有TA的日记"}</h2>
-                <p>{tab === "mine" ? "在上面写一句，或者点右下角写下第一篇。" : "让角色先写一篇，纸面会从这里开始铺开。"}</p>
-                <button type="button" onClick={() => (tab === "mine" ? openUserCompose() : setWritePanelOpen(true))}>
-                  {tab === "mine" ? "写下第一篇" : "让TA写一篇"}
-                </button>
+                {/* 提示文案里的关键词本身就是按钮，不再单独放一个按钮 */}
+                {tab === "mine" ? (
+                  <p>
+                    在上面写一句，或者{" "}
+                    <button type="button" className="diary-hub-empty-link" onClick={openUserCompose}>
+                      写下第一篇
+                    </button>
+                    。
+                  </p>
+                ) : (
+                  <p>
+                    <button type="button" className="diary-hub-empty-link" onClick={() => setWritePanelOpen(true)}>
+                      让角色先写一篇
+                    </button>
+                    ，纸面会从这里开始铺开。
+                  </p>
+                )}
               </div>
             ) : null}
 
