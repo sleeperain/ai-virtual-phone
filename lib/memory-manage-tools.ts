@@ -11,8 +11,11 @@
 
 import type { MemoryEntry } from "./memory-types";
 import { loadMemoryConfig, loadMemoryEntriesByType, saveMemoryEntry } from "./memory-storage";
-import { isEntrySuperseded } from "./memory-revision";
-import { extractMemoryStructuredMeta, stripMemoryStructuredSections } from "./memory-summarizer";
+import { stripMemoryStructuredSections, extractMemoryStructuredMeta } from "./memory-summarizer";
+import {
+    isEntryManageableByCharacter,
+    resolveMemoryEntryState,
+} from "./memory-entry-state";
 import { resolveAuxiliaryApiConfig } from "./settings-storage";
 import { generateEmbedding, resolveEmbeddingModel } from "./memory-embedding";
 import {
@@ -42,14 +45,12 @@ function isUserManual(entry: MemoryEntry): boolean {
     return String(entry.metadata?.origin ?? "") === "user_manual";
 }
 
-/** 当前可被角色管理的记忆：排除已弃用、已被接替、已移除的角色反思旧条目、用户手写的核心设定 */
+/**
+ * 当前可被角色管理的记忆：排除已弃用、已被接替、已移除的角色反思旧条目、用户手写的核心设定。
+ * 判定统一走 memory-entry-state，不再在这里自己翻 metadata。
+ */
 function manageableEntries(entries: MemoryEntry[]): MemoryEntry[] {
-    return entries.filter(entry =>
-        !isEntryTrashed(entry)
-        && !isEntrySuperseded(entry)
-        && entry.metadata?.origin !== "character_reflection"
-        && !(entry.type === "core" && isUserManual(entry)),
-    );
+    return entries.filter(entry => isEntryManageableByCharacter(resolveMemoryEntryState(entry)));
 }
 
 function labelOf(entry: MemoryEntry): string {
@@ -184,11 +185,14 @@ export async function updateMemoryForCharacter(
         return { ok: false, text: "没找到这条记忆，可能已经不在记忆库里了。" };
     }
     if (manageableEntries([target]).length === 0) {
+        const targetState = resolveMemoryEntryState(target);
         return {
             ok: false,
-            text: isEntryTrashed(target)
+            text: targetState.trashed
                 ? "这条记忆已经被弃用了，要先让用户在「最近删除」里恢复才能改。"
-                : "这条记忆受保护（用户手写设定或已被更正的版本接替），你不能修改。",
+                : targetState.superseded
+                    ? "这条记忆已经被更正后的新版本接替了，不要再改它，改最新的那一条。"
+                    : "这条记忆受保护（用户手写设定），你不能修改。",
         };
     }
 

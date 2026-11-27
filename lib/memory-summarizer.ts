@@ -39,6 +39,11 @@ import {
     toProvenanceEntry,
 } from "./memory-provenance";
 import { isEntryTrashed, trashMemoryEntry } from "./memory-trash";
+import {
+    isEntryEvictable,
+    isEntryLegacyCleanupEligible,
+    resolveMemoryEntryState,
+} from "./memory-entry-state";
 
 /**
  * 提取角色的基础身份与人称代词提示，专门提供给长期记忆、事件盒与核心记忆总结 Prompt，
@@ -722,7 +727,7 @@ export async function runSummarizationPipeline(
     // 原先它们和其他条目一起排队：盒总结的 createdAt 被设成盒内最早那条的时间、已归档条目也保留
     // 原始的早年时间，而淘汰是「越老越先删」，于是一个时间久远的事件盒会被整盒清空，
     // 盒记录（存在独立 kv 里）却还在，界面就只剩一个空壳。
-    const evictableEntries = activeLongTerm.filter(e => !belongsToEventBox(e));
+    const evictableEntries = activeLongTerm.filter(e => isEntryEvictable(resolveMemoryEntryState(e)));
     if (evictableEntries.length > config.maxLongTermEntries) {
         const evictionSorted = [...evictableEntries].sort((a, b) => {
             // 用「修订后的有效重要性」排序：已被改写的旧版本会先被淘汰，
@@ -978,18 +983,6 @@ export async function trashAllLegacyResplitFragments(
     return { count: targets.length, ids: targets.map(entry => entry.id) };
 }
 
-/**
- * 这条记忆是否属于某个事件盒（盒内成员 / 已归档成员 / 盒总结条目）。
- * 直接读 metadata 键而不 import memory-event-boxes，避免与本文件形成循环依赖
- * （memory-event-boxes 反过来 import 了本文件的 resolveSummarizationApiConfig 等）。
- */
-function belongsToEventBox(entry: MemoryEntry): boolean {
-    const meta = entry.metadata ?? {};
-    return typeof meta.eventBoxId === "string"
-        || typeof meta.eventBoxDigestOf === "string"
-        || typeof meta.eventBoxArchivedInto === "string";
-}
-
 /** 取一条记忆的事件日期（YYYY-MM-DD），缺失时退回 createdAt */
 function entryEventDateOf(entry: MemoryEntry): string {
     const raw = typeof entry.metadata?.eventDate === "string" ? entry.metadata.eventDate.trim() : "";
@@ -1095,16 +1088,9 @@ export function isLegacyUnorganizedMemory(entry: MemoryEntry): boolean {
     // 只整理「用户自己带进来的内容」和「没有总结管道痕迹的历史格式条目」。
     // 自动总结产出的条目本来就按当前格式生成，偶尔超字数或带换行并不代表它需要被清洗；
     // 之前这里不分来源，导致模型刚总结的记忆被算进「一键清洗旧记忆(N)」的计数里。
-    const origin = String(entry.metadata?.origin ?? "");
-    const isUserOwned = origin === "user_manual"
-        || origin === "user_edited"
-        || entry.metadata?.editedByUser === true
-        || Boolean(entry.metadata?.importedFrom);
-    const hasPipelineTrace = entry.metadata?.topicSplitV2 === true
-        || typeof entry.metadata?.provenanceBatchId === "string"
-        || typeof entry.metadata?.resplitFrom === "string"
-        || typeof entry.metadata?.summarizedEvents === "number";
-    if (hasPipelineTrace && !isUserOwned) return false;
+    // 来源/归档/删除状态的判定统一交给 memory-entry-state，这里只负责形态检查。
+    const entryState = resolveMemoryEntryState(entry);
+    if (!isEntryLegacyCleanupEligible(entryState)) return false;
 
     const cleanBody = stripMemoryStructuredSections(entry.content) || entry.content.trim();
     const kws = Array.isArray(entry.metadata?.keywords)

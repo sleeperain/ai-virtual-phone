@@ -10,6 +10,11 @@ import type { MemoryEntry } from "./memory-types";
 import { kvGet, kvSet, registerDynamicPrefix } from "./kv-db";
 import { saveMemoryEntry, deleteMemoryEntry, loadMemoryConfig } from "./memory-storage";
 import { isEntryTrashed } from "./memory-trash";
+import {
+    collectDigestBoxIds,
+    isEntryRecallable,
+    resolveMemoryEntryState,
+} from "./memory-entry-state";
 import { resolveAuxiliaryApiConfig } from "./settings-storage";
 import { generateEmbedding, resolveEmbeddingModel, cosineSimilarity, keywordOverlapRatio } from "./memory-embedding";
 import { simpleLLMCall } from "./api-helpers";
@@ -188,21 +193,11 @@ export function isEntryArchived(entry: MemoryEntry): boolean {
  * - 已归档的原始条目不再重复注入 Prompt（由对应的事件盒总结条目代表），但如果该事件盒的总结条目被删或不存在，自动兜底放行，绝不丢记忆
  */
 export function filterRecallableEntries(entries: MemoryEntry[]): MemoryEntry[] {
-    const digestBoxIds = new Set<string>();
-    for (const entry of entries) {
-        if (isEntryBoxDigest(entry) && !isEntryTrashed(entry)) {
-            const boxId = String(entry.metadata?.[EVENT_BOX_META_KEYS.digestOf] ?? "");
-            if (boxId) digestBoxIds.add(boxId);
-        }
-    }
-    return entries.filter(entry => {
-        // 删除优先级最高：无论归档与否，删除后都不再注入，直到用户从「最近删除」恢复
-        if (isEntryTrashed(entry)) return false;
-        if (!isEntryArchived(entry)) return true;
-        const archivedBoxId = String(entry.metadata?.[EVENT_BOX_META_KEYS.archivedInto] ?? "");
-        // 只有当该盒子确实存在「未被移入最近删除」的有效总结条目时，才由总结条目代替；否则兜底保留原文召回
-        return !digestBoxIds.has(archivedBoxId);
-    });
+    // 判定统一交给 memory-entry-state：这里不再自己翻 metadata 判断删除/归档/盒总结。
+    // 之前这三类状态各写一个 if，漏掉任何一类就会出现「明明该由盒总结代表、却还在重复注入」
+    // 或者「盒总结被删了、原文也没兜底放行」这类症状。
+    const digestBoxIds = collectDigestBoxIds(entries);
+    return entries.filter(entry => isEntryRecallable(resolveMemoryEntryState(entry), digestBoxIds));
 }
 
 export function entryDateKey(entry: MemoryEntry): string {
