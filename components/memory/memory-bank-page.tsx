@@ -1,7 +1,7 @@
 "use client";
 
 import { Component, useState, useEffect, useCallback, useRef, type CSSProperties, type ReactNode } from "react";
-import { Trash2, Zap, Clock, Users, Archive, Folder, AlertCircle, Search, Brain, FileText, MoreHorizontal, Plus, Edit3, X, Check, ChevronLeft, ChevronRight, Filter, SlidersHorizontal, Sparkles, RotateCcw, RotateCw, History, type LucideIcon } from "lucide-react";
+import { Trash2, Zap, Clock, Users, Archive, Folder, AlertCircle, Search, Brain, FileText, MoreHorizontal, Plus, Edit3, X, Check, ChevronLeft, ChevronRight, ChevronDown, Filter, SlidersHorizontal, Sparkles, RotateCcw, RotateCw, History, type LucideIcon } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { MemoryTimeline } from "./memory-timeline";
 import { Toggle } from "@/components/ui/form";
@@ -373,6 +373,9 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     /** 批量删除的二次确认：只移入回收站，不真删 */
     const [confirmClearAll, setConfirmClearAll] = useState<null | "core" | "long_term">(null);
     const [pickedCharId, setPickedCharId] = useState<string | null>(null);
+    /** 首页角色选择器：展开下拉 + 方框里输入的人名检索词 */
+    const [charPickerOpen, setCharPickerOpen] = useState(false);
+    const [charPickerQuery, setCharPickerQuery] = useState("");
     const [entryMenuId, setEntryMenuId] = useState<string | null>(null);
     const [memoryEditor, setMemoryEditor] = useState<MemoryEditorState | null>(null);
     const [savingMemory, setSavingMemory] = useState(false);
@@ -2936,13 +2939,12 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                     </MemoryDetailBoundary>
                 </div>
 
-                {/* Bottom tab bar — 短期 | 共享事件 | 长期 | 事件盒 | 核心（核心图标恢复原版 Archive） */}
+                {/* Bottom tab bar — 短期 | 共享事件 | 长期 | 核心 | 最近删除（核心图标恢复原版 Archive） */}
                 <div className="chat-tab-bar" style={{ position: "absolute", bottom: 40, left: 24, right: 24, zIndex: 10, borderRadius: 28, borderTop: "none", padding: "10px 0" }}>
                     {([
                         { key: "short" as const, icon: Clock, label: "短期" },
                         { key: "shared" as const, icon: Users, label: "共享事件" },
                         { key: "long" as const, icon: Archive, label: "长期" },
-                        { key: "boxes" as const, icon: Folder, label: "事件盒" },
                         { key: "core" as const, icon: Archive, label: "核心" },
                         { key: "trash" as const, icon: Trash2, label: "最近删除" },
                     ]).map(tab => (
@@ -4207,18 +4209,83 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                         <span className="mem-picker-hint">点击TA的卡片查看吧</span>
                     </p>
 
-                    <div className="mem-picker-chips">
-                        {characters.map(({ character }) => (
-                            <button
-                                key={character.id}
-                                className="ui-chip"
-                                {...(pickedCharId === character.id ? { "data-selected": "" } : {})}
-                                onClick={() => setPickedCharId(pickedCharId === character.id ? null : character.id)}
-                            >
-                                {character.name}
-                            </button>
-                        ))}
-                    </div>
+                    {/* 角色选择：方框下拉（原来是一排人名按钮）。点方框展开并变成检索输入框，
+                        列表固定露 4.5 行，超出部分上下滑动 */}
+                    {(() => {
+                        const keyword = charPickerQuery.trim().toLowerCase();
+                        const pickedName = pickedCharId
+                            ? characters.find(item => item.character.id === pickedCharId)?.character.name ?? ""
+                            : "";
+                        const visibleChars = keyword
+                            ? characters.filter(item => item.character.name.toLowerCase().includes(keyword))
+                            : characters;
+                        return (
+                            <div className="mem-char-select">
+                                {charPickerOpen ? (
+                                    <div className="mem-char-field is-open">
+                                        <Search size={15} strokeWidth={1.8} className="mem-char-field-icon" />
+                                        <input
+                                            type="text"
+                                            className="mem-char-input"
+                                            value={charPickerQuery}
+                                            placeholder="输入人名检索…"
+                                            aria-label="检索角色人名"
+                                            autoFocus
+                                            onChange={event => setCharPickerQuery(event.target.value)}
+                                        />
+                                        <button
+                                            type="button"
+                                            className="mem-char-field-toggle"
+                                            aria-label="收起人名列表"
+                                            onClick={() => {
+                                                setCharPickerOpen(false);
+                                                setCharPickerQuery("");
+                                            }}
+                                        >
+                                            <ChevronDown size={16} strokeWidth={1.8} className="mem-char-chevron is-open" />
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <button
+                                        type="button"
+                                        className={`mem-char-field${pickedName ? "" : " is-placeholder"}`}
+                                        onClick={() => setCharPickerOpen(true)}
+                                    >
+                                        <span className="mem-char-value">{pickedName || "请选择…"}</span>
+                                        <ChevronDown size={16} strokeWidth={1.8} className="mem-char-chevron" />
+                                    </button>
+                                )}
+
+                                {charPickerOpen && (
+                                    <div className="mem-char-dropdown" role="listbox" aria-label="角色人名列表">
+                                        {visibleChars.length === 0 ? (
+                                            <p className="mem-char-empty">没有匹配的人名</p>
+                                        ) : (
+                                            visibleChars.map(({ character }) => (
+                                                <button
+                                                    key={character.id}
+                                                    type="button"
+                                                    role="option"
+                                                    aria-selected={pickedCharId === character.id}
+                                                    className={`mem-char-option${pickedCharId === character.id ? " is-selected" : ""}`}
+                                                    onClick={() => {
+                                                        setPickedCharId(character.id);
+                                                        setCharPickerOpen(false);
+                                                        setCharPickerQuery("");
+                                                    }}
+                                                >
+                                                    <span className="mem-char-option-name">{character.name}</span>
+                                                    {pickedCharId === character.id && (
+                                                        <Check size={14} strokeWidth={2} className="mem-char-option-check" />
+                                                    )}
+                                                </button>
+                                            ))
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })()}
 
                     <div className="mem-picker-tear">
                         <div className="mem-picker-tear-line"><span>✦</span></div>

@@ -202,3 +202,186 @@
   white-space: nowrap;
 }
 
+/* ══════════════════════════════════════════
+   记忆库首页：角色选择方框 + 下拉检索列表
+   收起时是一个方框（未选显示「请选择…」），点开方框变输入框，
+   下方展开人名列表，固定露 4.5 行，超出上下滑动
+   ══════════════════════════════════════════ */
+
+.mem-char-select {
+  /* 下拉列表的固定行高，4.5 行的可视高度按它推算 */
+  --mem-char-row: 40px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.mem-char-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 44px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--c-card-border);
+  background: var(--c-input);
+  color: var(--c-text-title);
+  font-size: 14px;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.mem-char-field:active {
+  opacity: 0.78;
+}
+
+.mem-char-field.is-open {
+  border-color: color-mix(in srgb, var(--c-icon-active) 55%, transparent);
+  cursor: text;
+}
+
+.mem-char-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mem-char-field.is-placeholder .mem-char-value {
+  color: var(--c-icon);
+}
+
+.mem-char-chevron {
+  flex-shrink: 0;
+  color: var(--c-icon);
+  transition: transform 0.18s ease;
+}
+
+.mem-char-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+.mem-char-field-icon {
+  flex-shrink: 0;
+  color: var(--c-icon);
+}
+
+.mem-char-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--c-text);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.mem-char-input::placeholder {
+  color: var(--c-icon);
+}
+
+.mem-char-field-toggle {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.mem-char-dropdown {
+  width: 100%;
+  box-sizing: border-box;
+  /* 4.5 行 + 上下各 1px 边框：让第 5 行只露半行，提示还能继续滑 */
+  max-height: calc(var(--mem-char-row) * 4.5 + 2px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 10px;
+  border: 1px solid var(--c-panel-border);
+  background: var(--c-panel);
+  box-shadow: 0 6px 18px color-mix(in srgb, #000 12%, transparent);
+  scrollbar-width: none;
+  animation: mem-char-dropdown-in 0.16s ease-out;
+}
+
+@keyframes mem-char-dropdown-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.mem-char-dropdown::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.mem-char-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  height: var(--mem-char-row);
+  padding: 0 12px;
+  border: 0;
+  background: none;
+  color: var(--c-text-title);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mem-char-option + .mem-char-option {
+  border-top: 1px solid color-mix(in srgb, var(--c-icon) 16%, transparent);
+}
+
+.mem-char-option:active {
+  background: color-mix(in srgb, var(--c-icon) 12%, transparent);
+}
+
+.mem-char-option.is-selected {
+  font-weight: 600;
+  color: var(--c-icon-active);
+}
+
+.mem-char-option-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mem-char-option-check {
+  flex-shrink: 0;
+  color: var(--c-icon-active);
+}
+
+.mem-char-empty {
+  margin: 0;
+  padding: 14px 12px;
+  font-size: 12px;
+  color: var(--c-icon);
+  text-align: center;
+}
+
