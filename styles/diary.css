@@ -5160,7 +5160,13 @@
   cursor: default;
 }
 
-/* 片刻纪事复用手记版式：没有输入卡片和页签，工具条里只在左侧放一个 Bookmark 标签 */
+/* 片刻纪事：整块 main 自己滚动（Bookmark 标签跟着内容滚） */
+.diary-entry-main.diary-moment-main {
+  /* 顶部不留白，滚动可视区上沿正好是顶部栏下框线 */
+  padding: 0 16px 94px;
+}
+
+/* 标签行：贴着内容一起滚，与列表卡同宽 */
 .diary-moment-label-row {
   display: flex;
   align-items: center;
@@ -5168,7 +5174,7 @@
   width: 100%;
   box-sizing: border-box;
   height: 42px;
-  /* 与顶部栏下边线留出间距，不贴边 */
+  /* 标签自己不贴顶部栏，留一点气口 */
   margin-top: 12px;
   padding: 0 12px;
   border: 1px solid rgba(0, 0, 0, 0.08);

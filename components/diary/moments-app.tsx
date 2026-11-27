@@ -141,8 +141,8 @@ export function MomentsApp({ onBack, onNotice }: MomentsAppProps) {
   const [profiles, setProfiles] = useState<MomentProfiles>(() => ({ user: { name: "" }, characters: {}, userByCharacter: {} }));
   // 自己设的署名头像（阅读图片库里的 blob → objectURL），没设的不在这里
   const [profileAvatars, setProfileAvatars] = useState<Record<MomentProfileOwner, string>>({});
-  // 拖拽删除锁的是列表滚动容器（div）
-  const mainRef = useRef<HTMLDivElement | null>(null);
+  // 拖拽删除锁的是列表滚动容器（整块 main）
+  const mainRef = useRef<HTMLElement | null>(null);
   const fontFileRef = useRef<HTMLInputElement | null>(null);
   /** 三份字体共用一个文件选择框，点了哪一份就传给哪一份 */
   const fontTargetRef = useRef<MomentFontKind>("moment");
@@ -383,16 +383,13 @@ export function MomentsApp({ onBack, onNotice }: MomentsAppProps) {
         )}
       </header>
 
-      <main className="diary-entry-main diary-hub-main">
-        {/* 复用手记的版式：上方固定一条工具条（这里只有左侧 Bookmark 标签，没有输入卡片和页签） */}
-        <div className="diary-hub-toolbar">
-          <div className="diary-moment-label-row">
-            <span>Bookmark</span>
-          </div>
+      {/* Bookmark 标签跟着内容一起滚：整块 main 就是滚动区，上沿从顶部栏下边线开始 */}
+      <main ref={mainRef} className="diary-entry-main diary-moment-main">
+        <div className="diary-moment-label-row">
+          <span>Bookmark</span>
         </div>
 
-        <div ref={mainRef} className="diary-hub-scroll">
-          <div className="diary-hub-entries">
+        <div className="diary-hub-entries">
             {moments.length === 0 ? (
               <div className="diary-entry-empty">
                 <Bookmark size={34} strokeWidth={1.5} />
@@ -440,7 +437,6 @@ export function MomentsApp({ onBack, onNotice }: MomentsAppProps) {
                   );
                 })
             )}
-          </div>
         </div>
       </main>
 
