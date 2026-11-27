@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent, type PointerEvent } from "react";
-import { Bot, ChevronLeft, ChevronRight, Clock3, Globe, NotebookPen, Trash2, WandSparkles, X } from "lucide-react";
+import { Bot, ChevronDown, ChevronLeft, ChevronRight, Clock3, Globe, NotebookPen, Trash2, UserRound, WandSparkles, X } from "lucide-react";
 import { DotsThree } from "@phosphor-icons/react";
 
 import { loadCharacters } from "@/lib/character-storage";
@@ -33,12 +33,14 @@ import type {
   DiaryEntryBlock,
   DiaryEntryTimerSettings,
   DiaryEntryTrigger,
+  DiaryEntryVisibility,
   DiaryReplyMode,
   DiaryReplyRules,
 } from "@/lib/diary-entry-types";
 import { cancelDiaryReply, scheduleDiaryReply } from "@/lib/diary-reply-service";
 import { inheritedCharacterAppApiLabel, loadCharacterAppApiId } from "@/lib/app-api-binding";
-import { loadApiConfigs } from "@/lib/settings-storage";
+import { loadApiConfigs, resolveUserIdentity } from "@/lib/settings-storage";
+import type { UserIdentity } from "@/components/settings/user-identity";
 import { AppApiPickerDialog } from "@/components/settings/app-api-picker-dialog";
 import { useDiaryFont } from "./use-diary-font";
 import { useDragToTrash } from "./use-drag-to-trash";
@@ -49,6 +51,51 @@ const DIARY_REPLY_MODE_LABELS: Record<DiaryReplyMode, string> = {
   delay: "延时回应",
   merge: "和下次互动合并",
 };
+
+/** 手记首页的三个页签：日记=我写的、朋友=TA写的、通知=近期动态 */
+type DiaryHubTab = "mine" | "friends" | "notices";
+
+const DIARY_HUB_TABS: { id: DiaryHubTab; label: string }[] = [
+  { id: "mine", label: "日记" },
+  { id: "friends", label: "朋友" },
+  { id: "notices", label: "通知" },
+];
+
+const DIARY_VISIBILITY_LABELS: Record<DiaryEntryVisibility, string> = {
+  private: "私密",
+  public: "公开",
+  partial: "仅部分人可见",
+};
+
+function formatRelativeTime(value: string): string {
+  const time = new Date(value).getTime();
+  if (Number.isNaN(time)) return "";
+  const diff = Date.now() - time;
+  if (diff < 60_000) return "刚刚";
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
+  if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)} 天前`;
+  return formatEntryTime(value);
+}
+
+/** 我写的日记卡片第二行：显示可见范围 */
+function visibilitySummary(entry: DiaryEntry): string {
+  const visibility = entry.visibility ?? "private";
+  if (visibility === "public") return "公开";
+  if (visibility === "partial") {
+    const count = entry.visibleTo?.length ?? 0;
+    return count > 0 ? `仅 ${count} 人可见` : "仅部分人可见";
+  }
+  return "私密";
+}
+
+function sortEntriesByTime(entries: DiaryEntry[]): DiaryEntry[] {
+  return [...entries].sort((a, b) => {
+    const timeA = new Date(a.createdAt).getTime();
+    const timeB = new Date(b.createdAt).getTime();
+    return (Number.isNaN(timeB) ? 0 : timeB) - (Number.isNaN(timeA) ? 0 : timeA);
+  });
+}
 
 type DiaryEntriesAppProps = {
   /** "character" = TA的日记（角色自己写，AI 生成）；"user" = 我的日记（用户手写，给角色看） */
@@ -146,6 +193,15 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
   );
   const entryMainRef = useRef<HTMLElement | null>(null);
   const fontFileRef = useRef<HTMLInputElement | null>(null);
+  // 手记首页三页签：日记（我写的）/ 朋友（TA写的）/ 通知（近期动态）
+  const [tab, setTab] = useState<DiaryHubTab>("mine");
+  const [userIdentity, setUserIdentity] = useState<UserIdentity | null>(null);
+  // 页签上方那张发布卡片
+  const [publishTitle, setPublishTitle] = useState("");
+  const [publishBody, setPublishBody] = useState("");
+  const [publishVisibility, setPublishVisibility] = useState<DiaryEntryVisibility>("private");
+  const [publishVisibleTo, setPublishVisibleTo] = useState<string[]>([]);
+  const [permissionOpen, setPermissionOpen] = useState(false);
 
   const notify = useCallback((message: string) => {
     onNotice?.(message);
@@ -174,6 +230,11 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
   useEffect(() => {
     setCharacters(loadCharacters());
     refreshEntries();
+    // 发布卡片左上角那个 26×26 头像跟着「当前账号」走
+    const syncIdentity = () => setUserIdentity(resolveUserIdentity(undefined, "diary"));
+    syncIdentity();
+    window.addEventListener("settings-identities-updated", syncIdentity);
+    return () => window.removeEventListener("settings-identities-updated", syncIdentity);
   }, [refreshEntries]);
 
   useEffect(() => {
@@ -310,15 +371,69 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
     notify("日记已更新。");
   }, [kind, notify, refreshEntries, resolveTargets]);
 
+  /** 顶部发布卡片的「发送」：直接写一篇「我的」日记，不再走选择角色的弹窗 */
+  const publishEntry = useCallback(() => {
+    const body = publishBody.trim();
+    const title = publishTitle.trim();
+    if (!body && !title) {
+      notify("先写点什么再发送。");
+      return;
+    }
+    // 日记条目必须有归属角色（存储层会把没有 characterId 的条目丢掉），取列表第一位兜底
+    const target = characters[0];
+    if (!target) {
+      notify("还没有角色，先在手机里创建一位角色。");
+      return;
+    }
+    const created = createDiaryEntry({
+      characterId: target.id,
+      characterName: target.name,
+      authorType: "user",
+      title,
+      body,
+      blocks: body ? [{ type: "paragraph", text: body }] : [],
+      visibility: publishVisibility,
+      visibleTo: publishVisibility === "partial" ? publishVisibleTo : [],
+      trigger: "manual",
+    });
+    setPublishTitle("");
+    setPublishBody("");
+    setPublishVisibility("private");
+    setPublishVisibleTo([]);
+    setPermissionOpen(false);
+    setTab("mine");
+    refreshEntries();
+    scheduleDiaryReply(created);
+    notify("日记已发布。");
+  }, [
+    characters,
+    notify,
+    publishBody,
+    publishTitle,
+    publishVisibility,
+    publishVisibleTo,
+    refreshEntries,
+  ]);
+
+  const togglePublishVisibleTo = useCallback((characterId: string) => {
+    setPublishVisibleTo(prev => prev.includes(characterId)
+      ? prev.filter(id => id !== characterId)
+      : [...prev, characterId]);
+  }, []);
+
   const kindEntries = useMemo(() => entries.filter(entry => entry.authorType === kind), [entries, kind]);
 
-  const sortedKindEntries = useMemo(() => {
-    return [...kindEntries].sort((a, b) => {
-      const timeA = new Date(a.createdAt).getTime();
-      const timeB = new Date(b.createdAt).getTime();
-      return (Number.isNaN(timeB) ? 0 : timeB) - (Number.isNaN(timeA) ? 0 : timeA);
-    });
-  }, [kindEntries]);
+  const sortedKindEntries = useMemo(() => sortEntriesByTime(kindEntries), [kindEntries]);
+
+  /** 「日记」页签：我写的；「朋友」页签：TA 写的 */
+  const mySortedEntries = useMemo(
+    () => sortEntriesByTime(entries.filter(entry => entry.authorType === "user")),
+    [entries],
+  );
+  const friendSortedEntries = useMemo(
+    () => sortEntriesByTime(entries.filter(entry => entry.authorType === "character")),
+    [entries],
+  );
 
   const books = useMemo<DiaryBook[]>(() => {
     const map = new Map<string, DiaryEntry[]>();
@@ -359,7 +474,7 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
           <ChevronLeft size={20} />
         </button>
         <div>
-          <h1>{kind === "user" ? "我的日记" : "TA的日记"}</h1>
+          <h1>手记</h1>
         </div>
         <input
           ref={fontFileRef}
@@ -382,12 +497,12 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
             type="button"
             className="note-wall-menu-btn"
             onClick={() => {
-              if (kind === "user") setReplySettingsOpen(true);
-              else if (kind === "character") setTimerSettingsOpen(true);
+              // 「日记」页签管我写的日记怎么被回应；「朋友」页签管TA什么时候写、用哪个 API
+              if (tab === "mine") setReplySettingsOpen(true);
               else if (activeBook) setBookSettingsOpen(true);
               else setTimerSettingsOpen(true);
             }}
-            aria-label={kind === "user" ? "聊天回应设置" : "日记设置"}
+            aria-label={tab === "mine" ? "聊天回应设置" : "日记设置"}
           >
             <DotsThree size={28} weight="bold" />
           </button>
@@ -395,22 +510,132 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
       </header>
 
       <main ref={entryMainRef} className="diary-entry-main">
-        {kindEntries.length === 0 ? (
-          <div className="diary-entry-empty">
-            <NotebookPen size={34} strokeWidth={1.5} />
-            <h2>还没有日记</h2>
-            <p>{kind === "user" ? "从你写下的第一句话开始。" : "让角色先写一篇，纸面会从这里开始铺开。"}</p>
-            <button type="button" onClick={() => (kind === "user" ? setComposePickerOpen(true) : setWritePanelOpen(true))}>
-              {kind === "user" ? "写下第一篇" : "让TA写一篇"}
-            </button>
+        <div className="diary-flat-entry-list diary-hub-list">
+          {/* 页签上方那张卡片：与日记卡片同宽 */}
+          <section className="diary-hub-compose">
+            <div className="diary-hub-compose-head">
+              <span className="diary-hub-compose-avatar" aria-hidden="true">
+                {userIdentity?.avatarUrl ? <img src={userIdentity.avatarUrl} alt="" /> : <UserRound size={14} />}
+              </span>
+              <input
+                type="text"
+                className="diary-hub-compose-title"
+                value={publishTitle}
+                onChange={event => setPublishTitle(event.target.value)}
+                placeholder="标题"
+                maxLength={80}
+                aria-label="日记标题"
+              />
+            </div>
+            <div className="diary-hub-compose-divider" aria-hidden="true" />
+            <textarea
+              className="diary-hub-compose-body"
+              value={publishBody}
+              onChange={event => setPublishBody(event.target.value)}
+              placeholder="写点什么…"
+              rows={4}
+              aria-label="日记正文"
+            />
+            <div className="diary-hub-compose-actions">
+              <div className="diary-hub-permission">
+                <button
+                  type="button"
+                  className="diary-hub-permission-btn"
+                  onClick={() => setPermissionOpen(open => !open)}
+                  aria-haspopup="true"
+                  aria-expanded={permissionOpen}
+                >
+                  {DIARY_VISIBILITY_LABELS[publishVisibility]}
+                  <ChevronDown size={12} />
+                </button>
+                {permissionOpen ? (
+                  <>
+                    <div className="diary-hub-permission-backdrop" onClick={() => setPermissionOpen(false)} />
+                    <div className="diary-hub-permission-menu" role="menu">
+                      {(Object.keys(DIARY_VISIBILITY_LABELS) as DiaryEntryVisibility[]).map(mode => (
+                        <button
+                          key={mode}
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={publishVisibility === mode}
+                          className={publishVisibility === mode ? "is-active" : ""}
+                          onClick={() => {
+                            setPublishVisibility(mode);
+                            if (mode !== "partial") setPermissionOpen(false);
+                          }}
+                        >
+                          {DIARY_VISIBILITY_LABELS[mode]}
+                        </button>
+                      ))}
+                      {publishVisibility === "partial" ? (
+                        <div className="diary-hub-permission-people">
+                          {characters.length === 0 ? (
+                            <p>暂无角色可选</p>
+                          ) : characters.map(character => (
+                            <label key={character.id}>
+                              <input
+                                type="checkbox"
+                                checked={publishVisibleTo.includes(character.id)}
+                                onChange={() => togglePublishVisibleTo(character.id)}
+                              />
+                              <span>{character.name}</span>
+                            </label>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  </>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                className="diary-hub-send-btn"
+                onClick={publishEntry}
+                disabled={!publishTitle.trim() && !publishBody.trim()}
+              >
+                发送
+              </button>
+            </div>
+          </section>
+
+          {/* 三个页签：日记 / 朋友 / 通知，等分宽度，选中变蓝 */}
+          <div className="diary-hub-tabs" role="tablist" aria-label="手记分类">
+            {DIARY_HUB_TABS.map(item => (
+              <button
+                key={item.id}
+                type="button"
+                role="tab"
+                aria-selected={tab === item.id}
+                className={`diary-hub-tab ${tab === item.id ? "is-active" : ""}`}
+                onClick={() => setTab(item.id)}
+              >
+                {item.label}
+              </button>
+            ))}
           </div>
-        ) : kind === "character" ? (
-          <div className="diary-flat-entry-list">
-            {sortedKindEntries.map(entry => (
+
+          {tab === "notices" ? (
+            <DiaryHubNoticeList entries={entries} characters={characters} userIdentity={userIdentity} />
+          ) : null}
+
+          {tab !== "notices" && (tab === "mine" ? mySortedEntries : friendSortedEntries).length === 0 ? (
+            <div className="diary-entry-empty">
+              <NotebookPen size={34} strokeWidth={1.5} />
+              <h2>{tab === "mine" ? "还没有日记" : "还没有TA的日记"}</h2>
+              <p>{tab === "mine" ? "在上面写一句，或者点右下角写下第一篇。" : "让角色先写一篇，纸面会从这里开始铺开。"}</p>
+              <button type="button" onClick={() => (tab === "mine" ? setComposePickerOpen(true) : setWritePanelOpen(true))}>
+                {tab === "mine" ? "写下第一篇" : "让TA写一篇"}
+              </button>
+            </div>
+          ) : null}
+
+          {tab !== "notices"
+            ? (tab === "mine" ? mySortedEntries : friendSortedEntries).map(entry => (
               <DiaryEntryCard
                 key={entry.id}
                 entry={entry}
                 character={characters.find(c => c.id === entry.characterId)}
+                userIdentity={userIdentity}
                 isDragSource={trash.drag?.item.id === entry.id}
                 onPointerDown={(event) => trash.onPointerDown(event, entry)}
                 onPointerMove={trash.onPointerMove}
@@ -426,58 +651,29 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
                   setActiveEntry(entry);
                 }}
               />
-            ))}
-          </div>
-        ) : (
-          <div className="diary-flat-entry-list">
-            {sortedKindEntries.map(entry => (
-              <DiaryEntryCard
-                key={entry.id}
-                entry={entry}
-                character={characters.find(c => c.id === entry.characterId)}
-                isDragSource={trash.drag?.item.id === entry.id}
-                onPointerDown={(event) => trash.onPointerDown(event, entry)}
-                onPointerMove={trash.onPointerMove}
-                onPointerUp={trash.onPointerUp}
-                onPointerCancel={trash.onPointerCancel}
-                onPointerLeave={trash.onPointerLeave}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  if (trash.isClickSuppressed()) {
-                    event.preventDefault();
-                    return;
-                  }
-                  setActiveEntry(entry);
-                }}
-              />
-            ))}
-          </div>
-        )}
+            ))
+            : null}
+        </div>
       </main>
 
-      {kindEntries.length > 0 ? (
-        kind === "user" ? (
-          activeBook ? (
-            <button
-              type="button"
-              className="diary-entry-write-btn"
-              onClick={() => setComposeTarget({ mode: "create", characterId: activeBook.characterId })}
-            >
-              <NotebookPen size={18} strokeWidth={1.7} />
-              <span>写日记</span>
-            </button>
-          ) : (
-            <button type="button" className="diary-entry-write-btn" onClick={() => setComposePickerOpen(true)}>
-              <NotebookPen size={18} strokeWidth={1.7} />
-              <span>写日记</span>
-            </button>
-          )
-        ) : (
-          <button type="button" className="diary-entry-write-btn" onClick={() => setWritePanelOpen(true)}>
-            <WandSparkles size={18} strokeWidth={1.7} />
-            <span>让TA写</span>
-          </button>
-        )
+      {tab === "mine" ? (
+        <button
+          type="button"
+          className="diary-entry-write-btn"
+          onClick={() => {
+            // 已经点进某本日记就写给那一位，否则弹「写给谁」
+            if (activeBook) setComposeTarget({ mode: "create", characterId: activeBook.characterId });
+            else setComposePickerOpen(true);
+          }}
+        >
+          <NotebookPen size={18} strokeWidth={1.7} />
+          <span>写日记</span>
+        </button>
+      ) : tab === "friends" ? (
+        <button type="button" className="diary-entry-write-btn" onClick={() => setWritePanelOpen(true)}>
+          <WandSparkles size={18} strokeWidth={1.7} />
+          <span>让TA写</span>
+        </button>
       ) : null}
 
       {bookSettingsOpen && activeBook && kind === "character" ? (
@@ -610,6 +806,7 @@ export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps
           <DiaryEntryCardContent
             entry={trash.drag.item}
             character={characters.find(c => c.id === trash.drag?.item.characterId)}
+            userIdentity={userIdentity}
           />
         </div>
       ) : null}
@@ -654,7 +851,11 @@ function DiaryBookCover({ book, busy, onOpen }: { book: DiaryBook; busy: boolean
   );
 }
 
-function DiaryEntryCardContent({ entry, character }: { entry: DiaryEntry; character?: Character }) {
+function DiaryEntryCardContent({ entry, character, userIdentity }: {
+  entry: DiaryEntry;
+  character?: Character;
+  userIdentity?: Pick<UserIdentity, "name" | "avatarUrl"> | null;
+}) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [canExpand, setCanExpand] = useState(false);
   const bodyRef = useRef<HTMLDivElement | null>(null);
@@ -681,19 +882,23 @@ function DiaryEntryCardContent({ entry, character }: { entry: DiaryEntry; charac
     }
   }, [preview]);
 
+  const isMine = entry.authorType === "user";
+  // 我写的日记：作者名/头像跟「当前账号」走，第二行换成可见范围；TA 的日记照旧显示 @手机号
   const phone = character?.wechatID || character?.id || "";
-  const avatar = character?.avatar || "";
+  const authorName = isMine ? (userIdentity?.name || "我") : entry.characterName;
+  const avatar = isMine ? (userIdentity?.avatarUrl || "") : (character?.avatar || "");
+  const subline = isMine ? visibilitySummary(entry) : `@${phone}`;
 
   return (
     <div className="diary-flat-card-inner">
       {/* 第一行最左侧是32*32px的角色圆形头像，右侧第一行角色名（黑），第二行小一号字ID（@手机号） */}
       <div className="diary-flat-card-author-row">
         <div className="diary-flat-card-avatar">
-          {avatar ? <img src={avatar} alt={entry.characterName} /> : <Bot size={18} />}
+          {avatar ? <img src={avatar} alt={authorName} /> : isMine ? <UserRound size={17} /> : <Bot size={18} />}
         </div>
         <div className="diary-flat-card-author-info">
-          <span className="diary-flat-card-author-name">{entry.characterName}</span>
-          <span className="diary-flat-card-author-id">@{phone}</span>
+          <span className="diary-flat-card-author-name">{authorName}</span>
+          <span className="diary-flat-card-author-id">{subline}</span>
         </div>
       </div>
 
@@ -729,6 +934,7 @@ function DiaryEntryCardContent({ entry, character }: { entry: DiaryEntry; charac
 function DiaryEntryCard({
   entry,
   character,
+  userIdentity,
   isDragSource,
   onClick,
   onPointerDown,
@@ -739,6 +945,7 @@ function DiaryEntryCard({
 }: {
   entry: DiaryEntry;
   character?: Character;
+  userIdentity?: Pick<UserIdentity, "name" | "avatarUrl"> | null;
   isDragSource: boolean;
   onClick: (event: MouseEvent<HTMLButtonElement>) => void;
   onPointerDown: (event: PointerEvent<HTMLButtonElement>) => void;
@@ -760,8 +967,75 @@ function DiaryEntryCard({
       onContextMenu={event => event.preventDefault()}
       onClick={onClick}
     >
-      <DiaryEntryCardContent entry={entry} character={character} />
+      <DiaryEntryCardContent entry={entry} character={character} userIdentity={userIdentity} />
     </button>
+  );
+}
+
+type DiaryNotice = {
+  id: string;
+  text: string;
+  time: string;
+  isMine: boolean;
+  characterId: string;
+};
+
+/** 「通知」页签：把最近的日记动态摊成一条条通知（谁发布了/更新了日记） */
+function buildDiaryNotices(entries: DiaryEntry[]): DiaryNotice[] {
+  return [...entries]
+    .sort((a, b) => {
+      const timeA = new Date(a.updatedAt || a.createdAt).getTime();
+      const timeB = new Date(b.updatedAt || b.createdAt).getTime();
+      return (Number.isNaN(timeB) ? 0 : timeB) - (Number.isNaN(timeA) ? 0 : timeA);
+    })
+    .slice(0, 60)
+    .map(entry => {
+      const mine = entry.authorType === "user";
+      const who = mine ? "你" : entry.characterName;
+      const edited = Boolean(entry.updatedAt && entry.createdAt && entry.updatedAt !== entry.createdAt);
+      return {
+        id: entry.id,
+        text: `${who}${edited ? "更新了" : "发布了"}一则日记${entry.title ? `：《${entry.title}》` : ""}`,
+        time: entry.updatedAt || entry.createdAt,
+        isMine: mine,
+        characterId: entry.characterId,
+      };
+    });
+}
+
+function DiaryHubNoticeList({ entries, characters, userIdentity }: {
+  entries: DiaryEntry[];
+  characters: Character[];
+  userIdentity: UserIdentity | null;
+}) {
+  const notices = useMemo(() => buildDiaryNotices(entries), [entries]);
+
+  if (notices.length === 0) {
+    return (
+      <div className="diary-entry-empty">
+        <Clock3 size={32} strokeWidth={1.5} />
+        <h2>还没有动态</h2>
+        <p>有人写了日记，这里会出现记录。</p>
+      </div>
+    );
+  }
+
+  return (
+    <ul className="diary-hub-notice-list">
+      {notices.map(notice => {
+        const character = characters.find(item => item.id === notice.characterId);
+        const avatar = notice.isMine ? (userIdentity?.avatarUrl || "") : (character?.avatar || "");
+        return (
+          <li key={notice.id} className="diary-hub-notice">
+            <span className="diary-hub-notice-avatar" aria-hidden="true">
+              {avatar ? <img src={avatar} alt="" /> : notice.isMine ? <UserRound size={15} /> : <Bot size={15} />}
+            </span>
+            <span className="diary-hub-notice-text">{notice.text}</span>
+            <time className="diary-hub-notice-time">{formatRelativeTime(notice.time)}</time>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

@@ -20,12 +20,19 @@ export type DiaryEntryBlock =
   | { type: "bullet"; title?: string; items: string[] }
   | { type: "image"; caption?: string; description: string };
 
+/** 用户写日记时选的可见范围：私密 / 公开 / 仅部分人可见 */
+export type DiaryEntryVisibility = "private" | "public" | "partial";
+
 export type DiaryEntry = {
   id: string;
   characterId: string;
   characterName: string;
   /** "character"（角色写自己的日记，默认，兼容老数据）| "user"（用户手写，给角色看的日记） */
   authorType: DiaryEntryAuthorType;
+  /** 仅 authorType === "user" 时有意义：这篇日记给谁看。老数据没有就按「私密」处理 */
+  visibility?: DiaryEntryVisibility;
+  /** visibility === "partial" 时能看到的角色 id 名单 */
+  visibleTo?: string[];
   title: string;
   dateLabel: string;
   mood: string;
@@ -44,6 +51,8 @@ export type DiaryEntryInput = {
   characterId: string;
   characterName: string;
   authorType?: DiaryEntryAuthorType;
+  visibility?: DiaryEntryVisibility;
+  visibleTo?: string[];
   title: string;
   dateLabel?: string;
   mood?: string;

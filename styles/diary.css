@@ -4735,3 +4735,309 @@
 @keyframes diary-generating-spin {
   to { transform: rotate(360deg); }
 }
+
+/* ---- 手记首页：发布卡片 + 三个页签 + 通知列表 ---- */
+
+/* 首页整块不再是「一整张白纸」，发布卡片、页签、条目各自成块 */
+.diary-hub-list {
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.diary-hub-list > .diary-entry-empty {
+  min-height: 300px;
+  background: #ffffff;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+/* 发布卡片：宽度与日记卡片一致 */
+.diary-hub-compose {
+  display: grid;
+  width: 100%;
+  padding: 14px 16px 10px;
+  background: #ffffff;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  box-sizing: border-box;
+}
+
+.diary-hub-compose-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* 第一行左侧 26×26 用户头像 */
+.diary-hub-compose-avatar {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: rgba(48, 45, 40, 0.08);
+  color: rgba(48, 45, 40, 0.46);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.diary-hub-compose-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* 头像右侧是标题输入，未输入时显示占位「标题」，可以为空 */
+.diary-hub-compose-title {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: #252525;
+  font-family: var(--diary-entry-font-family);
+  font-size: calc(15px*var(--app-text-scale,1));
+  line-height: 1.4;
+  font-weight: 500;
+  padding: 2px 0;
+  outline: none;
+}
+
+.diary-hub-compose-title::placeholder {
+  color: rgba(37, 37, 37, 0.34);
+  font-weight: 400;
+}
+
+/* 标题行与正文之间的细分割线，与标题左对齐 */
+.diary-hub-compose-divider {
+  height: 1px;
+  margin: 8px 0 8px 34px;
+  background: rgba(0, 0, 0, 0.08);
+}
+
+/* 正文与标题行左对齐（让开 26px 头像 + 8px 间距） */
+.diary-hub-compose-body {
+  width: calc(100% - 34px);
+  min-height: 76px;
+  margin-left: 34px;
+  border: 0;
+  background: transparent;
+  color: #252525;
+  font-family: var(--diary-entry-font-family);
+  font-size: calc(14px*var(--app-text-scale,1));
+  line-height: 1.6;
+  resize: none;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.diary-hub-compose-body::placeholder {
+  color: rgba(37, 37, 37, 0.3);
+}
+
+.diary-hub-compose-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.diary-hub-permission {
+  position: relative;
+  display: inline-flex;
+}
+
+.diary-hub-permission-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 26px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: rgba(37, 37, 37, 0.54);
+  font-family: var(--app-font-family);
+  font-size: calc(11.5px*var(--app-text-scale,1));
+  cursor: pointer;
+}
+
+.diary-hub-permission-btn:active {
+  background: rgba(48, 45, 40, 0.06);
+}
+
+.diary-hub-permission-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 19;
+}
+
+.diary-hub-permission-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 20;
+  min-width: 132px;
+  padding: 5px;
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: 0 8px 22px rgba(24, 30, 34, 0.16), 0 0 0 1px rgba(24, 30, 34, 0.06);
+  display: grid;
+  gap: 2px;
+}
+
+.diary-hub-permission-menu > button {
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: rgba(37, 37, 37, 0.76);
+  font-family: var(--app-font-family);
+  font-size: calc(12px*var(--app-text-scale,1));
+  text-align: left;
+  padding: 7px 9px;
+  cursor: pointer;
+}
+
+.diary-hub-permission-menu > button.is-active {
+  color: #5f87a1;
+  background: rgba(143, 178, 200, 0.16);
+}
+
+/* 「仅部分人可见」展开后的勾选名单 */
+.diary-hub-permission-people {
+  display: grid;
+  gap: 2px;
+  max-height: 158px;
+  overflow: auto;
+  margin-top: 3px;
+  padding: 4px 0 2px;
+  border-top: 1px solid rgba(0, 0, 0, 0.07);
+}
+
+.diary-hub-permission-people label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  font-family: var(--app-font-family);
+  font-size: calc(12px*var(--app-text-scale,1));
+  color: rgba(37, 37, 37, 0.7);
+  cursor: pointer;
+}
+
+.diary-hub-permission-people input {
+  accent-color: #8fb2c8;
+}
+
+.diary-hub-permission-people p {
+  margin: 4px 9px;
+  font-family: var(--app-font-family);
+  font-size: calc(11.5px*var(--app-text-scale,1));
+  color: rgba(37, 37, 37, 0.44);
+}
+
+/* 方形圆角蓝底白字的发送按钮 */
+.diary-hub-send-btn {
+  flex: 0 0 auto;
+  min-width: 54px;
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 3px;
+  background: #8fb2c8;
+  color: #ffffff;
+  font-family: var(--app-font-family);
+  font-size: calc(12px*var(--app-text-scale,1));
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.diary-hub-send-btn:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+/* 三个页签：等分宽度，选中变蓝（#8fb2c8） */
+.diary-hub-tabs {
+  display: flex;
+  width: 100%;
+  background: #ffffff;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.diary-hub-tab {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 42px;
+  border: 0;
+  background: transparent;
+  color: rgba(37, 37, 37, 0.48);
+  font-family: var(--app-font-family);
+  font-size: calc(13.5px*var(--app-text-scale,1));
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.16s ease;
+  touch-action: manipulation;
+}
+
+.diary-hub-tab.is-active {
+  color: #8fb2c8;
+  font-weight: 600;
+}
+
+/* 通知页签：近期操作记录 */
+.diary-hub-notice-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  background: #ffffff;
+}
+
+.diary-hub-notice {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 13px 16px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  font-family: var(--app-font-family);
+}
+
+.diary-hub-notice-avatar {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: rgba(48, 45, 40, 0.08);
+  color: rgba(48, 45, 40, 0.46);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.diary-hub-notice-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.diary-hub-notice-text {
+  flex: 1;
+  min-width: 0;
+  font-size: calc(13px*var(--app-text-scale,1));
+  line-height: 1.45;
+  color: rgba(37, 37, 37, 0.82);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diary-hub-notice-time {
+  flex: 0 0 auto;
+  font-size: calc(11px*var(--app-text-scale,1));
+  color: rgba(37, 37, 37, 0.38);
+  white-space: nowrap;
+}

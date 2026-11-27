@@ -10,6 +10,7 @@ import {
   type DiaryEntryTimerSettings,
   type DiaryEntryTodoItem,
   type DiaryEntryTrigger,
+  type DiaryEntryVisibility,
   type DiaryFontKind,
   type DiaryReplyMode,
   type DiaryReplyRules,
@@ -58,6 +59,16 @@ const DIARY_REPLY_MODES: DiaryReplyMode[] = ["none", "immediate", "delay", "merg
 
 function normalizeAuthorType(value: unknown): DiaryEntryAuthorType {
   return value === "user" ? "user" : "character";
+}
+
+/** 可见范围：认不出来的（含老数据）一律当「私密」，不意外公开 */
+function normalizeVisibility(value: unknown): DiaryEntryVisibility {
+  return value === "public" || value === "partial" ? value : "private";
+}
+
+function normalizeVisibleTo(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(value.map(item => cleanText(item, 120)).filter(Boolean))).slice(0, 60);
 }
 
 function normalizeReplyMode(value: unknown, fallback: DiaryReplyMode = "none"): DiaryReplyMode {
@@ -256,6 +267,8 @@ export function normalizeDiaryEntry(raw: unknown): DiaryEntry | null {
     characterName: cleanText(record.characterName ?? record.character_name, 80) || "角色",
     // 老数据没有这个字段：一律当成角色自己写的日记，跟以前行为一致。
     authorType: normalizeAuthorType(record.authorType ?? record.author_type),
+    visibility: normalizeVisibility(record.visibility),
+    visibleTo: normalizeVisibleTo(record.visibleTo ?? record.visible_to),
     title,
     dateLabel: cleanText(record.dateLabel ?? record.date_label, 40) || formatDateLabel(createdAt),
     mood: cleanText(record.mood, 60),
@@ -308,6 +321,8 @@ export function createDiaryEntry(input: DiaryEntryInput): DiaryEntry {
     characterId: cleanText(input.characterId, 120),
     characterName: cleanText(input.characterName, 80) || "角色",
     authorType: normalizeAuthorType(input.authorType),
+    visibility: normalizeVisibility(input.visibility),
+    visibleTo: normalizeVisibleTo(input.visibleTo),
     title: cleanText(input.title, 80) || body.slice(0, 20) || "未命名日记",
     dateLabel: cleanText(input.dateLabel, 40) || formatDateLabel(now),
     mood: cleanText(input.mood, 60),
@@ -336,6 +351,8 @@ export function updateDiaryEntry(id: string, patch: DiaryEntryPatch): DiaryEntry
   const blocks = patch.blocks !== undefined ? normalizeBlocks(patch.blocks, body) : current.blocks;
   const updated: DiaryEntry = {
     ...current,
+    visibility: patch.visibility !== undefined ? normalizeVisibility(patch.visibility) : current.visibility,
+    visibleTo: patch.visibleTo !== undefined ? normalizeVisibleTo(patch.visibleTo) : current.visibleTo,
     title: patch.title !== undefined ? (cleanText(patch.title, 80) || body.slice(0, 20) || "未命名日记") : current.title,
     dateLabel: patch.dateLabel !== undefined ? cleanText(patch.dateLabel, 40) || current.dateLabel : current.dateLabel,
     mood: patch.mood !== undefined ? cleanText(patch.mood, 60) : current.mood,
