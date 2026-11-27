@@ -1,7 +1,7 @@
 "use client";
 
 import { Component, useState, useEffect, useCallback, useRef, type CSSProperties, type ReactNode } from "react";
-import { Trash2, Zap, Clock, Users, Archive, Folder, AlertCircle, Search, Brain, FileText, MoreHorizontal, Plus, Edit3, X, Check, ChevronLeft, ChevronRight, Filter, SlidersHorizontal, Sparkles, RotateCcw, History, type LucideIcon } from "lucide-react";
+import { Trash2, Zap, Clock, Users, Archive, Folder, AlertCircle, Search, Brain, FileText, MoreHorizontal, Plus, Edit3, X, Check, ChevronLeft, ChevronRight, Filter, SlidersHorizontal, Sparkles, RotateCcw, RotateCw, History, type LucideIcon } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { MemoryTimeline } from "./memory-timeline";
 import { Toggle } from "@/components/ui/form";
@@ -373,8 +373,10 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const [memoryEditor, setMemoryEditor] = useState<MemoryEditorState | null>(null);
     const [savingMemory, setSavingMemory] = useState(false);
     const [embeddingAll, setEmbeddingAll] = useState(false);
-    /** 正在「溯源重总结」的条目 id */
+    /** 正在「重新总结」的条目 id */
     const [resplittingEntryId, setResplittingEntryId] = useState<string | null>(null);
+    /** 「重新总结」弹窗：先写修正思路，再带着它让模型重新总结 */
+    const [resummarizeDialog, setResummarizeDialog] = useState<{ entry: MemoryEntry; instruction: string } | null>(null);
     /** 一键将旧版遗留的拆分碎片移入回收站 */
     const [cleaningFragments, setCleaningFragments] = useState(false);
     const [cleaningManualText, setCleaningManualText] = useState(false);
@@ -670,13 +672,22 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         }
     };
 
-    /** 溯源重总结：必须追溯到原始对话/事件记录才重新总结，无原文绝不编造 */
-    const handleResplitEntry = async (entry: MemoryEntry) => {
+    /**
+     * 重新总结：必须追溯到原始对话/事件记录，无原文绝不编造。
+     * instruction 是用户在弹窗里写的修正思路，会以最高优先级注入提示词。
+     */
+    const handleResplitEntry = async (entry: MemoryEntry, instruction?: string) => {
         if (!selectedCharId || resplittingEntryId) return;
         setEntryMenuId(null);
+        setResummarizeDialog(null);
         setResplittingEntryId(entry.id);
         try {
-            const res = await resplitMergedMemory(selectedCharId, selectedChar?.name ?? "角色", entry.id);
+            const res = await resplitMergedMemory(
+                selectedCharId,
+                selectedChar?.name ?? "角色",
+                entry.id,
+                instruction,
+            );
             if (res.success) {
                 await loadDetailData(selectedCharId);
                 loadCharacterList();
@@ -686,10 +697,10 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                         : "已按原始对话记录重新总结修正并更新向量，原条目已移入「最近删除」",
                 );
             } else {
-                showNotice(res.error || "溯源重总结失败");
+                showNotice(res.error || "重新总结失败");
             }
         } catch (err) {
-            showNotice("溯源重总结出错: " + String(err));
+            showNotice("重新总结出错: " + String(err));
         } finally {
             setResplittingEntryId(null);
         }
@@ -1999,24 +2010,31 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                                     </button>
                                                     {type === "long_term" && !entryIsDigest && (
                                                         <button
-                                                            onClick={() => void handleResplitEntry(entry)}
+                                                            onClick={() => {
+                                                                setEntryMenuId(null);
+                                                                setResummarizeDialog({ entry, instruction: "" });
+                                                            }}
                                                             disabled={Boolean(resplittingEntryId)}
-                                                            title="回溯原始对话/事件记录重新核对与总结（若已无原文记录将拒绝重总结，绝不二次臆测）"
+                                                            title="回到这条记忆对应的原始对话/事件记录重新总结，可先写下你希望模型修正的思路（没有原文记录时会拒绝执行，绝不对着旧总结二次编造）"
                                                         >
-                                                            <Sparkles size={13} />
+                                                            <RotateCw size={13} />
                                                             <span>
-                                                                {resplittingEntryId === entry.id ? "溯源总结中..." : "溯源重总结"}
+                                                                {resplittingEntryId === entry.id ? "重新总结中..." : "重新总结"}
                                                             </span>
                                                         </button>
                                                     )}
 
-                                                    {type === "long_term" && !entryIsDigest && (
+                                                    {/* 清洗按钮只在「确实需要整理」的条目上出现：
+                                                        自动总结产出、格式已规范、已在事件盒里的条目都没有清洗的意义，
+                                                        菜单里直接不给这个入口，免得看着像是「每条都得点一下」。 */}
+                                                    {type === "long_term" && !entryIsDigest && isLegacyUnorganizedMemory(entry) && (
                                                         <button
                                                             onClick={() => void handleCleanSingleLegacyEntry(entry)}
                                                             disabled={Boolean(cleaningLegacyEntryId) || cleaningAllLegacy}
+                                                            title="这条记忆的格式还没归档（长文本/多段落/带日期/缺检索关键词），可以拆条整理"
                                                         >
                                                             <Sparkles size={13} />
-                                                            <span>{cleaningLegacyEntryId === entry.id ? "清洗中..." : "清洗"}</span>
+                                                            <span>{cleaningLegacyEntryId === entry.id ? "清洗中..." : "清洗格式"}</span>
                                                         </button>
                                                     )}
                                                     {/* 只有一个删除入口：先移进「最近删除」，真删在回收站里做。
@@ -2145,7 +2163,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                         return (
                                             <div className="mem-superseded-note" style={{ display: "block" }} onClick={ev => ev.stopPropagation()}>
                                                 <div className="ts-11 text-secondary">
-                                                    原文溯源：未找到该日期对应的原始对话或事件记录（聊天记录可能已清理，不可执行溯源重总结）。
+                                                    原文溯源：未找到该日期对应的原始对话或事件记录（聊天记录可能已清理，无法执行重新总结）。
                                                 </div>
                                             </div>
                                         );
@@ -3135,6 +3153,66 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                     );
                 })()}
 
+                {/* 重新总结：先写修正思路，再交给模型按原文重新核对 */}
+                {resummarizeDialog && (
+                    <div
+                        className="modal-overlay modal-overlay-bottom"
+                        data-ui="modal"
+                        onClick={() => { if (!resplittingEntryId) setResummarizeDialog(null); }}
+                    >
+                        <div className="modal-sheet mem-edit-sheet" data-ui="modal-sheet" onClick={ev => ev.stopPropagation()}>
+                            <div className="modal-header" data-ui="modal-header">
+                                <button
+                                    className="modal-header-btn modal-header-btn-muted"
+                                    disabled={Boolean(resplittingEntryId)}
+                                    onClick={() => setResummarizeDialog(null)}
+                                >
+                                    <X size={18} />
+                                </button>
+                                <h3 className="modal-title">重新总结</h3>
+                                <button
+                                    className="modal-header-btn modal-header-btn-action"
+                                    disabled={Boolean(resplittingEntryId)}
+                                    onClick={() => void handleResplitEntry(resummarizeDialog.entry, resummarizeDialog.instruction)}
+                                >
+                                    <Check size={18} />
+                                </button>
+                            </div>
+                            <div className="modal-body mem-edit-body" data-ui="modal-body">
+                                <div className="ts-12 text-secondary" style={{ whiteSpace: "pre-wrap", opacity: 0.85 }}>
+                                    当前记忆：
+                                    {(stripMemoryStructuredSections(resummarizeDialog.entry.content) || resummarizeDialog.entry.content).slice(0, 160)}
+                                    {(stripMemoryStructuredSections(resummarizeDialog.entry.content) || resummarizeDialog.entry.content).length > 160 ? "…" : ""}
+                                </div>
+                                <div className="mem-edit-field-row" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+                                    <label className="mem-edit-field-label">修正思路（可留空）</label>
+                                    <textarea
+                                        className="ui-textarea ts-12"
+                                        style={{ minHeight: 96 }}
+                                        maxLength={2000}
+                                        placeholder={"写清楚这条记忆哪里总结错了、希望模型怎么改。例如：\n· 他不是女生，全文的「她」都要改成「他」\n· 两件事其实没关系，不要写成因为A所以B\n· 「调侃他扮观音」只是玩笑，不要写成真的扮过"}
+                                        value={resummarizeDialog.instruction}
+                                        onChange={e => {
+                                            const val = e.target.value;
+                                            setResummarizeDialog(prev => prev ? { ...prev, instruction: val } : prev);
+                                        }}
+                                    />
+                                    <span className="ts-11 text-secondary">
+                                        会以最高优先级注入提示词；模型仍只能依据原始对话/事件记录改写，不会因为这段要求而编造原文没有的事。
+                                    </span>
+                                </div>
+                                <button
+                                    className="ui-btn ui-btn-primary mem-edit-save-btn"
+                                    disabled={Boolean(resplittingEntryId)}
+                                    onClick={() => void handleResplitEntry(resummarizeDialog.entry, resummarizeDialog.instruction)}
+                                >
+                                    {resplittingEntryId ? "重新总结中..." : "开始重新总结"}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {/* 最近删除：清空回收站二次确认（不可恢复） */}
                 {confirmEmptyTrash && (
                     <ConfirmDialog
@@ -3519,6 +3597,11 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         const isEventBoxModified = currentEventBoxPrompt !== (savedEventBoxPrompt || DEFAULT_EVENT_BOX_SUMMARY_PROMPT);
         const isEventBoxDefault = !savedEventBoxPrompt || savedEventBoxPrompt === DEFAULT_EVENT_BOX_SUMMARY_PROMPT;
 
+        // 只有确实存在「格式待整理」的条目时才露出这个入口；自动总结的条目不会计入
+        const legacyCleanupCount = selectedCharId
+            ? longTermEntries.filter(e => !isEntryTrashed(e) && isLegacyUnorganizedMemory(e)).length
+            : 0;
+
         return (
             <div className="page-menu memory-settings-menu">
                 {/* Manual summarize */}
@@ -3560,23 +3643,25 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                     </button>
                                 </div>
                             </div>
-                            <div className="menu-item">
-                                <MemorySettingsIcon icon={Sparkles} color={BINDING_ACCENTS.preset} />
-                                <div className="menu-label-group">
-                                    <span className="menu-label">一键清洗旧记忆</span>
-                                    <span className="menu-desc">把以前长文本或混杂的旧记忆自动清洗拆条、提取事件日期并补齐向量</span>
+                            {legacyCleanupCount > 0 && (
+                                <div className="menu-item">
+                                    <MemorySettingsIcon icon={Sparkles} color={BINDING_ACCENTS.preset} />
+                                    <div className="menu-label-group">
+                                        <span className="menu-label">整理旧格式记忆（{legacyCleanupCount}）</span>
+                                        <span className="menu-desc">把长文本或混杂格式的条目拆分、提取事件日期并补齐向量；自动总结的条目不在处理范围内</span>
+                                    </div>
+                                    <div className="menu-right">
+                                        <button
+                                            className="ui-btn ui-btn-outline py-1 px-3 ts-12"
+                                            onClick={() => void handleCleanAllLegacyMemories()}
+                                            disabled={cleaningAllLegacy || summarizing}
+                                        >
+                                            <Sparkles size={12} className="mr-1" />
+                                            {cleaningAllLegacy ? `整理中(${cleanLegacyProgress})` : "一键整理"}
+                                        </button>
+                                    </div>
                                 </div>
-                                <div className="menu-right">
-                                    <button
-                                        className="ui-btn ui-btn-outline py-1 px-3 ts-12"
-                                        onClick={() => void handleCleanAllLegacyMemories()}
-                                        disabled={cleaningAllLegacy || summarizing}
-                                    >
-                                        <Sparkles size={12} className="mr-1" />
-                                        {cleaningAllLegacy ? `清洗中(${cleanLegacyProgress})` : "一键清洗"}
-                                    </button>
-                                </div>
-                            </div>
+                            )}
                         </div>
 
                         {summarizeRangeOpen ? (

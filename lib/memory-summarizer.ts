@@ -746,6 +746,8 @@ export async function resplitMergedMemory(
     characterId: string,
     characterName: string,
     entryId: string,
+    /** 用户本次的修正思路（例如「张三不是女生，别写成她」「这两件事其实无关，要拆开」），会原样注入提示词最高优先级段落 */
+    extraInstruction?: string,
 ): Promise<{ success: boolean; error?: string; createdCount?: number; entryIds?: string[] }> {
     const apiConfig = resolveSummarizationApiConfig(characterId);
     if (!apiConfig) {
@@ -780,6 +782,8 @@ export async function resplitMergedMemory(
         .join("\n");
 
     const charProfile = buildCharacterSummaryProfile(characterId, characterName);
+    // 用户手写的修正思路：限制长度防止把提示词撑爆，空串视为没写
+    const cleanedInstruction = (extraInstruction ?? "").trim().slice(0, 2000);
 
     const prompt = [
         `你是一个严谨的记忆溯源纠偏与重总结助手。角色：${characterName || "角色"}。`,
@@ -802,6 +806,15 @@ export async function resplitMergedMemory(
         "   - 严禁补出原文没明确说过的「通过A就能达成B / 做A是为了B」等因果关联。",
         "4. **保留真正连贯的一件事**：如果原文确实是同一件事的起因、经过、回应与结果，不要按句子切碎；只需把旧记忆里错误的代词、编造的因果或失真表述按原文修正为准确的 1 条。",
         "5. **写作规范**：使用第三人称描述，每条正文控制在 40-120 字左右，正文中严禁写入任何日期或具体时间字样。",
+        // 用户本次写的修正思路：放在硬规则之后、输出格式之前，作为本轮最高优先级的补充要求
+        ...(cleanedInstruction
+            ? [
+                "",
+                "═══ 用户本次的修正要求（最高优先级，必须逐条落实）═══",
+                cleanedInstruction,
+                "（以上要求只允许在【原始对话/事件记录】支持的事实范围内执行；若与原始记录冲突，以原始记录为准，并直接说明无法按该要求改写。严禁为了满足要求而编造原文没有的事实。）",
+            ]
+            : []),
         "",
         "═══ 输出格式（不要输出思考过程或解释）═══",
         "多条记忆之间用单独一行的 `---` 分隔；每条末尾必须各自单独输出两行：",
