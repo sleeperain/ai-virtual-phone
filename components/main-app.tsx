@@ -200,13 +200,15 @@ function SplashScreen({ ready = false, onEnter }: { ready?: boolean; onEnter?: (
  * "先快后慢、永远差一点点"的动画，最后在真正就绪时走满。
  * 规律是渐进加载里常见的那套：越是接近完成越慢，不会走到 100% 卡住干等。
  */
-function BootLoadingContent({ done = false }: { done?: boolean }) {
+function BootLoadingContent({ done = false, withBar = true }: { done?: boolean; withBar?: boolean }) {
   return (
     <div className="boot-loading-content" data-done={done ? "1" : undefined}>
       <span className="boot-loading-text">Loading...</span>
-      <div className="boot-loading-bar" role="progressbar" aria-label={TEXT.loading}>
-        <div className="boot-loading-bar-fill" />
-      </div>
+      {withBar ? (
+        <div className="boot-loading-bar" role="progressbar" aria-label={TEXT.loading}>
+          <div className="boot-loading-bar-fill" />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -220,10 +222,10 @@ function BootLoadingContent({ done = false }: { done?: boolean }) {
  *
  * 它本身极轻：纯色底 + 一行字 + 一条进度条，没有图片、没有模糊。
  */
-function BootLoadingMask({ done = false }: { done?: boolean }) {
+function BootLoadingMask({ done = false, withBar = true }: { done?: boolean; withBar?: boolean }) {
   return (
     <div className="boot-loading-mask" aria-live="polite">
-      <BootLoadingContent done={done} />
+      <BootLoadingContent done={done} withBar={withBar} />
     </div>
   );
 }
@@ -325,9 +327,8 @@ export function MainApp() {
   const [revealReady, setRevealReady] = useState(false);
   // 进度条补满的那一小段（只在揭幕前一刻为真），让"完成"有收尾
   const [revealDone, setRevealDone] = useState(false);
-  // 是否启用了锁屏密码。只有"锁屏 + 有密码"这一种情况值得等 Loading：
-  // 它下面要挂密码盘、桌面，首帧压力最大；开屏动画本身就是等待的视觉替代，
-  // 没密码的锁屏也很轻，都不需要再挡一层。
+  // 是否启用了锁屏密码。只影响"要不要显示进度条"：
+  // 真正的等待（首帧渲染）所有模式都要挡，但有进度条的只有锁屏+密码这一种。
   const [passcodeEnabled, setPasscodeEnabled] = useState(false);
 
   const dismissBoot = useCallback(() => {
@@ -344,9 +345,20 @@ export function MainApp() {
 
   useEffect(() => () => clearTimeout(bootExitTimer.current), []);
 
-  /** 「锁屏 + 启用密码」才需要 Loading 挡首帧，其它情况直接显示 */
-  const bootGateActive = splashMode === "lock" && passcodeEnabled;
-  const showBootLoading = splashMode === "pending" || (bootGateActive && !revealReady);
+  /**
+   * 揭幕前一律先盖住。
+   *
+   * 之前只给「锁屏 + 密码」挡，结果开屏动画模式是边播边挂桌面的：
+   * 动画刚开始，hydrated 一变就把桌面那坨初始化塞进同一帧，
+   * 动画当场卡一下 —— 用户看到的"不流畅"就是这个。
+   * 现在等底下全部挂好、首帧画完再揭幕，动画从第一帧起就是顺的。
+   */
+  const bootGateActive = splashMode !== "pending";
+  const showBootLoading = splashMode === "pending" || !revealReady;
+
+  /** 进度条只给真正需要等的一处：锁屏 + 启用密码。
+      开屏动画本身就是"等待"的视觉替代，没密码的锁屏也很轻，都不放进度条。 */
+  const showBootProgress = splashMode === "lock" && passcodeEnabled;
 
   useEffect(() => {
     desktopMountedRef.current = hydrated;
@@ -361,7 +373,7 @@ export function MainApp() {
   // 只有「锁屏 + 启用密码」需要这一套：那种情况首帧最重，得拿 Loading 挡一下。
   // 开屏动画本身就是等待的视觉替代品，没密码的锁屏也很轻，都不必再挡。
   useEffect(() => {
-    if (!hydrated || splashMode !== "lock" || !passcodeEnabled) return;
+    if (!hydrated || splashMode === "pending") return;
     let raf2 = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const raf1 = requestAnimationFrame(() => {
@@ -378,7 +390,7 @@ export function MainApp() {
       if (raf2) cancelAnimationFrame(raf2);
       if (timer) clearTimeout(timer);
     };
-  }, [hydrated, splashMode, passcodeEnabled]);
+  }, [hydrated, splashMode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -507,13 +519,13 @@ export function MainApp() {
             </div>
           ) : null}
 
-          {/* Loading 遮罩。
-              只在这两种时候出现：配置还没读出来（pending）、
-              或者「锁屏 + 启用密码」还没渲染稳。
-              关键是它只挂载一次（同一个位置、同一个组件），
-              进度条动画因此从头到尾只跑一遍 —— 之前在 pending 和揭幕两处各放了一份，
-              切换时会看到进度条重走。 */}
-          {showBootLoading ? <BootLoadingMask done={revealDone} /> : null}
+          {/* Loading 遮罩：从启动一直盖到揭幕，位置和组件都不变，
+              进度条动画因此全程只跑一遍（之前 pending 与揭幕各放一份，切换时会重走）。
+              底下其实是开屏动画或锁屏，正在安静地完成首帧渲染；
+              等它们稳了再揭幕，动画从第一帧起就不会被桌面初始化打断。 */}
+          {showBootLoading ? (
+            <BootLoadingMask done={showBootProgress && revealDone} withBar={showBootProgress} />
+          ) : null}
         </div>
       ) : null}
     </AccountGate>
