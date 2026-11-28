@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { getThemeAssetMap } from "@/lib/theme-storage";
 import { PhoneStatusBar } from "@/components/phone-status-bar";
+import { LargeTimeDisplay } from "@/components/widgets/large-time-display";
 
 /* ══════════════════════════════════════════
    锁屏（参考 iOS）
@@ -12,20 +13,6 @@ import { PhoneStatusBar } from "@/components/phone-status-bar";
    第一行居中「6月8日周五」，第二行居中大字时间，底部上滑解锁。
    壁纸取主题里的 lockWallpaperAssetId，没设就用默认渐变底。
    ══════════════════════════════════════════ */
-
-const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"] as const;
-
-/** 6月8日周五（不补零，和中文习惯一致） */
-export function formatLockDate(date: Date): string {
-  return `${date.getMonth() + 1}月${date.getDate()}日周${WEEKDAYS[date.getDay()]}`;
-}
-
-/** 09:05 */
-export function formatLockTime(date: Date): string {
-  const hours = String(date.getHours()).padStart(2, "0");
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  return `${hours}:${minutes}`;
-}
 
 /** 上滑多少像素算解锁成功（比原来 96 短一点，手机上更好触发） */
 const UNLOCK_DISTANCE = 72;
@@ -159,8 +146,9 @@ export function LockScreen({
           transition: dragStartY.current === null ? "transform 0.34s cubic-bezier(0.32,0.72,0,1), opacity 0.34s ease" : "none",
         }}
       >
-        <div className="lock-screen-date">{formatLockDate(now)}</div>
-        <div className="lock-screen-time">{formatLockTime(now)}</div>
+        {/* 复用桌面「极简大号时间」组件的排板，variant="lock" 换成白色大字。
+            时间由本组件下发，两个定时器合成一个。 */}
+        <LargeTimeDisplay variant="lock" date={now} />
       </div>
 
       <div className="lock-screen-bottom" style={{ opacity: Math.max(0, 1 - lift / 140) }}>

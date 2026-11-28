@@ -11,6 +11,7 @@ import { getMascotState, activateMascot, subscribeMascot } from "@/lib/mascot-st
 import { getMascotSettingsSnapshot, resolveMascotImageRef, subscribeMascotSettings } from "@/lib/mascot-settings";
 import { loadDIYTemplates } from "@/lib/widget-storage";
 import { DIYWidgetRenderer } from "@/components/widgets/diy-widget-renderer";
+import { LargeTimeDisplay } from "@/components/widgets/large-time-display";
 
 const DEFAULT_WHITE_IMAGE =
   'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400"><rect width="400" height="400" fill="transparent"/></svg>';
@@ -116,7 +117,7 @@ function WidgetContent({
       return <CoupleChatWidget config={config} widgetId={widgetId} onConfigChange={onConfigChange} preview={preview} />;
 
     case "largeTime":
-      return <LargeTimeWidget />;
+      return <LargeTimeDisplay />;
     case "moodPill":
       return <MoodPillWidget config={config} widgetId={widgetId} onConfigChange={onConfigChange} preview={preview} />;
     case "vinylRecord":
@@ -1164,33 +1165,9 @@ function ClockWidget() {
 
 /* ══════════════════════════════════════════
    5.5. Large Time — 极简大屏数字时钟 (4x2)
+   实现已抽到 components/widgets/large-time-display.tsx，
+   桌面组件与锁屏共用同一份排板（见 switch 里的 case "largeTime"）。
    ══════════════════════════════════════════ */
-function LargeTimeWidget() {
-  const [time, setTime] = useState(() => new Date());
-
-  useEffect(() => {
-    const timer = setInterval(() => setTime(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const h = String(time.getHours()).padStart(2, "0");
-  const m = String(time.getMinutes()).padStart(2, "0");
-  const month = time.getMonth() + 1;
-  const day = time.getDate();
-  const weekdaysCn = ["日", "一", "二", "三", "四", "五", "六"];
-  const weekday = "周" + weekdaysCn[time.getDay()];
-
-  return (
-    <div className="wg-large-time">
-      <div className="wg-lt-date">
-        {month}月{day}日 {weekday}
-      </div>
-      <div className="wg-lt-time">
-        {h}:{m}
-      </div>
-    </div>
-  );
-}
 
 /* ══════════════════════════════════════════
    5. Photo Frame — 照片相框 (2x2)

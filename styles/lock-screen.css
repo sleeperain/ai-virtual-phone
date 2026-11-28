@@ -82,23 +82,47 @@
   will-change: transform, opacity;
 }
 
+/* ── 复用桌面「极简大号时间」组件的排板 ──
+   组件的两个内部行 .wg-lt-date / .wg-lt-time 原本按桌面格子（深色字、小字号）调，
+   放到锁屏这里要换成白字、整屏宽的大字。
+   用 data-variant="lock" 限定，桌面组件那份完全不受影响。 */
+.lock-screen .wg-large-time[data-variant="lock"] {
+  /* 显式重置：这份排板不再吃桌面组件容器的任何定位/尺寸约束 */
+  position: static;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  padding: 0;
+  margin: 0;
+  color: #fff;
+  text-align: center;
+  white-space: normal;
+}
+
 /* 第一行：日期和星期，居中 */
-.lock-screen-date {
+.lock-screen .wg-large-time[data-variant="lock"] .wg-lt-date {
   font-size: calc(15px * var(--app-text-scale, 1));
   font-weight: 500;
   letter-spacing: 0.06em;
   line-height: 1.2;
   opacity: 0.94;
+  color: #fff;
   text-shadow: 0 1px 10px rgba(0, 0, 0, 0.42);
 }
 
 /* 第二行：大字时间，居中 */
-.lock-screen-time {
+.lock-screen .wg-large-time[data-variant="lock"] .wg-lt-time {
   /* 按手机屏幕宽度算，不能用 vw：桌面端手机是固定宽度，vw 会按整个浏览器视口放大 */
   font-size: min(86px, calc(var(--phone-screen-width, 390px) * 0.22));
   font-weight: 200;
   letter-spacing: -0.018em;
   line-height: 1.04;
+  color: #fff;
   /* 优先用系统里的 iOS 数字字形（细字重 + 紧字距），没有就退回 App 字体 */
   font-family: -apple-system, "SF Pro Display", "Helvetica Neue", "Segoe UI", var(--app-font-family);
   font-variant-numeric: tabular-nums;
