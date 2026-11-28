@@ -596,12 +596,15 @@
   /* 未输入是描边空环 */
   border: 1.5px solid rgba(255, 255, 255, 0.85);
   background: transparent;
-  transition: background 140ms ease, transform 140ms ease;
+  /* 只过渡颜色，不做 scale：缩放会让浏览器每帧重建这一小块，
+     压在上面的是被模糊的壁纸，代价比看上去高，也是"闪一下"的来源之一 */
+  transition: background 140ms ease, border-color 140ms ease;
+  will-change: background;
 }
 
 .lock-passcode-dot[data-filled="1"] {
   background: #fff;
-  transform: scale(1.06);
+  border-color: #fff;
 }
 
 /* 键盘：三列九宫格，0 居中、⌫ 居右。
@@ -634,6 +637,16 @@
   color: #fff;
   cursor: pointer;
   transition: background 120ms ease, transform 120ms ease;
+  /* 手机浏览器默认的点击高亮：第一次点会闪一块灰，就是这个。
+     父级 .lock-screen 上设过，但 -webkit-tap-highlight-color 不会可靠地继承到按钮。 */
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  /* 提升为合成层，首次点击不必临时创建图层。
+     不用 translateZ(0) —— 那会覆盖掉 :active 里的 scale，
+     按下时的缩放反馈就没了。 */
+  will-change: background, transform;
 }
 
 /* 删除键不要圆形底，iOS 也是干干净净一个图标 */
@@ -692,6 +705,11 @@
   letter-spacing: 0.04em;
   cursor: pointer;
   transition: background 140ms ease, transform 140ms ease;
+  /* 同数字键：关掉手机默认的点击灰闪 */
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .lock-passcode-forgot:active {

@@ -46,10 +46,17 @@ export function LockPasscodePad({
   onNotice?: (text: string) => void;
 }) {
   const [input, setInput] = useState("");
+  /** 与 input 同步的即时值：点击可能比 setState 更快，读 ref 才准 */
+  const inputRef = useRef("");
   const [shaking, setShaking] = useState(false);
   const [solved, setSolved] = useState(false);
   const shakeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const successTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  const setInputSynced = useCallback((next: string) => {
+    inputRef.current = next;
+    setInput(next);
+  }, []);
 
   useEffect(() => () => {
     clearTimeout(shakeTimer.current);
@@ -65,31 +72,35 @@ export function LockPasscodePad({
     setShaking(true);
     shakeTimer.current = setTimeout(() => {
       setShaking(false);
-      setInput("");
+      setInputSynced("");
     }, SHAKE_MS);
-  }, [onUnlocked]);
+  }, [onUnlocked, setInputSynced]);
 
   const pressDigit = useCallback((digit: string) => {
     if (solved) return;
-    setInput((prev) => {
-      if (prev.length >= PASSCODE_LENGTH) return prev;
-      const next = prev + digit;
-      if (next.length === PASSCODE_LENGTH) submit(next);
-      return next;
-    });
+    // 用 ref 读当前值，而不是把 submit 塞进 setInput 的更新函数里：
+    // 更新函数可能在渲染阶段被调用多次，里面带副作用（setShaking / 定时器）会重复触发
+    const prev = inputRef.current;
+    if (prev.length >= PASSCODE_LENGTH) return;
+    const next = prev + digit;
+    inputRef.current = next;
+    setInput(next);
+    if (next.length === PASSCODE_LENGTH) submit(next);
   }, [submit, solved]);
 
   const pressDelete = useCallback(() => {
     if (solved) return;
-    setInput((prev) => prev.slice(0, -1));
+    const next = inputRef.current.slice(0, -1);
+    inputRef.current = next;
+    setInput(next);
   }, [solved]);
 
   const handleForgot = useCallback(() => {
     if (solved) return;
     resetLockPasscode();
-    setInput("");
+    setInputSynced("");
     onNotice?.("密码已重置");
-  }, [onNotice, solved]);
+  }, [onNotice, solved, setInputSynced]);
 
   // 物理键盘也支持，桌面端调试方便
   useEffect(() => {
