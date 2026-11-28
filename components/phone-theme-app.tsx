@@ -1362,6 +1362,7 @@ function SplashSettingsPage({
   onDraftChange,
   onApply,
   onNotice,
+  onOpenLockWallpaper,
 }: {
   draft: ThemeProfile;
   onDraftChange: (next: ThemeProfile) => void;
