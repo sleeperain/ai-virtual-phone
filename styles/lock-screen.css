@@ -60,31 +60,6 @@
   opacity: 1;
 }
 
-/* 密码盘背景用的预模糊图。
-   这张图本身只有 48px 宽，靠 CSS 拉满屏，插值放大后天然就是糊的 ——
-   全程没有 filter，不触发栅格化，所以打开密码盘时不会"爆闪一下"。
-   之前在这里对全屏壁纸用 filter: blur(16px)，浏览器要现场栅格化一整张
-   高分辨率图，那一下就是卡顿的来源。 */
-.lock-passcode-blur {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: center;
-  z-index: 25;
-  pointer-events: none;
-  /* 小图放大要平滑插值，不能是像素块 */
-  image-rendering: auto;
-  animation: lockPasscodeBlurIn 180ms ease both;
-  -webkit-user-drag: none;
-}
-
-@keyframes lockPasscodeBlurIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-
 /* 上下压暗一点，保证浅色壁纸上白字也读得清 */
 .lock-screen-scrim {
   position: absolute;
@@ -545,19 +520,17 @@
   /* 上下居中；底部留一点安全区，矮屏也不会贴到边 */
   padding: 0 0 calc(env(safe-area-inset-bottom, 0px) * 0.5);
   color: #fff;
-  /* 不用 backdrop-filter 做全屏模糊（每帧重新采样整屏，一打开就掉帧），
-     也不用 filter 模糊壁纸（要现场栅格化大图，会"爆闪"）。
-     模糊由下面那张预生成的低分辨率图提供，这里只补一层薄压暗保证文字可读。 */
-  background: rgba(8, 9, 14, 0.2);
-  animation: lockPasscodeIn 220ms ease both;
+  /* 背景只有一层半透明纯色：
+     不用 backdrop-filter（每帧重新采样整屏，持续掉帧），
+     不用 filter: blur（现场栅格化全屏大图，一次性爆闪），
+     也不用放大图片当底（要分配一整张全屏纹理，同样是一次性开销）。
+     半透明层就是普通的 alpha 混合，绘制成本可以忽略。 */
+  background: rgba(8, 9, 14, 0.72);
+  /* 不加进场动画：opacity 动画会让这一整层单独提升为合成层，
+     首次出现时又是一次图层分配。直接出现反而更干净。 */
   touch-action: none;
   -webkit-user-select: none;
   user-select: none;
-}
-
-@keyframes lockPasscodeIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
 }
 
 .lock-passcode-inner {
@@ -636,15 +609,8 @@
   margin-bottom: 18px;
 }
 
-/* 键盘内容淡入：和内存优化配合，观感上不突兀 */
-.lock-passcode-keys[data-ready="1"] {
-  animation: lockPasscodeKeysIn 160ms ease both;
-}
-
-@keyframes lockPasscodeKeysIn {
-  from { opacity: 0.4; }
-  to   { opacity: 1; }
-}
+/* 键盘不做淡入：任何 opacity 动画都会给它单独建一个合成层，
+   首次出现多一次图层分配。分段挂载已经解决了抢帧问题，这里保持零动画。 */
 
 .lock-passcode-key {
   position: relative;
@@ -762,9 +728,8 @@
   font-size: 12.5px;
   line-height: 1.4;
   text-align: center;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  animation: lockPasscodeIn 200ms ease both;
+  /* 提示条也别用模糊和动画：它是"忘记密码"后才会出现的次要元素，
+     但同样会在首次显示时触发图层分配，干脆做轻。 */
 }
 
 @media (prefers-reduced-motion: reduce) {
