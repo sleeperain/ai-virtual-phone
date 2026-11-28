@@ -51,13 +51,24 @@
   object-fit: cover;
   object-position: center;
   opacity: 0;
-  transition: opacity 700ms cubic-bezier(0.32, 0.72, 0, 1);
+  /* filter / transform 的过渡写在基础规则里，开、关密码盘两个方向都平滑；
+     只写在 data-pad 规则里的话，关闭时会瞬跳回去 */
+  transition: opacity 700ms cubic-bezier(0.32, 0.72, 0, 1),
+    filter 220ms ease, transform 220ms ease;
   pointer-events: none;
   -webkit-user-drag: none;
 }
 
 .lock-screen-wallpaper[data-ready="1"] {
   opacity: 1;
+}
+
+/* 密码盘打开时：让壁纸这一层自己变模糊、压暗，做出景深。
+   只处理一张全屏图，比在密码盘上堆 backdrop-filter 便宜一个数量级。
+   scale 是为了 blur 后四周不会露出边缘。 */
+.lock-screen[data-pad="1"] .lock-screen-wallpaper {
+  filter: blur(16px) brightness(0.7);
+  transform: scale(1.08);
 }
 
 /* 上下压暗一点，保证浅色壁纸上白字也读得清 */
@@ -515,14 +526,17 @@
   inset: 0;
   z-index: 26;
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: center;
-  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 34px);
+  /* 上下居中；底部留一点安全区，矮屏也不会贴到边 */
+  padding: 0 0 calc(env(safe-area-inset-bottom, 0px) * 0.5);
   color: #fff;
-  background: rgba(8, 9, 14, 0.42);
-  backdrop-filter: blur(22px) saturate(120%);
-  -webkit-backdrop-filter: blur(22px) saturate(120%);
-  animation: lockPasscodeIn 260ms ease both;
+  /* 不再用 backdrop-filter 做全屏模糊：
+     它要每帧重新采样整屏内容，一打开就掉帧，是"上滑后卡一下"的主因。
+     改成一层轻压暗，景深效果交给壁纸层自己的 blur（单一图层，便宜得多）。
+     透明度别给太高，否则壁纸被压成一片黑，景深反而没了。 */
+  background: rgba(8, 9, 14, 0.24);
+  animation: lockPasscodeIn 220ms ease both;
   touch-action: none;
   -webkit-user-select: none;
   user-select: none;
@@ -558,7 +572,7 @@
   justify-content: center;
   gap: 22px;
   height: 22px;
-  margin-bottom: 34px;
+  margin-bottom: 28px;
 }
 
 .lock-passcode-dots[data-shake="1"] {
@@ -590,13 +604,14 @@
   transform: scale(1.06);
 }
 
-/* 键盘：三列九宫格，0 居中、⌫ 居右 */
+/* 键盘：三列九宫格，0 居中、⌫ 居右。
+   整体上下居中后，行距略收紧一点，让圆点到键盘之间不那么空。 */
 .lock-passcode-keys {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 14px 22px;
+  gap: 12px 22px;
   width: min(300px, 100%);
-  margin-bottom: 20px;
+  margin-bottom: 18px;
 }
 
 .lock-passcode-key {
@@ -613,11 +628,11 @@
   padding: 0;
   border: none;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.18);
+  /* 11 个按键各带一层 backdrop-filter 的话，打开瞬间就是 11 个模糊图层一起采样，
+     叠加起来非常卡。这里改用纯半透明色，观感几乎一样但几乎零成本。 */
+  background: rgba(255, 255, 255, 0.19);
   color: #fff;
   cursor: pointer;
-  backdrop-filter: blur(10px) saturate(140%);
-  -webkit-backdrop-filter: blur(10px) saturate(140%);
   transition: background 120ms ease, transform 120ms ease;
 }
 
@@ -676,8 +691,6 @@
   font-weight: 500;
   letter-spacing: 0.04em;
   cursor: pointer;
-  backdrop-filter: blur(12px) saturate(140%);
-  -webkit-backdrop-filter: blur(12px) saturate(140%);
   transition: background 140ms ease, transform 140ms ease;
 }
 
