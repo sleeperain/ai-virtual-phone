@@ -572,7 +572,7 @@ export function DiaryEntriesApp({ kind, onClose, onSwitch, onNotice }: DiaryEntr
         </div>
 
         {/* 只有这一块滚动：起点就是三个页签的下边线；条目仍收回一张圆角白卡里 */}
-        <div ref={entryMainRef} className="diary-hub-scroll">
+        <div className="diary-hub-scroll">
           <div className="diary-hub-entries">
             {tab === "notices" ? (
               <DiaryHubNoticeList entries={entries} characters={characters} userIdentity={userIdentity} />
@@ -1270,41 +1270,6 @@ function DiaryEntryWritePanel({ characters, generatingCharacterIds, onGenerateMa
           </button>
         ) : null}
       </section>
-    </div>
-  );
-}
-
-function CharacterAvatarGrid({ characters, selectedIds, busyIds, disabled, onToggle }: {
-  characters: Character[];
-  selectedIds: string[];
-  busyIds: string[];
-  disabled: boolean;
-  onToggle: (characterId: string) => void;
-}) {
-  if (characters.length === 0) return <p className="diary-entry-empty-line">暂无角色。</p>;
-
-  return (
-    <div className="diary-entry-character-grid">
-      {characters.map(character => {
-        const selected = selectedIds.includes(character.id);
-        const busy = busyIds.includes(character.id);
-        return (
-          <button
-            key={character.id}
-            type="button"
-            className={selected ? "is-selected" : ""}
-            disabled={disabled}
-            aria-pressed={selected}
-            onClick={() => onToggle(character.id)}
-          >
-            <span>
-              {character.avatar ? <img src={character.avatar} alt="" /> : <Bot size={18} />}
-            </span>
-            <strong>{character.name}</strong>
-            {busy ? <em><DiaryWritingStatus /></em> : null}
-          </button>
-        );
-      })}
     </div>
   );
 }
