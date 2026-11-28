@@ -171,7 +171,7 @@ export function DebugPromptPanel() {
     const [coCreateMode, setCoCreateMode] = useState<CoCreateMode>("write");
     const [shoppingMode, setShoppingMode] = useState<"catalog" | "search">("catalog");
     const [shoppingQuery, setShoppingQuery] = useState("礼物");
-    const [interviewMode, setInterviewMode] = useState<"opening" | "host" | "answer" | "article">("opening");
+    const [interviewMode, setInterviewMode] = useState<"answer" | "article">("answer");
     const [interviewTheme, setInterviewTheme] = useState("一次关于在场的采访");
     const [adventureWorldId, setAdventureWorldId] = useState<string>("");
     const [adventureStorageVersion, setAdventureStorageVersion] = useState(0);
@@ -1040,9 +1040,7 @@ export function DebugPromptPanel() {
             )}
             {extraAppId === "interview" && (
                 <>
-                    <select value={interviewMode} onChange={e => setInterviewMode(e.target.value as "opening" | "host" | "answer" | "article")} className="pv-select">
-                        <option value="opening">开场提问</option>
-                        <option value="host">主持人追问</option>
+                    <select value={interviewMode} onChange={e => setInterviewMode(e.target.value as "answer" | "article")} className="pv-select">
                         <option value="answer">嘉宾回答</option>
                         <option value="article">专栏成稿</option>
                     </select>

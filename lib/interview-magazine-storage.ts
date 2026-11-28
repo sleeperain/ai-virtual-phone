@@ -1,22 +1,22 @@
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 import {
-  INTERVIEW_MAGAZINE_DEFAULT_HOST_PROMPT,
+  INTERVIEW_MAGAZINE_DEFAULT_EDITOR_PROMPT,
   INTERVIEW_MAGAZINE_DEFAULT_MEMORY_PROMPT,
-  INTERVIEW_MAGAZINE_GENERIC_HOST_PROMPT,
-  INTERVIEW_MAGAZINE_LEGACY_HOST_PROMPT,
-  INTERVIEW_MAGAZINE_PRIOR_DEFAULT_HOST_PROMPT,
-  INTERVIEW_MAGAZINE_SINGLE_HOST_PROMPT,
   type InterviewDraft,
   type InterviewIssue,
 } from "./interview-magazine-types";
 
 const INTERVIEW_ISSUES_KEY = "ai_phone_interview_magazine_issues_v1";
 const INTERVIEW_DRAFTS_KEY = "ai_phone_interview_magazine_drafts_v1";
-const INTERVIEW_HOST_PROMPT_KEY = "ai_phone_interview_magazine_host_prompt_v1";
+// 改造前这里存的是「AI 主持人提示词」。主持人改由用户担任后不再读取该键的值，
+// 只保留登记以便旧数据随 KV 迁移流程走。
+const INTERVIEW_LEGACY_HOST_PROMPT_KEY = "ai_phone_interview_magazine_host_prompt_v1";
+const INTERVIEW_EDITOR_PROMPT_KEY = "ai_phone_interview_magazine_editor_prompt_v1";
 const INTERVIEW_MEMORY_PROMPT_KEY = "ai_phone_interview_magazine_memory_prompt_v1";
 registerKvMigration(INTERVIEW_ISSUES_KEY);
 registerKvMigration(INTERVIEW_DRAFTS_KEY);
-registerKvMigration(INTERVIEW_HOST_PROMPT_KEY);
+registerKvMigration(INTERVIEW_LEGACY_HOST_PROMPT_KEY);
+registerKvMigration(INTERVIEW_EDITOR_PROMPT_KEY);
 registerKvMigration(INTERVIEW_MEMORY_PROMPT_KEY);
 
 function sortIssues(issues: InterviewIssue[]): InterviewIssue[] {
@@ -91,31 +91,25 @@ export function getNextInterviewIssueNumber(): number {
   return max + 1;
 }
 
-export function loadInterviewHostPrompt(): string {
-  if (typeof window === "undefined") return INTERVIEW_MAGAZINE_DEFAULT_HOST_PROMPT;
+export function loadInterviewEditorPrompt(): string {
+  if (typeof window === "undefined") return INTERVIEW_MAGAZINE_DEFAULT_EDITOR_PROMPT;
   try {
-    const raw = kvGet(INTERVIEW_HOST_PROMPT_KEY);
-    const trimmed = raw?.trim();
-    if (
-      !trimmed
-      || trimmed === INTERVIEW_MAGAZINE_LEGACY_HOST_PROMPT
-      || trimmed === INTERVIEW_MAGAZINE_GENERIC_HOST_PROMPT
-      || trimmed === INTERVIEW_MAGAZINE_SINGLE_HOST_PROMPT
-      || trimmed === INTERVIEW_MAGAZINE_PRIOR_DEFAULT_HOST_PROMPT
-    ) {
-      return INTERVIEW_MAGAZINE_DEFAULT_HOST_PROMPT;
-    }
-    return trimmed;
+    return kvGet(INTERVIEW_EDITOR_PROMPT_KEY)?.trim() || INTERVIEW_MAGAZINE_DEFAULT_EDITOR_PROMPT;
   } catch {
-    return INTERVIEW_MAGAZINE_DEFAULT_HOST_PROMPT;
+    return INTERVIEW_MAGAZINE_DEFAULT_EDITOR_PROMPT;
   }
 }
 
-export function saveInterviewHostPrompt(prompt: string): string {
-  const next = prompt.trim() || INTERVIEW_MAGAZINE_DEFAULT_HOST_PROMPT;
-  kvSet(INTERVIEW_HOST_PROMPT_KEY, next);
+export function saveInterviewEditorPrompt(prompt: string): string {
+  const next = prompt.trim() || INTERVIEW_MAGAZINE_DEFAULT_EDITOR_PROMPT;
+  kvSet(INTERVIEW_EDITOR_PROMPT_KEY, next);
   return next;
 }
+
+/** @deprecated 主持人已改由用户担任，保留别名仅为兼容旧引用。 */
+export const loadInterviewHostPrompt = loadInterviewEditorPrompt;
+/** @deprecated 同上。 */
+export const saveInterviewHostPrompt = saveInterviewEditorPrompt;
 
 export function loadInterviewMemoryPrompt(): string {
   if (typeof window === "undefined") return INTERVIEW_MAGAZINE_DEFAULT_MEMORY_PROMPT;

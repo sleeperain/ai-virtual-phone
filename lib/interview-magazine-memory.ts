@@ -78,7 +78,7 @@ export function recordInterviewMagazineProjectionEvent(input: RecordInterviewMag
   const characterIds = [...new Set(input.characterIds.map((id) => cleanText(id, 160)).filter(Boolean))];
   if (!input.issueId || characterIds.length === 0) return null;
 
-  const userName = cleanText(input.userName, 80) || "共同受访者";
+  const userName = cleanText(input.userName, 80) || "主持人";
   const summary = normalizeUserNameToMacro(cleanText(input.summary, 1800), userName);
   if (!summary) return null;
 
@@ -88,7 +88,7 @@ export function recordInterviewMagazineProjectionEvent(input: RecordInterviewMag
   const title = cleanText(input.title, 80) || "未命名刊物";
   const shared = characterIds.length > 1;
   const guests = characterNames.length > 0 ? characterNames.join("、") : "嘉宾";
-  const content = `[访谈 ${formatChatTimestamp(timestamp)}] ${guests}与${USER_NAME_MACRO}完成了一期访谈，本期成刊《${title}》。${summary}`;
+  const content = `[访谈 ${formatChatTimestamp(timestamp)}] ${USER_NAME_MACRO}主持了一期访谈，嘉宾是${guests}，本期成刊《${title}》。${summary}`;
 
   const entry: InterviewMagazineProjectionEntry = {
     id: `interview_issue_${input.issueId}`,
