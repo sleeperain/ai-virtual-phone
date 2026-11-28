@@ -234,6 +234,46 @@
   z-index: 5;
 }
 
+/* 拖影：按住组件移动时的克隆，跟着手指走，不参与布局 */
+.lock-widget-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 40;
+  display: none;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.lock-widget-ghost > * {
+  width: 100%;
+  height: 100%;
+  border-radius: 20px;
+  overflow: hidden;
+  /* 和桌面拖影同一个观感：不抖、抬起一点、带投影 */
+  animation: none !important;
+  transform: scale(1.06);
+  transform-origin: center center;
+  filter: drop-shadow(0 10px 24px rgba(0, 0, 0, 0.32));
+}
+
+/* 拖动中的原位置：淡下去，让位给拖影。
+   选择器带 .lock-widget-area 前缀，保证压过上面的抖动规则 */
+.lock-widget-area .lock-widget-slot[data-dragging="1"] {
+  opacity: 0.28;
+  animation: none !important;
+  transition: opacity 0.15s ease;
+}
+
+/* 落点提示：和桌面的 .drop-indicator 同一套视觉语言 —— 细线、半透明白 */
+.lock-widget-drop {
+  border-radius: 20px;
+  border: 1.5px solid rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.12);
+  pointer-events: none;
+  z-index: 4;
+}
+
 .lock-widget-remove {
   position: absolute;
   top: -7px;
