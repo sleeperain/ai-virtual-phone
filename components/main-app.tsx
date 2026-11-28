@@ -201,7 +201,7 @@ function SplashPendingScreen() {
         <div className="phone-case">
           <div className="phone-frame">
             <div className="phone-shell splash-phone-screen splash-pending-screen">
-              <span className="splash-loading-text">Loading</span>
+              <span className="boot-loading-text">Loading...</span>
             </div>
           </div>
         </div>
@@ -222,7 +222,7 @@ function SplashPendingScreen() {
 function BootLoadingMask() {
   return (
     <div className="boot-loading-mask" aria-live="polite">
-      <span className="splash-loading-text">Loading</span>
+      <span className="boot-loading-text">Loading...</span>
     </div>
   );
 }
