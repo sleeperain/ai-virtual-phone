@@ -364,18 +364,11 @@ export function MainApp() {
 
   return (
     <AccountGate>
-      {!splashDismissed ? (
-        splashMode === "lock" ? (
-          <LockScreenView
-            wallpaperAssetId={lockWallpaperAssetId}
-            onUnlock={() => setSplashDismissed(true)}
-          />
-        ) : splashMode === "animation" ? (
-          <SplashScreen ready={hydrated} onEnter={() => setSplashDismissed(true)} />
-        ) : (
-          <SplashPendingScreen />
-        )
-      ) : (
+      {/* 桌面从一开始就在底层挂载，开屏动画和锁屏只是盖在上面的一层帘子。
+          以前是解锁那一刻才现场挂载桌面，而桌面在自报 desktopReady 之前是
+          visibility:hidden 的，于是先空一下、再等加载——就是"上滑后黑屏硬等"的来源。
+          现在解锁只是把帘子拿走，下面早就画好了。 */}
+      {splashMode !== "pending" ? (
         <main className="app-root">
           <MusicProvider>
             <LocalErrorBoundary
@@ -393,7 +386,22 @@ export function MainApp() {
             <MediaMaintenanceScheduler />
           </MusicProvider>
         </main>
-      )}
+      ) : null}
+
+      {!splashDismissed ? (
+        <div className="boot-curtain">
+          {splashMode === "lock" ? (
+            <LockScreenView
+              wallpaperAssetId={lockWallpaperAssetId}
+              onUnlock={() => setSplashDismissed(true)}
+            />
+          ) : splashMode === "animation" ? (
+            <SplashScreen ready={hydrated} onEnter={() => setSplashDismissed(true)} />
+          ) : (
+            <SplashPendingScreen />
+          )}
+        </div>
+      ) : null}
     </AccountGate>
   );
 }

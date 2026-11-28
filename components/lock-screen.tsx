@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { getThemeAssetMap } from "@/lib/theme-storage";
+import { PhoneStatusBar } from "@/components/phone-status-bar";
 
 /* ══════════════════════════════════════════
    锁屏（参考 iOS）
@@ -26,8 +27,8 @@ export function formatLockTime(date: Date): string {
   return `${hours}:${minutes}`;
 }
 
-/** 上滑多少像素算解锁成功 */
-const UNLOCK_DISTANCE = 96;
+/** 上滑多少像素算解锁成功（比原来 96 短一点，手机上更好触发） */
+const UNLOCK_DISTANCE = 72;
 /** 退场动画时长，须与 .lock-screen 的 transition 对齐 */
 const LEAVE_DURATION = 330;
 
@@ -132,6 +133,9 @@ export function LockScreen({
       onPointerCancel={handlePointerEnd}
     >
       <div className="lock-screen-scrim" aria-hidden />
+
+      {/* 顶部状态栏：跟桌面同一套（时间/信号/WiFi/电池），深色底上转白字 */}
+      <PhoneStatusBar tone="light" />
 
       <div
         className="lock-screen-content"

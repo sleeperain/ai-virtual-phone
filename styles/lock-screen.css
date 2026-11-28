@@ -77,6 +77,8 @@
   font-weight: 200;
   letter-spacing: -0.018em;
   line-height: 1.04;
+  /* 优先用系统里的 iOS 数字字形（细字重 + 紧字距），没有就退回 App 字体 */
+  font-family: -apple-system, "SF Pro Display", "Helvetica Neue", "Segoe UI", var(--app-font-family);
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum" 1;
   text-shadow: 0 2px 24px rgba(0, 0, 0, 0.4);
@@ -156,10 +158,35 @@
   background-position: center;
 }
 
-/* 锁屏那一屏的手机画面沿用 splash 的满屏画布（无内边距、无壁纸层） */
+/* ── 启动帘子 ──
+   桌面在底层先挂载好，这一层 fixed 盖在上面。故意不设背景色：
+   开屏动画和锁屏各自带满屏底，这样解锁滑走时直接露出下面已经画好的桌面，
+   中间不会闪出一块底色（那就是"上滑一下黑屏"的观感来源）。 */
+.boot-curtain {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100lvh;
+  /* 必须高过桌面里的浮层（桌宠、快捷操作、公告等）：桌面现在是在帘子下面
+     提前挂载的，那些浮层若压在上面，开屏/锁屏就会漏出来 */
+  z-index: 2147483600;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: transparent;
+}
+
+/* 锁屏上的状态栏：深色底上用白字，加一点阴影保证浅色壁纸下也读得清 */
+.phone-status-bar[data-tone="light"] {
+  --status-bar-color: #ffffff;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.38));
+}
+
+/* 锁屏那一屏的手机画面沿用 splash 的满屏画布（无内边距、无壁纸层）。
+   背景要透明：解锁时锁屏滑走，露出的应该是底下的桌面，而不是一层深色底。 */
 .lock-phone-screen {
   padding: 0;
-  background: #10131f;
+  background: transparent;
 }
 
 .lock-phone-screen::before {
