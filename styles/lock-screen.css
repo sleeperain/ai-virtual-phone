@@ -51,10 +51,7 @@
   object-fit: cover;
   object-position: center;
   opacity: 0;
-  /* filter / transform 的过渡写在基础规则里，开、关密码盘两个方向都平滑；
-     只写在 data-pad 规则里的话，关闭时会瞬跳回去 */
-  transition: opacity 700ms cubic-bezier(0.32, 0.72, 0, 1),
-    filter 220ms ease, transform 220ms ease;
+  transition: opacity 700ms cubic-bezier(0.32, 0.72, 0, 1);
   pointer-events: none;
   -webkit-user-drag: none;
 }
@@ -63,12 +60,29 @@
   opacity: 1;
 }
 
-/* 密码盘打开时：让壁纸这一层自己变模糊、压暗，做出景深。
-   只处理一张全屏图，比在密码盘上堆 backdrop-filter 便宜一个数量级。
-   scale 是为了 blur 后四周不会露出边缘。 */
-.lock-screen[data-pad="1"] .lock-screen-wallpaper {
-  filter: blur(16px) brightness(0.7);
-  transform: scale(1.08);
+/* 密码盘背景用的预模糊图。
+   这张图本身只有 48px 宽，靠 CSS 拉满屏，插值放大后天然就是糊的 ——
+   全程没有 filter，不触发栅格化，所以打开密码盘时不会"爆闪一下"。
+   之前在这里对全屏壁纸用 filter: blur(16px)，浏览器要现场栅格化一整张
+   高分辨率图，那一下就是卡顿的来源。 */
+.lock-passcode-blur {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  z-index: 25;
+  pointer-events: none;
+  /* 小图放大要平滑插值，不能是像素块 */
+  image-rendering: auto;
+  animation: lockPasscodeBlurIn 180ms ease both;
+  -webkit-user-drag: none;
+}
+
+@keyframes lockPasscodeBlurIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 /* 上下压暗一点，保证浅色壁纸上白字也读得清 */
@@ -531,11 +545,10 @@
   /* 上下居中；底部留一点安全区，矮屏也不会贴到边 */
   padding: 0 0 calc(env(safe-area-inset-bottom, 0px) * 0.5);
   color: #fff;
-  /* 不再用 backdrop-filter 做全屏模糊：
-     它要每帧重新采样整屏内容，一打开就掉帧，是"上滑后卡一下"的主因。
-     改成一层轻压暗，景深效果交给壁纸层自己的 blur（单一图层，便宜得多）。
-     透明度别给太高，否则壁纸被压成一片黑，景深反而没了。 */
-  background: rgba(8, 9, 14, 0.24);
+  /* 不用 backdrop-filter 做全屏模糊（每帧重新采样整屏，一打开就掉帧），
+     也不用 filter 模糊壁纸（要现场栅格化大图，会"爆闪"）。
+     模糊由下面那张预生成的低分辨率图提供，这里只补一层薄压暗保证文字可读。 */
+  background: rgba(8, 9, 14, 0.2);
   animation: lockPasscodeIn 220ms ease both;
   touch-action: none;
   -webkit-user-select: none;
@@ -643,10 +656,8 @@
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
-  /* 提升为合成层，首次点击不必临时创建图层。
-     不用 translateZ(0) —— 那会覆盖掉 :active 里的 scale，
-     按下时的缩放反馈就没了。 */
-  will-change: background, transform;
+  /* 这里不加 will-change：11 个按键各自提升合成层反而增加图层管理开销，
+     而 background 变色本来就在同一层内完成，不需要提升。 */
 }
 
 /* 删除键不要圆形底，iOS 也是干干净净一个图标 */

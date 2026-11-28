@@ -31,6 +31,8 @@ export function LockScreen({
   const [wallpaper, setWallpaper] = useState<string | null>(null);
   // 壁纸解码完成才允许它淡入：src 一设就 opacity 过渡，图还没解码完会先空一下再蹦出来
   const [wallpaperReady, setWallpaperReady] = useState(false);
+  /** 预生成的低分辨率壁纸，密码盘打开时当背景，放大即模糊 */
+  const [wallpaperBlur, setWallpaperBlur] = useState<string | null>(null);
   const [dragY, setDragY] = useState(0);
   const [leaving, setLeaving] = useState(false);
   const [hintDismissed, setHintDismissed] = useState(false);
@@ -57,9 +59,35 @@ export function LockScreen({
     padNoticeTimer.current = setTimeout(() => setPadNotice(null), 2600);
   }, []);
 
+  // ── 密码盘背景用的预模糊图 ──
+  // 不对壁纸实时做 filter: blur —— 那要现场栅格化一整张全屏大图，
+  // 第一次应用会明显卡一下（"爆闪一下才加载完"）。改成提前生成一张极小的版本，
+  // 放大显示时靠插值天然就是糊的，运行时零滤镜开销。
+  const makeBlurredCopy = useCallback((src: string) => {
+    const image = new Image();
+    image.onload = () => {
+      try {
+        const width = 48;
+        const height = Math.max(1, Math.round((image.naturalHeight / image.naturalWidth) * width));
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext("2d");
+        if (!context) return;
+        context.drawImage(image, 0, 0, width, height);
+        setWallpaperBlur(canvas.toDataURL("image/jpeg", 0.55));
+      } catch {
+        setWallpaperBlur(null);
+      }
+    };
+    image.onerror = () => setWallpaperBlur(null);
+    image.src = src;
+  }, []);
+
   // ── 锁屏壁纸 ──
   useEffect(() => {
     setWallpaperReady(false);
+    setWallpaperBlur(null);
     if (!wallpaperAssetId) {
       setWallpaper(null);
       return;
@@ -135,8 +163,6 @@ export function LockScreen({
     <div
       className="lock-screen"
       data-leaving={leaving ? "1" : undefined}
-      // 密码盘打开时给壁纸层挂个标记，由 CSS 负责模糊压暗（做景深）
-      data-pad={padOpen ? "1" : undefined}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerEnd}
@@ -153,6 +179,8 @@ export function LockScreen({
           onLoad={() => {
             // 等一帧再切，确保浏览器已经画过 opacity:0 那帧，过渡才会真的跑起来
             requestAnimationFrame(() => setWallpaperReady(true));
+            // 顺手把密码盘要用的低分辨率版本生成好，开密码盘时零等待
+            if (wallpaper) makeBlurredCopy(wallpaper);
           }}
         />
       ) : null}
@@ -220,6 +248,12 @@ export function LockScreen({
           aria-label="上滑解锁"
         />
       </div>
+
+      {/* 密码盘背景：预生成的低分辨率壁纸铺满，放大后天然模糊，零运行时滤镜。
+          没有壁纸（用默认渐变底）时就不渲染，直接靠密码盘自身的压暗层。 */}
+      {padOpen && wallpaperBlur ? (
+        <img className="lock-passcode-blur" src={wallpaperBlur} alt="" aria-hidden draggable={false} />
+      ) : null}
 
       {/* 密码盘：壁纸继续做底，加一层模糊压暗；组件区与「上滑解锁」在此让位 */}
       {padOpen && (
