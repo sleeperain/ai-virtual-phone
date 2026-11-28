@@ -4783,7 +4783,10 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
                 }
                 style={{
                   touchAction: activeApp ? undefined : editMode ? "none" : "pan-y",
-                  ...(!desktopReady && !activeApp ? { visibility: "hidden" } : {}),
+                  // 桌面就绪前不显示图标区，但壁纸层（.phone-wallpaper）早就画好了：
+                  // 解锁时先看到壁纸，等就绪再靠 opacity 把图标淡上来，不再"蹦"出来。
+                  ...(!desktopReady && !activeApp ? { visibility: "hidden", opacity: 0 } : { opacity: 1 }),
+                  transition: "opacity 360ms ease",
                 }}
                 onPointerDown={handleSwipeStart}
                 onPointerMove={handleSwipeMove}

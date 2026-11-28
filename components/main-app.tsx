@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowRight } from "lucide-react";
 
 import { AccountGate } from "@/components/auth/account-gate";
@@ -22,6 +22,9 @@ import { shouldRequestPwaFullscreen } from "@/lib/pwa-display-mode";
 const TEXT = {
   loading: "\u52A0\u8F7D\u4E2D...",
 };
+
+/** 启动帘子淡出时长（ms），须与 .boot-curtain[data-leaving] 的 transition 对齐 */
+const BOOT_EXIT_DURATION = 340;
 
 const BUILTIN_FONT_URLS = [
   "/fonts/huiwen.woff2",
@@ -283,6 +286,18 @@ export function MainApp() {
   // 所以必须等水合完再定，否则「关掉开屏动画」只在当次会话生效、重开又播回动画。
   const [splashMode, setSplashMode] = useState<"pending" | "animation" | "lock">("pending");
   const [lockWallpaperAssetId, setLockWallpaperAssetId] = useState<string | null>(null);
+  // 帘子正在淡出。解锁/进入时先淡出再卸载，避免瞬间硬切到桌面。
+  const [bootLeaving, setBootLeaving] = useState(false);
+  const bootExitTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  const dismissBoot = useCallback(() => {
+    setBootLeaving(true);
+    clearTimeout(bootExitTimer.current);
+    // 时长与 .boot-curtain[data-leaving] 的 transition 对齐
+    bootExitTimer.current = setTimeout(() => setSplashDismissed(true), BOOT_EXIT_DURATION);
+  }, []);
+
+  useEffect(() => () => clearTimeout(bootExitTimer.current), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -318,7 +333,8 @@ export function MainApp() {
       setPreparedDesktopTheme(nextPreparedTheme);
       setHydrated(true);
       if (hasPendingMcpOAuthCallback()) {
-        setSplashDismissed(true);
+        // OAuth 回调要马上回到原页面，别让用户再点一次进入，但也走淡出
+        dismissBoot();
       }
     })();
 
@@ -339,7 +355,7 @@ export function MainApp() {
       cancelled = true;
       document.removeEventListener("click", tryFullscreen);
     };
-  }, [initAttempt]);
+  }, [initAttempt, dismissBoot]);
 
   if (kvHydrateFailed) {
     return (
@@ -389,14 +405,14 @@ export function MainApp() {
       ) : null}
 
       {!splashDismissed ? (
-        <div className="boot-curtain">
+        <div className="boot-curtain" data-leaving={bootLeaving ? "1" : undefined}>
           {splashMode === "lock" ? (
             <LockScreenView
               wallpaperAssetId={lockWallpaperAssetId}
-              onUnlock={() => setSplashDismissed(true)}
+              onUnlock={dismissBoot}
             />
           ) : splashMode === "animation" ? (
-            <SplashScreen ready={hydrated} onEnter={() => setSplashDismissed(true)} />
+            <SplashScreen ready={hydrated} onEnter={dismissBoot} />
           ) : (
             <SplashPendingScreen />
           )}

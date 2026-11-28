@@ -29,8 +29,6 @@ export function formatLockTime(date: Date): string {
 
 /** 上滑多少像素算解锁成功（比原来 96 短一点，手机上更好触发） */
 const UNLOCK_DISTANCE = 72;
-/** 退场动画时长，须与 .lock-screen 的 transition 对齐 */
-const LEAVE_DURATION = 330;
 
 export function LockScreen({
   wallpaperAssetId,
@@ -41,12 +39,13 @@ export function LockScreen({
 }) {
   const [now, setNow] = useState<Date>(() => new Date());
   const [wallpaper, setWallpaper] = useState<string | null>(null);
+  // 壁纸解码完成才允许它淡入：src 一设就 opacity 过渡，图还没解码完会先空一下再蹦出来
+  const [wallpaperReady, setWallpaperReady] = useState(false);
   const [dragY, setDragY] = useState(0);
   const [leaving, setLeaving] = useState(false);
   const [hintDismissed, setHintDismissed] = useState(false);
   const dragStartY = useRef<number | null>(null);
   const unlockedRef = useRef(false);
-  const leaveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   // ── 时间：每秒走一次；后台被节流后切回前台立刻校准 ──
   useEffect(() => {
@@ -64,6 +63,7 @@ export function LockScreen({
 
   // ── 锁屏壁纸 ──
   useEffect(() => {
+    setWallpaperReady(false);
     if (!wallpaperAssetId) {
       setWallpaper(null);
       return;
@@ -81,14 +81,13 @@ export function LockScreen({
     };
   }, [wallpaperAssetId]);
 
-  useEffect(() => () => clearTimeout(leaveTimer.current), []);
-
   const unlock = useCallback(() => {
     if (unlockedRef.current) return;
     unlockedRef.current = true;
     setLeaving(true);
-    setDragY(-window.innerHeight);
-    leaveTimer.current = setTimeout(onUnlock, LEAVE_DURATION);
+    // 不再把内容单独甩走（setDragY(-innerHeight)），否则时间和日期会先飞出去。
+    // 现在只标记 leaving，由整层做「小幅上移 + 淡出」，帘子在外面同步淡出。
+    onUnlock();
   }, [onUnlock]);
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -126,12 +125,26 @@ export function LockScreen({
     <div
       className="lock-screen"
       data-leaving={leaving ? "1" : undefined}
-      style={wallpaper ? { backgroundImage: `url("${wallpaper}")` } : undefined}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerEnd}
       onPointerCancel={handlePointerEnd}
     >
+      {/* 壁纸单独一层：解码完再淡入，不会在加载完成的那一刻"蹦"出来 */}
+      {wallpaper ? (
+        <img
+          className="lock-screen-wallpaper"
+          src={wallpaper}
+          alt=""
+          draggable={false}
+          data-ready={wallpaperReady ? "1" : undefined}
+          onLoad={() => {
+            // 等一帧再切，确保浏览器已经画过 opacity:0 那帧，过渡才会真的跑起来
+            requestAnimationFrame(() => setWallpaperReady(true));
+          }}
+        />
+      ) : null}
+
       <div className="lock-screen-scrim" aria-hidden />
 
       {/* 顶部状态栏：跟桌面同一套（时间/信号/WiFi/电池），深色底上转白字 */}

@@ -29,10 +29,32 @@
     opacity 0.33s ease;
 }
 
-/* 解锁退场：整屏往上推走并淡出 */
+/* 解锁退场：小幅上推 + 淡出。
+   不再整屏推走（-100%）：那样会瞬间掀开整片，把底下还没画完的桌面暴露出来，
+   就是"蹦"的观感。这里只上移一小段，真正负责过渡的是帘子的整体淡出。 */
 .lock-screen[data-leaving="1"] {
-  transform: translate3d(0, -100%, 0);
+  transform: translate3d(0, -10%, 0);
   opacity: 0;
+}
+
+/* 锁屏壁纸层：解码完成后才淡入。
+   直接给 .lock-screen 设 background-image 的话，图一解出来就整块出现，
+   在深色渐变底上显得"蹦"；单独一层做 opacity 过渡就顺了。 */
+.lock-screen-wallpaper {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  opacity: 0;
+  transition: opacity 700ms cubic-bezier(0.32, 0.72, 0, 1);
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+.lock-screen-wallpaper[data-ready="1"] {
+  opacity: 1;
 }
 
 /* 上下压暗一点，保证浅色壁纸上白字也读得清 */
@@ -174,6 +196,14 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   background: transparent;
+  transition: opacity 340ms ease;
+}
+
+/* 解锁/进入桌面：帘子整体淡出，露出底下已经画好的桌面（带壁纸），
+   由父层统一负责，避免锁屏自己滑走、帘子再被硬卸载造成的"蹦一下" */
+.boot-curtain[data-leaving="1"] {
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* 锁屏上的状态栏：深色底上用白字，加一点阴影保证浅色壁纸下也读得清 */
@@ -196,7 +226,9 @@
 @media (prefers-reduced-motion: reduce) {
   .lock-screen,
   .lock-screen-content,
-  .lock-screen-bottom {
+  .lock-screen-bottom,
+  .lock-screen-wallpaper,
+  .boot-curtain {
     transition-duration: 0.01ms !important;
   }
   .lock-screen-hint {
