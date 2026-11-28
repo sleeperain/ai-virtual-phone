@@ -108,19 +108,21 @@
    字号写死、不用 var(--app-text-scale)：那是桌面壳注入的变量，注入前后会变一次，
    锁屏在启动瞬间正好横跨这个时刻，会看到字号"跳"一下。锁屏是固定版式，不吃全局缩放。 */
 .lock-screen .wg-large-time[data-variant="lock"] .wg-lt-date {
-  font-size: 15px !important;
+  font-size: 16px !important;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI",
     "Helvetica Neue", Roboto, "Noto Sans", system-ui, sans-serif !important;
-  font-weight: 500 !important;
+  /* 500→600：iOS 锁屏日期是半粗体；细字重白字压在浅色壁纸上会发灰、糊成一片 */
+  font-weight: 600 !important;
   font-style: normal !important;
   font-synthesis: none !important;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
   line-height: 1.2;
-  opacity: 0.94;
+  opacity: 0.96;
   color: #fff !important;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.42);
+  /* 不用 antialiased：它会让深底白字变细。subpixel 更实，接近 iOS 观感 */
+  -webkit-font-smoothing: subpixel-antialiased;
+  -moz-osx-font-smoothing: auto;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.45);
 }
 
 /* 第二行：大字时间，居中。
@@ -133,24 +135,26 @@
       桌面后注入，变量一到字体就换一次。
    所以：固定系统字体栈 + 禁用字重合成 + !important 挡住桌面组件那份。 */
 .lock-screen .wg-large-time[data-variant="lock"] .wg-lt-time {
-  /* 按手机屏幕宽度算，不能用 vw：桌面端手机是固定宽度，vw 会按整个浏览器视口放大 */
-  font-size: min(86px, calc(var(--phone-screen-width, 390px) * 0.22)) !important;
+  /* 字号对齐 iOS：时间宽度约占屏幕 75%，390px 屏上约 112px。
+     按手机屏幕宽度算，不能用 vw——桌面端手机是固定宽度，vw 会按整个浏览器视口放大。 */
+  font-size: min(112px, calc(var(--phone-screen-width, 390px) * 0.29)) !important;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI",
     "Helvetica Neue", Roboto, "Noto Sans", system-ui, sans-serif !important;
-  /* 不走 200：多数系统字体没有这个字重，浏览器会伪合成，字体到位后就变细。
-     300 是各家系统都真实提供的 Light，稳定。 */
-  font-weight: 300 !important;
+  /* 400 = Regular。不用 200/300 那种细体：iOS 16 之后默认就是常规字重，
+     而且 Regular 是每种系统字体都真实提供的字重，不会出现合成→替换的粗细跳变。 */
+  font-weight: 400 !important;
   font-style: normal !important;
   /* 禁止合成粗体/斜体：宁可回落到真实字重，也不要在加载过程中"假装"一下 */
   font-synthesis: none !important;
-  letter-spacing: -0.018em;
-  line-height: 1.04;
+  letter-spacing: -0.02em;
+  line-height: 1.02;
   color: #fff !important;
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum" 1;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  text-shadow: 0 2px 24px rgba(0, 0, 0, 0.4);
+  /* 不用 antialiased：那会让深底白字变细，正是之前"看着太瘦"的一大原因 */
+  -webkit-font-smoothing: subpixel-antialiased;
+  -moz-osx-font-smoothing: auto;
+  text-shadow: 0 2px 20px rgba(0, 0, 0, 0.45);
 }
 
 .lock-screen-bottom {
