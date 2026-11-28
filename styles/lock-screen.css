@@ -502,6 +502,229 @@
   filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.38));
 }
 
+/* ══════════════════════════════════════════
+   锁屏密码盘（参考 iOS）
+
+   不显示时间：圆点上方一行「输入密码」；
+   键盘下方是「忘记密码」胶囊，点了把密码重置成 0000。
+   背景沿用锁屏壁纸，这里叠一层模糊 + 压暗做景深。
+   ══════════════════════════════════════════ */
+
+.lock-passcode {
+  position: absolute;
+  inset: 0;
+  z-index: 26;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 34px);
+  color: #fff;
+  background: rgba(8, 9, 14, 0.42);
+  backdrop-filter: blur(22px) saturate(120%);
+  -webkit-backdrop-filter: blur(22px) saturate(120%);
+  animation: lockPasscodeIn 260ms ease both;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+@keyframes lockPasscodeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.lock-passcode-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  padding: 0 26px;
+}
+
+/* 圆点上方那一行 */
+.lock-passcode-title {
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  opacity: 0.92;
+  margin-bottom: 18px;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.4);
+}
+
+/* 四个圆点 */
+.lock-passcode-dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  height: 22px;
+  margin-bottom: 34px;
+}
+
+.lock-passcode-dots[data-shake="1"] {
+  animation: lockPasscodeShake 0.42s cubic-bezier(0.36, 0.07, 0.19, 0.97);
+}
+
+@keyframes lockPasscodeShake {
+  0%, 100% { transform: translateX(0); }
+  15%      { transform: translateX(-9px); }
+  30%      { transform: translateX(8px); }
+  45%      { transform: translateX(-6px); }
+  60%      { transform: translateX(5px); }
+  75%      { transform: translateX(-3px); }
+  90%      { transform: translateX(2px); }
+}
+
+.lock-passcode-dot {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  /* 未输入是描边空环 */
+  border: 1.5px solid rgba(255, 255, 255, 0.85);
+  background: transparent;
+  transition: background 140ms ease, transform 140ms ease;
+}
+
+.lock-passcode-dot[data-filled="1"] {
+  background: #fff;
+  transform: scale(1.06);
+}
+
+/* 键盘：三列九宫格，0 居中、⌫ 居右 */
+.lock-passcode-keys {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px 22px;
+  width: min(300px, 100%);
+  margin-bottom: 20px;
+}
+
+.lock-passcode-key {
+  position: relative;
+  aspect-ratio: 1;
+  width: 100%;
+  max-width: 74px;
+  justify-self: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  cursor: pointer;
+  backdrop-filter: blur(10px) saturate(140%);
+  -webkit-backdrop-filter: blur(10px) saturate(140%);
+  transition: background 120ms ease, transform 120ms ease;
+}
+
+/* 删除键不要圆形底，iOS 也是干干净净一个图标 */
+.lock-passcode-key-plain {
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.lock-passcode-key:active {
+  background: rgba(255, 255, 255, 0.34);
+  transform: scale(0.94);
+}
+
+.lock-passcode-key:disabled {
+  opacity: 0.4;
+  cursor: default;
+  transform: none;
+}
+
+.lock-passcode-key-blank {
+  display: block;
+}
+
+.lock-passcode-digit {
+  font-size: 26px;
+  font-weight: 400;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.lock-passcode-letters {
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  opacity: 0.78;
+  line-height: 1;
+}
+
+.lock-passcode-delete {
+  font-size: 21px;
+  line-height: 1;
+  opacity: 0.92;
+}
+
+/* 忘记密码：胶囊按钮，单独占一行在键盘下方 */
+.lock-passcode-forgot {
+  height: 34px;
+  padding: 0 22px;
+  border: none;
+  border-radius: 17px;
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  transition: background 140ms ease, transform 140ms ease;
+}
+
+.lock-passcode-forgot:active {
+  background: rgba(255, 255, 255, 0.32);
+  transform: scale(0.96);
+}
+
+/* 设置页里的数字键：浅色背景，把锁屏那套半透明白换成卡片底 */
+.lock-passcode-key-light {
+  background: var(--c-input, #f2f3f5);
+  color: var(--c-text-title, #2c3440);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.lock-passcode-key-light:active {
+  background: var(--c-card-border, #e0e0e0);
+}
+
+/* 重置成功后的提示条 */
+.lock-passcode-toast {
+  position: absolute;
+  left: 50%;
+  top: calc(env(safe-area-inset-top, 0px) + 18px);
+  transform: translateX(-50%);
+  z-index: 28;
+  max-width: 84%;
+  padding: 9px 16px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.68);
+  color: #fff;
+  font-size: 12.5px;
+  line-height: 1.4;
+  text-align: center;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  animation: lockPasscodeIn 200ms ease both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lock-passcode,
+  .lock-passcode-dots[data-shake="1"] {
+    animation: none !important;
+  }
+}
+
 /* 锁屏那一屏的手机画面沿用 splash 的满屏画布（无内边距、无壁纸层）。
    背景要透明：解锁时锁屏滑走，露出的应该是底下的桌面，而不是一层深色底。 */
 .lock-phone-screen {

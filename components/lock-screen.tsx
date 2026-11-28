@@ -5,6 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getThemeAssetMap } from "@/lib/theme-storage";
 import { PhoneStatusBar } from "@/components/phone-status-bar";
 import { LockWidgetArea, type LockWidgetAreaHandle } from "@/components/lock-widgets";
+import { LockPasscodePad } from "@/components/lock-passcode-pad";
+import { readLockPasscode } from "@/lib/lock-passcode";
 
 /* ══════════════════════════════════════════
    锁屏（参考 iOS）
@@ -37,6 +39,23 @@ export function LockScreen({
   // 正在编辑锁屏组件：此时整屏不响应上滑解锁，免得摆弄组件时把屏幕滑走
   const [widgetEditing, setWidgetEditing] = useState(false);
   const widgetApiRef = useRef<LockWidgetAreaHandle | null>(null);
+  // 启用了锁屏密码：上滑先落到密码盘，输对才真正解锁
+  const [passcodeActive, setPasscodeActive] = useState(false);
+  const [padOpen, setPadOpen] = useState(false);
+  const [padNotice, setPadNotice] = useState<string | null>(null);
+  const padNoticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  useEffect(() => {
+    setPasscodeActive(readLockPasscode().enabled);
+  }, []);
+
+  useEffect(() => () => clearTimeout(padNoticeTimer.current), []);
+
+  const showPadNotice = useCallback((text: string) => {
+    clearTimeout(padNoticeTimer.current);
+    setPadNotice(text);
+    padNoticeTimer.current = setTimeout(() => setPadNotice(null), 2600);
+  }, []);
 
   // ── 锁屏壁纸 ──
   useEffect(() => {
@@ -58,17 +77,31 @@ export function LockScreen({
     };
   }, [wallpaperAssetId]);
 
-  const unlock = useCallback(() => {
+  /** 真正放行：整层原地淡出（位置不动），帘子在外面同步淡出 */
+  const finishUnlock = useCallback(() => {
     if (unlockedRef.current) return;
     unlockedRef.current = true;
     setLeaving(true);
-    // 只标记 leaving：整层原地淡出（位置不动、不做位移），帘子在外面同步淡出。
-    // 之前这里带过上移，壁纸会"滞后上滑"一下，观感不干净。
     onUnlock();
   }, [onUnlock]);
 
+  /**
+   * 上滑到位：启用了锁屏密码就先落到密码盘，否则直接解锁。
+   * 密码盘打开时把跟手位移归零，免得组件区还停在半路上。
+   */
+  const requestUnlock = useCallback(() => {
+    if (unlockedRef.current || leaving) return;
+    if (passcodeActive) {
+      setDragY(0);
+      setHintDismissed(false);
+      setPadOpen(true);
+      return;
+    }
+    finishUnlock();
+  }, [passcodeActive, finishUnlock, leaving]);
+
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (leaving || unlockedRef.current || widgetEditing) return;
+    if (leaving || unlockedRef.current || widgetEditing || padOpen) return;
     dragStartY.current = event.clientY;
     try {
       event.currentTarget.setPointerCapture(event.pointerId);
@@ -78,7 +111,7 @@ export function LockScreen({
   };
 
   const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (dragStartY.current === null || leaving || unlockedRef.current || widgetEditing) return;
+    if (dragStartY.current === null || leaving || unlockedRef.current || widgetEditing || padOpen) return;
     const delta = event.clientY - dragStartY.current;
     // 往上跟手；往下给一点回弹阻尼，不做整屏下拉
     setDragY(delta < 0 ? delta : delta * 0.16);
@@ -89,7 +122,7 @@ export function LockScreen({
     if (dragStartY.current === null || leaving) return;
     dragStartY.current = null;
     if (dragY <= -UNLOCK_DISTANCE) {
-      unlock();
+      requestUnlock();
       return;
     }
     setDragY(0);
@@ -131,11 +164,13 @@ export function LockScreen({
           时间不再是内置样式，而是默认放在这里的一个「极简大号时间」组件；
           长按进入编辑态，「取消」退出、「添加」打开选择器。
           上滑时跟着手指轻微上移并淡出，给一点跟手反馈。 */}
+      {/* 密码盘打开时整层淡出：那一屏不显示时间（时间本身就是一个组件） */}
       <div
         className="lock-widget-drag-layer"
         style={{
           transform: `translate3d(0, ${dragY * 0.5}px, 0)`,
-          opacity: Math.max(0, 1 - lift / 320),
+          opacity: padOpen ? 0 : Math.max(0, 1 - lift / 320),
+          pointerEvents: padOpen ? "none" : undefined,
         }}
       >
         <LockWidgetArea ref={widgetApiRef} onEditingChange={setWidgetEditing} />
@@ -167,7 +202,7 @@ export function LockScreen({
       {/* 编辑态时把「上滑解锁」藏起来：这时候不响应上滑，留着会误导 */}
       <div
         className="lock-screen-bottom"
-        style={{ opacity: widgetEditing ? 0 : Math.max(0, 1 - lift / 140) }}
+        style={{ opacity: widgetEditing || padOpen ? 0 : Math.max(0, 1 - lift / 140) }}
       >
         <div className={hintDismissed ? "lock-screen-hint lock-screen-hint-hidden" : "lock-screen-hint"}>
           上滑解锁
@@ -176,10 +211,23 @@ export function LockScreen({
           type="button"
           className="lock-screen-grabber"
           onPointerDown={(event) => event.stopPropagation()}
-          onClick={unlock}
+          onClick={requestUnlock}
           aria-label="上滑解锁"
         />
       </div>
+
+      {/* 密码盘：壁纸继续做底，加一层模糊压暗；组件区与「上滑解锁」在此让位 */}
+      {padOpen && (
+        <>
+          {padNotice ? (
+            <div className="lock-passcode-toast" role="status">{padNotice}</div>
+          ) : null}
+          <LockPasscodePad
+            onUnlocked={finishUnlock}
+            onNotice={showPadNotice}
+          />
+        </>
+      )}
     </div>
   );
 }
