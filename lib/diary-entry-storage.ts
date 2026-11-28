@@ -216,6 +216,15 @@ function normalizeTrigger(value: unknown): DiaryEntryTrigger {
   return value === "timer" ? "timer" : "manual";
 }
 
+/** 更新时刻列表：只留合法时间串，最多留最近 100 次（再多也不会无限膨胀） */
+function normalizeUpdatedHistory(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map(item => (typeof item === "string" ? item.trim() : ""))
+    .filter(Boolean)
+    .slice(-100);
+}
+
 /** 用户写日记时填的 ID（作者名下方那行灰色小字）：记住上次填的，下次新写一篇自动带出来 */
 export function loadDiaryUsername(): string {
   if (typeof window === "undefined") return "";
@@ -303,6 +312,7 @@ export function normalizeDiaryEntry(raw: unknown): DiaryEntry | null {
       : typeof record.updated_at === "string"
         ? record.updated_at
         : createdAt,
+    updatedHistory: normalizeUpdatedHistory(record.updatedHistory ?? record.updated_history),
   };
 }
 
@@ -355,6 +365,8 @@ export function createDiaryEntry(input: DiaryEntryInput): DiaryEntry {
     trigger: input.trigger ?? "manual",
     createdAt: now,
     updatedAt: now,
+    // 新条目还没被改过
+    updatedHistory: [],
   };
   saveDiaryEntries([entry, ...loadDiaryEntries()]);
   return entry;
@@ -370,6 +382,13 @@ export function updateDiaryEntry(id: string, patch: DiaryEntryPatch): DiaryEntry
   const now = new Date().toISOString();
   const body = patch.body !== undefined ? cleanMultilineText(patch.body, 6000) : current.body;
   const blocks = patch.blocks !== undefined ? normalizeBlocks(patch.blocks, body) : current.blocks;
+  // 每次改动追加一个时刻，「通知」里就每次更新各留一条。
+  // 老条目可能已经被改过却没有历史：先把它的 updatedAt 补记进去，免得丢掉那一次。
+  const history = current.updatedHistory ?? [];
+  const baseHistory = history.length > 0
+    ? history
+    : (current.updatedAt && current.updatedAt !== current.createdAt ? [current.updatedAt] : []);
+  const updatedHistory = [...baseHistory, now].slice(-100);
   const updated: DiaryEntry = {
     ...current,
     username: patch.username !== undefined ? cleanText(patch.username, 40) : current.username,
@@ -385,6 +404,7 @@ export function updateDiaryEntry(id: string, patch: DiaryEntryPatch): DiaryEntry
     blocks,
     trigger: patch.trigger ?? current.trigger,
     updatedAt: now,
+    updatedHistory,
   };
   entries[index] = updated;
   saveDiaryEntries(entries);

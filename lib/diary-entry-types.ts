@@ -47,6 +47,9 @@ export type DiaryEntry = {
   trigger: DiaryEntryTrigger;
   createdAt: string;
   updatedAt: string;
+  /** 每次改动的时刻（升序）。「通知」里每次更新各算一条，所以这里必须逐次记下来；
+   *  没有这个字段的老条目只知道自己被改过，按一条更新处理 */
+  updatedHistory?: string[];
 };
 
 export type DiaryEntryInput = {

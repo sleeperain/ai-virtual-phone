@@ -801,8 +801,8 @@ type DiaryNotice = {
 
 /**
  * 「通知」页签：把日记动态摊成一条条通知。
- * 发布和更新是两条独立记录：一篇日记先有一条「发布了」，
- * 之后改过再单独多一条「更新了」，不会把发布那条改写成更新。
+ * 一篇日记先有一条「发布了」，之后每改一次各多一条「更新了」——
+ * 发布那条不会被改写成更新，改几次就留几条。
  */
 function buildDiaryNotices(entries: DiaryEntry[]): DiaryNotice[] {
   const notices: DiaryNotice[] = [];
@@ -818,16 +818,19 @@ function buildDiaryNotices(entries: DiaryEntry[]): DiaryNotice[] {
       isMine: mine,
       characterId: entry.characterId,
     });
-    // 改过才补一条更新记录（用发布时间做比较，老数据的 updatedAt 缺失也不误判）
-    if (entry.updatedAt && entry.createdAt && entry.updatedAt !== entry.createdAt) {
+    // 每次改动各一条；没有 updatedHistory 的老条目只能知道自己被改过，按一条算
+    const history = entry.updatedHistory && entry.updatedHistory.length > 0
+      ? entry.updatedHistory
+      : (entry.updatedAt && entry.createdAt && entry.updatedAt !== entry.createdAt ? [entry.updatedAt] : []);
+    history.forEach((at, index) => {
       notices.push({
-        id: `${entry.id}-update`,
+        id: `${entry.id}-update-${index}`,
         text: `${who}更新了一则日记${titlePart}`,
-        time: entry.updatedAt,
+        time: at,
         isMine: mine,
         characterId: entry.characterId,
       });
-    }
+    });
   }
   return notices
     .sort((a, b) => {
