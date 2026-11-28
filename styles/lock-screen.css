@@ -782,25 +782,74 @@
   background: #ffffff;
 }
 
-/* Loading... 用像素字体（Press Start 2P，见 styles/fonts.css） */
+.boot-loading-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+/* Loading... 走默认字体。
+   不用像素字体（Press Start 2P）：那是 webfont，加载阶段还没下载完，
+   会先显示备用字体再替换，白屏上能看见一次跳变。默认字体零等待。 */
 .boot-loading-text {
-  font-family: "Press Start 2P", ui-monospace, monospace;
-  font-size: 12px;
-  line-height: 1.6;
-  letter-spacing: 0.12em;
-  color: #1a1a1a;
-  /* 像素字体要关掉抗锯齿，边缘才是硬的 */
-  -webkit-font-smoothing: none;
-  -moz-osx-font-smoothing: unset;
-  font-smooth: never;
-  text-rendering: geometricPrecision;
-  /* 加载中呼吸一下，避免像卡死 */
-  animation: bootLoadingBlink 1.4s steps(2, end) infinite;
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: 0.18em;
+  /* 字间距带出的右端空白补掉，视觉上才是真居中 */
+  text-indent: 0.18em;
+  color: #9a9a9e;
+  animation: bootLoadingBlink 1.6s ease-in-out infinite;
 }
 
 @keyframes bootLoadingBlink {
   0%, 100% { opacity: 1; }
-  50%      { opacity: 0.45; }
+  50%      { opacity: 0.5; }
+}
+
+/* 进度条：灰槽 + 深色填充。
+   填充用 transform: scaleX 推进而不是改 width —— scale 走合成层不重排，
+   白屏阶段不该有任何布局开销。
+   进度是估算的：真正要做的事没有可靠的百分比回调，所以做成
+   "先快、中段一顿、后段极慢地蹭" ，停在 92% 附近等真正就绪，
+   全程都在动，不会让人以为卡死。 */
+.boot-loading-bar {
+  width: 132px;
+  height: 3px;
+  border-radius: 2px;
+  background: #ececee;
+  overflow: hidden;
+}
+
+.boot-loading-bar-fill {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: #b9b9be;
+  transform: scaleX(0);
+  transform-origin: left center;
+  animation: bootLoadingProgress 3.4s cubic-bezier(0.16, 0.84, 0.44, 1) forwards;
+}
+
+@keyframes bootLoadingProgress {
+  0%   { transform: scaleX(0); }
+  30%  { transform: scaleX(0.58); }
+  55%  { transform: scaleX(0.76); }
+  80%  { transform: scaleX(0.86); }
+  100% { transform: scaleX(0.92); }
+}
+
+/* 真正就绪时把进度补满：动画停在 92%，这里覆盖成 100%，
+   让"完成"这件事在观感上有收尾，而不是突然消失。 */
+.boot-loading-content[data-done="1"] .boot-loading-bar-fill {
+  animation: none;
+  transition: transform 180ms ease-out;
+  transform: scaleX(1);
+}
+
+.boot-loading-content[data-done="1"] .boot-loading-text {
+  animation: none;
+  opacity: 1;
 }
 
 /* 移动端：遮罩要盖住整个屏幕（含状态栏区域） */

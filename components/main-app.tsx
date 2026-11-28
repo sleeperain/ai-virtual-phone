@@ -32,6 +32,8 @@ const BOOT_EXIT_DURATION = 340;
  * 这段等待里底下已经把活干完了，揭幕时只是把 Loading 淡掉。
  */
 const BOOT_SETTLE_MS = 400;
+/** 进度条补满后停留的时长（ms），让"加载完成"这件事看得见 */
+const BOOT_DONE_HOLD_MS = 180;
 
 const BUILTIN_FONT_URLS = [
   "/fonts/huiwen.woff2",
@@ -190,8 +192,27 @@ function SplashScreen({ ready = false, onEnter }: { ready?: boolean; onEnter?: (
 }
 
 /**
- * 启动过渡屏：机身 + 一行 Loading。
- * 这一层刻意做得极轻（没有图、没有模糊、没有动画），
+ * Loading 文案 + 进度条。
+ *
+ * 进度是**估算**的：真正要做的事（IndexedDB 水合、主题资源预加载、桌面挂载）
+ * 没有可靠的百分比回调，与其编一个假的实时进度，不如做成一条
+ * "先快后慢、永远差一点点"的动画，最后在真正就绪时走满。
+ * 规律是渐进加载里常见的那套：越是接近完成越慢，不会走到 100% 卡住干等。
+ */
+function BootLoadingContent({ done = false }: { done?: boolean }) {
+  return (
+    <div className="boot-loading-content" data-done={done ? "1" : undefined}>
+      <span className="boot-loading-text">Loading...</span>
+      <div className="boot-loading-bar" role="progressbar" aria-label={TEXT.loading}>
+        <div className="boot-loading-bar-fill" />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 启动过渡屏：机身 + Loading + 进度条。
+ * 这一层刻意做得极轻（没有图、没有模糊），
  * 它负责盖住底下"桌面 + 锁屏同时在首帧渲染"的那段时间。
  */
 function SplashPendingScreen() {
@@ -201,7 +222,7 @@ function SplashPendingScreen() {
         <div className="phone-case">
           <div className="phone-frame">
             <div className="phone-shell splash-phone-screen splash-pending-screen">
-              <span className="boot-loading-text">Loading...</span>
+              <BootLoadingContent />
             </div>
           </div>
         </div>
@@ -217,12 +238,12 @@ function SplashPendingScreen() {
  * 抢同一帧。让锁屏一边渲染一边露面，看到的就是"卡一下才出来"。
  * 这层不透明底把那段遮掉，等底下渲染稳了再淡出——观感是 Loading 之后画面直接出现。
  *
- * 它本身极轻：纯色底 + 一行字，没有图片、没有模糊、没有动画。
+ * 它本身极轻：纯色底 + 一行字 + 一条进度条，没有图片、没有模糊。
  */
-function BootLoadingMask() {
+function BootLoadingMask({ done = false }: { done?: boolean }) {
   return (
     <div className="boot-loading-mask" aria-live="polite">
-      <span className="boot-loading-text">Loading...</span>
+      <BootLoadingContent done={done} />
     </div>
   );
 }
@@ -322,6 +343,8 @@ export function MainApp() {
   const pendingBootDismissRef = useRef(false);
   // 启动遮罩是否还盖着：锁屏/开屏动画先挂载但藏在下面，等渲染稳了再揭幕
   const [revealReady, setRevealReady] = useState(false);
+  // 进度条补满的那一小段（只在揭幕前一刻为真），让"完成"有收尾
+  const [revealDone, setRevealDone] = useState(false);
 
   const dismissBoot = useCallback(() => {
     // 桌面还没挂好就先记下，等挂好再淡出，避免帘子揭开时底下是空的
@@ -353,7 +376,11 @@ export function MainApp() {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const raf1 = requestAnimationFrame(() => {
       raf2 = requestAnimationFrame(() => {
-        timer = setTimeout(() => setRevealReady(true), BOOT_SETTLE_MS);
+        timer = setTimeout(() => {
+          // 先把进度补满，留 180ms 给人看清，再揭幕
+          setRevealDone(true);
+          timer = setTimeout(() => setRevealReady(true), BOOT_DONE_HOLD_MS);
+        }, BOOT_SETTLE_MS);
       });
     });
     return () => {
@@ -490,8 +517,9 @@ export function MainApp() {
 
           {/* 揭幕遮罩：底下的锁屏/动画已经挂载并在渲染，这层只负责盖住那段脏活。
               渲染稳了（revealReady）就淡出，用户看到的是"Loading → 画面直接出现"，
-              而不是"画面一边加载一边卡"。 */}
-          {splashMode !== "pending" && !revealReady ? <BootLoadingMask /> : null}
+              而不是"画面一边加载一边卡"。
+              done 让进度条在最后补满一格再淡出，避免"走到 92% 突然消失"的割裂感。 */}
+          {splashMode !== "pending" && !revealReady ? <BootLoadingMask done={revealDone} /> : null}
         </div>
       ) : null}
     </AccountGate>
