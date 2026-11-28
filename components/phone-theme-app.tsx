@@ -73,6 +73,7 @@ type ThemeSection =
   | "icons"
   | "widgets"
   | "splash"
+  | "splashLockWallpaper"
   | "case"
   | "text"
   | "css"
@@ -182,6 +183,7 @@ const SECTION_TITLES: Record<Exclude<ThemeSection, "menu">, string> = {
   icons: "\u56FE\u6807",
   widgets: "\u684C\u9762\u7EC4\u4EF6",
   splash: "\u5F00\u5C4F\u52A8\u753B",
+  splashLockWallpaper: "\u9501\u5C4F\u58C1\u7EB8",
   case: "\u624B\u673A\u58F3",
   text: "\u6587\u5B57",
   css: "CSS \u53D8\u91CF",
@@ -190,7 +192,7 @@ const SECTION_TITLES: Record<Exclude<ThemeSection, "menu">, string> = {
   lookSets: "管理搭配",
 };
 
-const THEME_SECTIONS = new Set<string>(["menu", "palette", "wallpaper", "icons", "widgets", "splash", "case", "text", "css", "nightSet", "lookSets"]);
+const THEME_SECTIONS = new Set<string>(["menu", "palette", "wallpaper", "icons", "widgets", "splash", "splashLockWallpaper", "case", "text", "css", "nightSet", "lookSets"]);
 
 function isThemeSection(value: string): value is ThemeSection {
   return THEME_SECTIONS.has(value);
@@ -308,6 +310,9 @@ export function PhoneThemeApp({
       setSection("nightSet");
     } else if (section === "nightSet") {
       setSection(lookSetBack);
+    } else if (section === "splashLockWallpaper") {
+      // 从「开屏动画」进来的，返回时回那一页而不是直接回菜单
+      setSection("splash");
     } else {
       setSection("menu");
     }
@@ -494,12 +499,20 @@ export function PhoneThemeApp({
           <NightEntityPage setId={lookSetId} entityId={nightEntity.id} />
         ) : section === "lookSets" ? (
           <LookSetManagePage onOpenSet={(setId) => openLookSet(setId, "lookSets")} />
+        ) : section === "splashLockWallpaper" ? (
+          <LockWallpaperPage
+            draft={draft}
+            onDraftChange={onDraftChange}
+            onApply={onApply}
+            onNotice={onNotice}
+          />
         ) : section === "splash" ? (
           <SplashSettingsPage
             draft={draft}
             onDraftChange={onDraftChange}
             onApply={onApply}
             onNotice={onNotice}
+            onOpenLockWallpaper={() => setSection("splashLockWallpaper")}
           />
         ) : section === "wallpaper" ? (
           <WallpaperPage
@@ -1354,34 +1367,11 @@ function SplashSettingsPage({
   onDraftChange: (next: ThemeProfile) => void;
   onApply: (next: ThemeProfile) => Promise<void> | void;
   onNotice: (text: string) => void;
+  /** 跳到「锁屏壁纸」子页面（和壁纸页同一套 UI，不再开弹窗） */
+  onOpenLockWallpaper: () => void;
 }) {
-  const fileRef = useRef<HTMLInputElement>(null);
-  const [thumbs, setThumbs] = useState<Record<string, string>>({});
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-
   const enabled = draft.splashAnimationEnabled;
-  const library = draft.wallpaperLibrary;
   const lockWallpaperId = draft.lockWallpaperAssetId;
-
-  // 缩略图：壁纸库 + 当前锁屏壁纸（主题包导入的锁屏壁纸可能不在库里）
-  useEffect(() => {
-    const ids = Array.from(new Set([...library, lockWallpaperId ?? ""].filter(Boolean)));
-    if (ids.length === 0) {
-      setThumbs({});
-      return;
-    }
-    let cancelled = false;
-    getThemeAssetMap(ids)
-      .then((map) => {
-        if (!cancelled) setThumbs(map);
-      })
-      .catch(() => {
-        // 缩略图取不到就显示占位块，不影响选图
-      });
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [library.join(","), lockWallpaperId]);
 
   const commit = useCallback(async (patch: Partial<ThemeProfile>) => {
     const next = normalizeThemeProfile({ ...draft, ...patch });
@@ -1393,33 +1383,6 @@ function SplashSettingsPage({
     await commit({ splashAnimationEnabled: checked });
     onNotice(checked ? "已启用开屏动画" : "已关闭开屏动画，启动时直接进锁屏");
   }, [commit, onNotice]);
-
-  const handlePickWallpaper = useCallback(async (assetId: string | null) => {
-    setPickerOpen(false);
-    await commit({ lockWallpaperAssetId: assetId });
-    onNotice(assetId ? "锁屏壁纸已更新" : "已改回默认锁屏壁纸");
-  }, [commit, onNotice]);
-
-  const handleUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    setBusy(true);
-    try {
-      const assetId = await saveThemeAssetFromBlob(file, "wallpaper");
-      setPickerOpen(false);
-      // 顺手进壁纸库，桌面壁纸页也能复用这张
-      await commit({
-        lockWallpaperAssetId: assetId,
-        wallpaperLibrary: [...draft.wallpaperLibrary, assetId],
-      });
-      onNotice("锁屏壁纸已更新");
-    } catch (error) {
-      onNotice(describeAssetSaveError(error));
-    } finally {
-      setBusy(false);
-    }
-  }, [commit, draft.wallpaperLibrary, onNotice]);
 
   return (
     <div className="theme-section-page" data-bottom-reserve style={{ gap: 16 }}>
@@ -1460,11 +1423,16 @@ function SplashSettingsPage({
           <button
             type="button"
             className="menu-item"
-            onClick={() => setPickerOpen(true)}
+            onClick={onOpenLockWallpaper}
           >
             <span className="card-icon card-icon-glass"><GlassIcon name="wallpaper" /></span>
             <span className="menu-label appearance-menu-item-label">{"设置锁屏壁纸"}</span>
-            <span className="menu-right"><IconChevronRight /></span>
+            <span className="menu-right">
+              <span className="ts-11" style={{ color: "var(--c-icon)" }}>
+                {lockWallpaperId ? "已设置" : "默认"}
+              </span>
+              <IconChevronRight />
+            </span>
           </button>
         )}
       </div>
@@ -1472,68 +1440,103 @@ function SplashSettingsPage({
       <p className="ts-11 leading-relaxed" style={{ color: "var(--c-icon)" }}>
         {enabled
           ? "启动时先播放开屏动画，点进入按钮后进桌面。"
-          : "已关闭开屏动画：启动直接落在锁屏，第一行显示日期与星期，第二行是大字时间，上滑解锁进桌面。"}
+          : "已关闭开屏动画：启动直接落在锁屏，上滑解锁进桌面。锁屏上的时间和其它卡片都是桌面组件，长按可以移动、删除或添加。"}
       </p>
+    </div>
+  );
+}
 
-      {!enabled && (
-        <p className="ts-11 leading-relaxed" style={{ color: "var(--c-icon)" }}>
-          {"锁屏壁纸可以跟桌面壁纸不一样；不选就用默认的深色渐变。换完壁纸重新打开一次应用即可看到效果。"}
-        </p>
-      )}
+/* ══════════════════════════════════════════
+   锁屏壁纸 Page
 
-      {pickerOpen && (
-        <ContentDialog
-          title="设置锁屏壁纸"
-          confirmLabel={undefined}
-          cancelLabel="关闭"
-          onConfirm={() => setPickerOpen(false)}
-          onCancel={() => setPickerOpen(false)}
+   直接沿用壁纸页那套 .wp-grid / .wp-card 列表与上传入口，不再套一层弹窗。
+   不做透明度/模糊/缩放那几个滑杆——那些是桌面壁纸的参数，锁屏这边不适用。
+   ══════════════════════════════════════════ */
+
+function LockWallpaperPage({
+  draft,
+  onDraftChange,
+  onApply,
+  onNotice,
+}: {
+  draft: ThemeProfile;
+  onDraftChange: (next: ThemeProfile) => void;
+  onApply: (next: ThemeProfile) => Promise<void> | void;
+  onNotice: (text: string) => void;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [thumbs, setThumbs] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+
+  const library = draft.wallpaperLibrary;
+  const lockWallpaperId = draft.lockWallpaperAssetId;
+
+  // 缩略图：壁纸库 + 当前锁屏壁纸（主题包导入的锁屏壁纸可能不在库里）
+  useEffect(() => {
+    const ids = Array.from(new Set([...library, lockWallpaperId ?? ""].filter(Boolean)));
+    if (ids.length === 0) {
+      setThumbs({});
+      return;
+    }
+    let cancelled = false;
+    getThemeAssetMap(ids)
+      .then((map) => {
+        if (!cancelled) setThumbs(map);
+      })
+      .catch(() => {
+        // 缩略图取不到就显示占位块，不影响选图
+      });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [library.join(","), lockWallpaperId]);
+
+  const commit = useCallback(async (patch: Partial<ThemeProfile>) => {
+    const next = normalizeThemeProfile({ ...draft, ...patch });
+    onDraftChange(next);
+    await onApply(next);
+  }, [draft, onDraftChange, onApply]);
+
+  const handlePick = useCallback(async (assetId: string | null) => {
+    if ((draft.lockWallpaperAssetId ?? null) === assetId) return;
+    await commit({ lockWallpaperAssetId: assetId });
+    onNotice(assetId ? "锁屏壁纸已更新" : "已改回默认锁屏壁纸");
+  }, [commit, draft.lockWallpaperAssetId, onNotice]);
+
+  const handleUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setBusy(true);
+    try {
+      const assetId = await saveThemeAssetFromBlob(file, "wallpaper");
+      // 顺手进壁纸库，桌面壁纸页也能复用这张
+      await commit({
+        lockWallpaperAssetId: assetId,
+        wallpaperLibrary: [...draft.wallpaperLibrary, assetId],
+      });
+      onNotice("锁屏壁纸已更新");
+    } catch (error) {
+      onNotice(describeAssetSaveError(error));
+    } finally {
+      setBusy(false);
+    }
+  }, [commit, draft.wallpaperLibrary, onNotice]);
+
+  return (
+    <div className="theme-section-page" data-bottom-reserve style={{ gap: 14 }}>
+      {/* 上传入口：位置与样式跟壁纸页一致 */}
+      <div className="flex flex-col items-center justify-center pt-2 pb-4 border-b border-black/5">
+        <button
+          type="button"
+          className="inline-flex items-center justify-center gap-1.5 rounded-[20px] bg-black px-6 py-2.5 text-sm font-bold text-white shadow-sm transition-all hover:bg-gray-800 hover:shadow-md active:scale-95 focus:outline-none disabled:opacity-50"
+          onClick={() => fileRef.current?.click()}
+          disabled={busy}
         >
-          <div className="flex flex-col gap-3">
-            <div className="wp-grid">
-              {/* 默认壁纸 */}
-              <div
-                className={`wp-card${lockWallpaperId ? "" : " wp-card-active"}`}
-                onClick={() => { void handlePickWallpaper(null); }}
-                role="button"
-                tabIndex={0}
-              >
-                <div className="wp-card-img lock-wallpaper-default" />
-                {!lockWallpaperId && <span className="wp-card-badge">{"使用中"}</span>}
-              </div>
-              {library.map((assetId) => {
-                const src = thumbs[assetId];
-                const isActive = lockWallpaperId === assetId;
-                return (
-                  <div
-                    key={assetId}
-                    className={`wp-card${isActive ? " wp-card-active" : ""}`}
-                    onClick={() => { void handlePickWallpaper(assetId); }}
-                    role="button"
-                    tabIndex={0}
-                  >
-                    {src ? (
-                      <img className="wp-card-img" src={src} alt="" />
-                    ) : (
-                      <div className="wp-card-img bg-[var(--c-page-body-bg)]" />
-                    )}
-                    {isActive && <span className="wp-card-badge">{"使用中"}</span>}
-                  </div>
-                );
-              })}
-            </div>
-            <button
-              type="button"
-              className="inline-flex h-10 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-[20px] bg-black px-4 text-xs font-bold text-white shadow-sm transition-all hover:bg-gray-800 active:scale-95 focus:outline-none disabled:opacity-50"
-              onClick={() => fileRef.current?.click()}
-              disabled={busy}
-            >
-              <Plus size={15} strokeWidth={1.8} />
-              <span>{busy ? "上传中…" : "上传新图片"}</span>
-            </button>
-          </div>
-        </ContentDialog>
-      )}
+          <Plus size={15} strokeWidth={1.8} />
+          {busy ? "上传中…" : "添加锁屏壁纸"}
+        </button>
+        <p className="mt-3 text-[calc(11px*var(--app-text-scale,1))] font-medium text-gray-400">选一张图作为锁屏背景，与桌面壁纸互不影响</p>
+      </div>
 
       <input
         ref={fileRef}
@@ -1542,6 +1545,47 @@ function SplashSettingsPage({
         className="hidden"
         onChange={handleUpload}
       />
+
+      {/* 第一格是内置默认壁纸，其余是壁纸库 */}
+      <div className="wp-grid">
+        <div
+          className={`wp-card${lockWallpaperId ? "" : " wp-card-active"}`}
+          onClick={() => { void handlePick(null); }}
+          role="button"
+          tabIndex={0}
+        >
+          <div className="wp-card-img lock-wallpaper-default" />
+          {!lockWallpaperId && <span className="wp-card-badge">{"使用中"}</span>}
+        </div>
+        {library.map((assetId) => {
+          const src = thumbs[assetId];
+          const isActive = lockWallpaperId === assetId;
+          return (
+            <div
+              key={assetId}
+              className={`wp-card${isActive ? " wp-card-active" : ""}`}
+              onClick={() => { void handlePick(assetId); }}
+              role="button"
+              tabIndex={0}
+            >
+              {src ? (
+                <img className="wp-card-img" src={src} alt="" />
+              ) : (
+                <div className="wp-card-img bg-[var(--c-page-body-bg)]" />
+              )}
+              {isActive && <span className="wp-card-badge">{"使用中"}</span>}
+            </div>
+          );
+        })}
+      </div>
+
+      {library.length === 0 && (
+        <p className="wp-empty">{"壁纸库还是空的，点上方按钮添加"}</p>
+      )}
+
+      <p className="ts-11 leading-relaxed" style={{ color: "var(--c-icon)" }}>
+        {"选「默认」就是内置的深色渐变。换完壁纸重新打开一次应用即可看到效果。"}
+      </p>
     </div>
   );
 }
