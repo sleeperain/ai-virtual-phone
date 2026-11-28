@@ -774,6 +774,59 @@
   }
 }
 
+/* ══════════════════════════════════════════
+   启动揭幕：Loading 遮罩
+
+   铺满整个启动帘子，盖住底下正在首帧渲染的锁屏/开屏动画。
+   纯色底 + 一行字，故意做得很轻：它存在的意义就是不抢渲染资源。
+   ══════════════════════════════════════════ */
+
+.boot-loading-mask {
+  position: absolute;
+  inset: 0;
+  /* 盖在锁屏/开屏动画之上（它们各自 z-index 20 上下），但在帘子内部，
+     随帘子一起移动，不会跑到桌面上去 */
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0b0b12;
+}
+
+/* 揭幕时淡出，别硬切 */
+.boot-reveal {
+  opacity: 0;
+  transition: opacity 240ms ease;
+}
+
+.boot-reveal[data-ready="1"] {
+  opacity: 1;
+}
+
+.splash-pending-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0b0b12;
+}
+
+.splash-loading-text {
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: 0.32em;
+  /* Loading 的字母间距大，右端会多出一段，视觉上左偏——补回来 */
+  text-indent: 0.32em;
+  color: rgba(255, 255, 255, 0.62);
+  opacity: 0.9;
+}
+
+/* 移动端：遮罩要盖住整个屏幕（含状态栏区域） */
+@media (max-width: 500px) and (hover: none) and (pointer: coarse) {
+  .boot-loading-mask {
+    height: 100lvh;
+  }
+}
+
 /* 锁屏那一屏的手机画面沿用 splash 的满屏画布（无内边距、无壁纸层）。
    背景要透明：解锁时锁屏滑走，露出的应该是底下的桌面，而不是一层深色底。 */
 .lock-phone-screen {

@@ -25,6 +25,13 @@ const TEXT = {
 
 /** 启动帘子淡出时长（ms），须与 .boot-curtain[data-leaving] 的 transition 对齐 */
 const BOOT_EXIT_DURATION = 340;
+/**
+ * 揭幕前给渲染留的缓冲（ms）。
+ * 桌面和锁屏是一起挂载的，桌面那一坨初始化很重；如果锁屏在同一帧直接亮相，
+ * 首帧就要跟桌面的重活抢时间，看着就是"卡一下才出来"。
+ * 这段等待里底下已经把活干完了，揭幕时只是把 Loading 淡掉。
+ */
+const BOOT_SETTLE_MS = 400;
 
 const BUILTIN_FONT_URLS = [
   "/fonts/huiwen.woff2",
@@ -183,9 +190,9 @@ function SplashScreen({ ready = false, onEnter }: { ready?: boolean; onEnter?: (
 }
 
 /**
- * 配置还没读出来时的过渡屏：只留机身和开屏动画那张纸色底，不画气球也不显示锁屏。
- * 这段只有 IndexedDB 一次读取的工夫；关掉开屏动画的用户不会先看到动画闪一下，
- * 开着动画的用户也只会看到同样的纸色底，接着动画从零开始，观感是连续的。
+ * 启动过渡屏：机身 + 一行 Loading。
+ * 这一层刻意做得极轻（没有图、没有模糊、没有动画），
+ * 它负责盖住底下"桌面 + 锁屏同时在首帧渲染"的那段时间。
  */
 function SplashPendingScreen() {
   return (
@@ -193,11 +200,30 @@ function SplashPendingScreen() {
       <section className="phone-shell-wrap splash-shell-wrap" aria-label={TEXT.loading}>
         <div className="phone-case">
           <div className="phone-frame">
-            <div className="phone-shell splash-phone-screen" />
+            <div className="phone-shell splash-phone-screen splash-pending-screen">
+              <span className="splash-loading-text">Loading</span>
+            </div>
           </div>
         </div>
       </section>
     </main>
+  );
+}
+
+/**
+ * 揭幕遮罩：盖在已经挂载好、正在首帧渲染的锁屏/动画上面。
+ *
+ * 为什么要有它：桌面和锁屏是同一次提交里挂上来的，锁屏首帧要和桌面那坨初始化
+ * 抢同一帧。让锁屏一边渲染一边露面，看到的就是"卡一下才出来"。
+ * 这层不透明底把那段遮掉，等底下渲染稳了再淡出——观感是 Loading 之后画面直接出现。
+ *
+ * 它本身极轻：纯色底 + 一行字，没有图片、没有模糊、没有动画。
+ */
+function BootLoadingMask() {
+  return (
+    <div className="boot-loading-mask" aria-live="polite">
+      <span className="splash-loading-text">Loading</span>
+    </div>
   );
 }
 
@@ -294,6 +320,8 @@ export function MainApp() {
   // 资源到位后再"刷新"一次。
   const desktopMountedRef = useRef(false);
   const pendingBootDismissRef = useRef(false);
+  // 启动遮罩是否还盖着：锁屏/开屏动画先挂载但藏在下面，等渲染稳了再揭幕
+  const [revealReady, setRevealReady] = useState(false);
 
   const dismissBoot = useCallback(() => {
     // 桌面还没挂好就先记下，等挂好再淡出，避免帘子揭开时底下是空的
@@ -316,6 +344,24 @@ export function MainApp() {
       dismissBoot();
     }
   }, [hydrated, dismissBoot]);
+
+  // 揭幕时机：等桌面和锁屏都挂上、并且浏览器把首帧画完之后再揭开。
+  // 两次 rAF 确保提交已绘制，再留 BOOT_SETTLE_MS 给重布局与合成收尾。
+  useEffect(() => {
+    if (!hydrated || splashMode === "pending") return;
+    let raf2 = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        timer = setTimeout(() => setRevealReady(true), BOOT_SETTLE_MS);
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      if (raf2) cancelAnimationFrame(raf2);
+      if (timer) clearTimeout(timer);
+    };
+  }, [hydrated, splashMode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -427,16 +473,25 @@ export function MainApp() {
 
       {!splashDismissed ? (
         <div className="boot-curtain" data-leaving={bootLeaving ? "1" : undefined}>
-          {splashMode === "lock" ? (
-            <LockScreenView
-              wallpaperAssetId={lockWallpaperAssetId}
-              onUnlock={dismissBoot}
-            />
-          ) : splashMode === "animation" ? (
-            <SplashScreen ready={hydrated} onEnter={dismissBoot} />
-          ) : (
+          {splashMode === "pending" ? (
             <SplashPendingScreen />
+          ) : (
+            <div className="boot-reveal" data-ready={revealReady ? "1" : undefined}>
+              {splashMode === "lock" ? (
+                <LockScreenView
+                  wallpaperAssetId={lockWallpaperAssetId}
+                  onUnlock={dismissBoot}
+                />
+              ) : (
+                <SplashScreen ready={hydrated && revealReady} onEnter={dismissBoot} />
+              )}
+            </div>
           )}
+
+          {/* 揭幕遮罩：底下的锁屏/动画已经挂载并在渲染，这层只负责盖住那段脏活。
+              渲染稳了（revealReady）就淡出，用户看到的是"Loading → 画面直接出现"，
+              而不是"画面一边加载一边卡"。 */}
+          {splashMode !== "pending" && !revealReady ? <BootLoadingMask /> : null}
         </div>
       ) : null}
     </AccountGate>
