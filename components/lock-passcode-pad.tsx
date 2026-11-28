@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
-  DEFAULT_PASSCODE,
   PASSCODE_LENGTH,
   resetLockPasscode,
   verifyPasscode,
@@ -89,7 +88,7 @@ export function LockPasscodePad({
     if (solved) return;
     resetLockPasscode();
     setInput("");
-    onNotice?.(`密码已重置为 ${DEFAULT_PASSCODE}，输入它即可解锁`);
+    onNotice?.("密码已重置");
   }, [onNotice, solved]);
 
   // 物理键盘也支持，桌面端调试方便

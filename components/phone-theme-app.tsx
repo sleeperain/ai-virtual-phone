@@ -1667,15 +1667,16 @@ function LockWallpaperPage({
 /* ══════════════════════════════════════════
    锁屏密码 Page
 
-   改密码要先验旧密码 —— 否则手机在别人手上时，直接从设置里改掉就绕过去了。
+   不做"先验证旧密码"：忘了旧密码就改不了，等于把自己锁在设置外面。
+   反正密码本身只是隐私遮挡（数据都在本机），验证旧密码也挡不住真想翻的人。
+   所以这里直接给「输入新密码 → 再输一遍」，外加一个「重置为 0000」兜底。
+
    密码独立存储（lib/lock-passcode.ts），不进 ThemeProfile：
    主题包导出时不会带走密码，恢复默认外观也不会把它清掉。
    ══════════════════════════════════════════ */
 
 function LockPasscodePage({ onNotice }: { onNotice: (text: string) => void }) {
   const [state, setState] = useState(() => readLockPasscode());
-  const [stage, setStage] = useState<"verify" | "input">("verify");
-  const [current, setCurrent] = useState("");
   const [first, setFirst] = useState("");
   const [second, setSecond] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -1690,70 +1691,46 @@ function LockPasscodePage({ onNotice }: { onNotice: (text: string) => void }) {
   }, []);
 
   const resetStages = useCallback(() => {
-    setStage("verify");
-    setCurrent("");
     setFirst("");
     setSecond("");
   }, []);
 
   const handleDigit = useCallback((digit: string) => {
     if (error) return;
-    if (stage === "verify") {
-      const next = (current + digit).slice(0, PASSCODE_LENGTH);
-      setCurrent(next);
-      if (next.length === PASSCODE_LENGTH) {
-        if (next === state.code) {
-          setStage("input");
-          setCurrent("");
-        } else {
-          flashError("原密码不正确");
-          setCurrent("");
-        }
-      }
-      return;
-    }
     if (first.length < PASSCODE_LENGTH) {
-      const next = first + digit;
-      setFirst(next);
+      setFirst(first + digit);
       return;
     }
     const next = (second + digit).slice(0, PASSCODE_LENGTH);
     setSecond(next);
     if (next.length === PASSCODE_LENGTH) {
       if (next === first) {
+        // 这里是"设了新密码"，跟下面「重置为 0000」不是一回事，文案分开
         const saved = writeLockPasscode({ enabled: true, code: next });
         setState(saved);
         onNotice("锁屏密码已更新");
         resetStages();
       } else {
         flashError("两次输入不一致，重来");
-        setFirst("");
-        setSecond("");
+        resetStages();
       }
     }
-  }, [error, first, second, stage, state.code, current, flashError, onNotice, resetStages]);
+  }, [error, first, second, flashError, onNotice, resetStages]);
 
   const handleDelete = useCallback(() => {
-    if (stage === "verify") setCurrent((prev) => prev.slice(0, -1));
-    else if (first.length < PASSCODE_LENGTH) setFirst((prev) => prev.slice(0, -1));
+    if (first.length < PASSCODE_LENGTH) setFirst((prev) => prev.slice(0, -1));
     else setSecond((prev) => prev.slice(0, -1));
-  }, [stage, first.length]);
+  }, [first.length]);
 
   const handleReset = useCallback(() => {
     const saved = writeLockPasscode({ enabled: state.enabled, code: DEFAULT_PASSCODE });
     setState(saved);
-    onNotice(`密码已重置为 ${DEFAULT_PASSCODE}`);
+    onNotice("密码已重置");
     resetStages();
   }, [onNotice, resetStages, state.enabled]);
 
-  const title = stage === "verify"
-    ? "输入原密码"
-    : first.length < PASSCODE_LENGTH
-      ? "输入新密码"
-      : "再次输入确认";
-  const filled = stage === "verify"
-    ? current.length
-    : first.length < PASSCODE_LENGTH ? first.length : second.length;
+  const title = first.length < PASSCODE_LENGTH ? "输入新密码" : "再次输入确认";
+  const filled = first.length < PASSCODE_LENGTH ? first.length : second.length;
 
   return (
     <div className="theme-section-page" data-bottom-reserve style={{ gap: 14 }}>
@@ -1781,7 +1758,7 @@ function LockPasscodePage({ onNotice }: { onNotice: (text: string) => void }) {
         <p className="ts-11 text-center" style={{ color: "var(--c-danger)" }}>{error}</p>
       ) : (
         <p className="ts-11 text-center" style={{ color: "var(--c-icon)" }}>
-          {stage === "verify" ? "修改密码前需要先验证当前密码" : `请输入 ${PASSCODE_LENGTH} 位数字`}
+          {`请输入 ${PASSCODE_LENGTH} 位数字`}
         </p>
       )}
 
