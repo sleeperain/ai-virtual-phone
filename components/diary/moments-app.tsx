@@ -238,7 +238,7 @@ export function MomentsApp({ onClose, onSwitch, onNotice }: MomentsAppProps) {
         characters={characters}
         onClose={onClose}
         onSwitch={onSwitch}
-        onBack={() => setSettingsTab(null)}
+        onExit={() => setSettingsTab(null)}
         onNotice={notify}
       />
     );

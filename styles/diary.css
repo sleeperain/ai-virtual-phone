@@ -494,26 +494,28 @@
   z-index: 20;
   min-width: 104px;
   padding: 4px;
-  border-radius: 2px;
+  border-radius: 1px;
   background: #ffffff;
   box-shadow: 0 8px 22px rgba(24, 30, 34, 0.16), 0 0 0 1px rgba(24, 30, 34, 0.06);
   display: grid;
   gap: 2px;
 }
 
+/* 菜单按钮：宽度随菜单不变，高度 = 文字高度的两倍（1em 字高 × 2），文字前不带图标 */
 .diary-brand-avatar-menu > button {
   display: flex;
   align-items: center;
-  gap: 7px;
   width: 100%;
+  height: 2em;
   border: 0;
-  border-radius: 2px;
+  border-radius: 1px;
   background: transparent;
   color: rgba(37, 37, 37, 0.8);
   font-family: var(--app-font-family);
   font-size: calc(12.5px * var(--app-text-scale, 1));
+  line-height: 1;
   text-align: left;
-  padding: 8px 10px;
+  padding: 0 10px;
   cursor: pointer;
 }
 
@@ -5162,22 +5164,27 @@
   z-index: 20;
   min-width: 132px;
   padding: 5px;
-  border-radius: 6px;
+  border-radius: 1px;
   background: #ffffff;
   box-shadow: 0 8px 22px rgba(24, 30, 34, 0.16), 0 0 0 1px rgba(24, 30, 34, 0.06);
   display: grid;
   gap: 2px;
 }
 
+/* 可见范围下拉：和头像菜单、详情页「…」菜单同一套方形按钮 */
 .diary-hub-permission-menu > button {
+  display: flex;
+  align-items: center;
+  height: 2em;
   border: 0;
-  border-radius: 4px;
+  border-radius: 1px;
   background: transparent;
   color: rgba(37, 37, 37, 0.76);
   font-family: var(--app-font-family);
   font-size: calc(12px*var(--app-text-scale,1));
+  line-height: 1;
   text-align: left;
-  padding: 7px 9px;
+  padding: 0 9px;
   cursor: pointer;
 }
 
@@ -5400,14 +5407,14 @@
   background: #f4f5f7;
 }
 
-/* 详情页滚动区：卡片上边线与顶部栏下框线之间留 3px；
+/* 详情页滚动区：卡片上边线与顶部栏下框线之间留 5px；
    底部留一段页面底色，卡片下边线不贴屏幕底 */
 .diary-detail-scroll {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 3px 16px calc(28px + var(--safe-area-bottom, 0px));
+  padding: 5px 16px calc(28px + var(--safe-area-bottom, 0px));
   background: transparent;
   -webkit-overflow-scrolling: touch;
 }
@@ -5417,8 +5424,8 @@
   width: 100%;
   cursor: default;
   border-bottom: 0;
-  /* 上边线和顶部栏拉开 3px，所以四个角都圆 */
-  border-radius: 8px;
+  /* 尖角：卡片四角都不圆 */
+  border-radius: 0;
   box-shadow: 0 1px 3px rgba(24, 30, 34, 0.06);
   /* 底部按钮行就是最后一行，不要再留卡片自身的下内边距
      （.diary-flat-card 的 padding 带 !important，这里必须同样加权才生效） */
@@ -5568,22 +5575,27 @@
   z-index: 20;
   min-width: 104px;
   padding: 5px;
-  border-radius: 6px;
+  border-radius: 1px;
   background: #ffffff;
   box-shadow: 0 8px 22px rgba(24, 30, 34, 0.16), 0 0 0 1px rgba(24, 30, 34, 0.06);
   display: grid;
   gap: 2px;
 }
 
+/* 和头像菜单一致：方形 1px 圆角，高度两行字高 */
 .diary-detail-more-menu > button {
+  display: flex;
+  align-items: center;
+  height: 2em;
   border: 0;
-  border-radius: 4px;
+  border-radius: 1px;
   background: transparent;
   color: rgba(37, 37, 37, 0.78);
   font-family: var(--app-font-family);
   font-size: calc(12.5px * var(--app-text-scale, 1));
+  line-height: 1;
   text-align: left;
-  padding: 8px 10px;
+  padding: 0 10px;
   cursor: pointer;
 }
 
@@ -5605,34 +5617,18 @@
   padding: 0 16px 0;
 }
 
-/* 标签行左边加一枚返回，右边还是「用户设置」四个字 */
+/* 标签行固定 42px 高：内容再长（比如「署名」页签）也不许被压扁。
+   原来只有 height，没禁 flex 收缩，页签内容一高这一行就被一起压下去了 */
 .diary-settings-label-row {
-  gap: 2px;
-  padding-left: 4px;
+  flex: 0 0 42px;
+  height: 42px;
+  min-height: 42px;
 }
 
-.diary-settings-back {
-  flex: 0 0 auto;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  color: #3a3a3c;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-}
-
-.diary-settings-back:active {
-  opacity: 0.6;
-}
-
-/* 四个页签等分宽度（复用 .diary-hub-tabs / .diary-hub-tab 的等分与选中变蓝） */
+/* 四个页签等分宽度（复用 .diary-hub-tabs / .diary-hub-tab 的等分与选中变蓝），高度同样固定 */
 .diary-settings-tabs {
   flex: 0 0 auto;
+  min-height: 44px;
 }
 
 /* 页签下沿就是内容卡的上边线，这里只负责滚动 */

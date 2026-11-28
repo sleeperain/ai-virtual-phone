@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bot, ChevronLeft, Clock3 } from "lucide-react";
+import { Bot, Clock3 } from "lucide-react";
 
 import type { Character } from "@/lib/character-types";
 import { useDiaryGenerating } from "@/lib/diary-generating-tracker";
@@ -65,10 +65,10 @@ type DiaryUserSettingsPageProps = {
   characters: Character[];
   /** 顶部栏 iFloat：回桌面 */
   onClose: () => void;
-  /** 顶部栏地球/铃铛：在片刻纪事和 TA的手记 之间切换 */
+  /** 顶部栏地球/铃铛：先退出设置，再切到另一个列表页 */
   onSwitch: (view: DiaryBrandView) => void;
-  /** 左上角返回：回到刚才那个列表页 */
-  onBack: () => void;
+  /** 退出设置、回到当前列表页（点地球/铃铛时用，不再单独放返回按钮） */
+  onExit: () => void;
   onNotice?: (message: string) => void;
 };
 
@@ -83,7 +83,7 @@ export function DiaryUserSettingsPage({
   characters,
   onClose,
   onSwitch,
-  onBack,
+  onExit,
   onNotice,
 }: DiaryUserSettingsPageProps) {
   const [timer, setTimer] = useState<DiaryEntryTimerSettings>(() => loadDiaryEntryTimerSettings());
@@ -211,20 +211,21 @@ export function DiaryUserSettingsPage({
         className="hidden"
         onChange={event => void fontHooks[fontTargetRef.current].upload(event)}
       />
-      {/* 设置页自己不再挂头像菜单，右上角头像只是身份标识 */}
+      {/* 设置页自己不再挂头像菜单，右上角头像只是身份标识；
+          退出设置不另放返回按钮——点顶部栏的地球 / 铃铛就切回列表 */}
       <DiaryBrandHeader
         view={view}
         onClose={onClose}
-        onSwitch={onSwitch}
+        onSwitch={(next) => {
+          onExit();
+          onSwitch(next);
+        }}
         avatarLabel="用户设置"
       />
 
       <main className="diary-entry-main diary-moment-main diary-settings-main">
-        {/* 标签行：原来片刻纪事那张「Bookmark」条，这里是「用户设置」，左边给一个返回 */}
+        {/* 标签行：原来片刻纪事那张「Bookmark」条，这里是「用户设置」 */}
         <div className="diary-moment-label-row diary-settings-label-row">
-          <button type="button" className="diary-settings-back" onClick={onBack} aria-label="返回">
-            <ChevronLeft size={18} />
-          </button>
           <span>用户设置</span>
         </div>
 

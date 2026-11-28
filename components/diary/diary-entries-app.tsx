@@ -403,7 +403,7 @@ export function DiaryEntriesApp({ kind, onClose, onSwitch, onNotice }: DiaryEntr
         characters={characters}
         onClose={onClose}
         onSwitch={onSwitch}
-        onBack={() => setSettingsTab(null)}
+        onExit={() => setSettingsTab(null)}
         onNotice={notify}
       />
     );

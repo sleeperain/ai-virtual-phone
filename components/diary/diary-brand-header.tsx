@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import { Globe, Settings, UserRound } from "lucide-react";
+import { Globe, UserRound } from "lucide-react";
 
 import { resolveUserIdentity } from "@/lib/settings-storage";
 import type { UserIdentity } from "@/components/settings/user-identity";
@@ -86,7 +86,6 @@ export function DiaryBrandHeader({ view, onClose, onSwitch, avatarLabel = "账�
                   onOpenSettings?.();
                 }}
               >
-                <Settings size={15} strokeWidth={1.7} aria-hidden="true" />
                 <span>设置</span>
               </button>
             </div>
