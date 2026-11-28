@@ -194,15 +194,14 @@ export function LockScreen({
           时间不再是内置样式，而是默认放在这里的一个「极简大号时间」组件；
           长按进入编辑态，「取消」退出、「添加」打开选择器。
           上滑时跟着手指轻微上移并淡出，给一点跟手反馈。 */}
-      {/* 密码盘打开时整层直接藏掉，不做淡出：
-          那一屏本来就不显示时间（时间本身就是一个组件）；更重要的是，
-          淡出期间组件仍在渲染、其中一些自带 backdrop-filter，会和壁纸的模糊叠加掉帧。 */}
+      {/* 密码盘打开时把组件区藏起来：那一屏本来就不显示时间（时间本身就是一个组件）。
+          用 opacity: 0 而不是 visibility: hidden —— 后者会让浏览器丢掉这一层的绘制缓存，
+          关掉密码盘后要整层重绘，反而更卡；opacity 只是不画，缓存还在。 */}
       <div
         className="lock-widget-drag-layer"
         style={{
           transform: `translate3d(0, ${dragY * 0.5}px, 0)`,
-          opacity: Math.max(0, 1 - lift / 320),
-          visibility: padOpen ? "hidden" : undefined,
+          opacity: padOpen ? 0 : Math.max(0, 1 - lift / 320),
           pointerEvents: padOpen ? "none" : undefined,
         }}
       >

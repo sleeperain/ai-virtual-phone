@@ -58,6 +58,18 @@ export function LockPasscodePad({
     setInput(next);
   }, []);
 
+  /**
+   * 键盘分两拍挂载。
+   * 之前密码盘一出现，遮罩 + 12 个按键 + 圆点在同一个渲染帧里全部创建并合成，
+   * 低配设备会卡到"划不动、等一会儿才亮"，也就是看到的爆闪。
+   * 现在先只画标题和圆点（几乎零成本），下一帧再挂键盘，让浏览器分两次合成。
+   */
+  const [keysReady, setKeysReady] = useState(false);
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setKeysReady(true));
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
   useEffect(() => () => {
     clearTimeout(shakeTimer.current);
     clearTimeout(successTimer.current);
@@ -122,6 +134,7 @@ export function LockPasscodePad({
     <div
       className="lock-passcode"
       data-solved={solved ? "1" : undefined}
+      data-keys={keysReady ? "1" : undefined}
       // 密码盘上的所有操作都由自己接管，别让它冒泡到锁屏的上滑手势
       onPointerDown={(event) => event.stopPropagation()}
       onPointerMove={(event) => event.stopPropagation()}
@@ -144,8 +157,8 @@ export function LockPasscodePad({
           ))}
         </div>
 
-        <div className="lock-passcode-keys">
-          {KEYPAD.map((key, index) => {
+        <div className="lock-passcode-keys" data-ready={keysReady ? "1" : undefined}>
+          {keysReady && KEYPAD.map((key, index) => {
             if (!key) {
               return <span key={`blank-${index}`} className="lock-passcode-key-blank" />;
             }
@@ -177,13 +190,15 @@ export function LockPasscodePad({
           })}
         </div>
 
-        <button
-          type="button"
-          className="lock-passcode-forgot"
-          onClick={handleForgot}
-        >
-          忘记密码
-        </button>
+        {keysReady && (
+          <button
+            type="button"
+            className="lock-passcode-forgot"
+            onClick={handleForgot}
+          >
+            忘记密码
+          </button>
+        )}
       </div>
     </div>
   );
