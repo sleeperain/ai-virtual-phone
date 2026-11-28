@@ -346,19 +346,11 @@ export function MainApp() {
   useEffect(() => () => clearTimeout(bootExitTimer.current), []);
 
   /**
-   * 揭幕前一律先盖住。
-   *
-   * 之前只给「锁屏 + 密码」挡，结果开屏动画模式是边播边挂桌面的：
-   * 动画刚开始，hydrated 一变就把桌面那坨初始化塞进同一帧，
-   * 动画当场卡一下 —— 用户看到的"不流畅"就是这个。
-   * 现在等底下全部挂好、首帧画完再揭幕，动画从第一帧起就是顺的。
+   * Loading 遮罩只在「锁屏 + 启用密码」时用，用来挡住首帧渲染。
+   * 其他模式（开屏动画、无密码锁屏）直接显示，不再垫一层白屏：
+   * 那层会让人先干等、动画又被推迟，等着的时间反而更长。
    */
-  const bootGateActive = splashMode !== "pending";
-  const showBootLoading = splashMode === "pending" || !revealReady;
-
-  /** 进度条只给真正需要等的一处：锁屏 + 启用密码。
-      开屏动画本身就是"等待"的视觉替代，没密码的锁屏也很轻，都不放进度条。 */
-  const showBootProgress = splashMode === "lock" && passcodeEnabled;
+  const showBootLoading = splashMode === "lock" && passcodeEnabled && !revealReady;
 
   useEffect(() => {
     desktopMountedRef.current = hydrated;
@@ -370,10 +362,9 @@ export function MainApp() {
 
   // 揭幕时机：等桌面和锁屏都挂上、并且浏览器把首帧画完之后再揭开。
   // 两次 rAF 确保提交已绘制，再留 BOOT_SETTLE_MS 给重布局与合成收尾。
-  // 只有「锁屏 + 启用密码」需要这一套：那种情况首帧最重，得拿 Loading 挡一下。
-  // 开屏动画本身就是等待的视觉替代品，没密码的锁屏也很轻，都不必再挡。
+  // 只有「锁屏 + 启用密码」走这条路：那种情况首帧最重，得拿 Loading 挡一下。
   useEffect(() => {
-    if (!hydrated || splashMode === "pending") return;
+    if (!hydrated || splashMode !== "lock" || !passcodeEnabled) return;
     let raf2 = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const raf1 = requestAnimationFrame(() => {
@@ -390,7 +381,7 @@ export function MainApp() {
       if (raf2) cancelAnimationFrame(raf2);
       if (timer) clearTimeout(timer);
     };
-  }, [hydrated, splashMode]);
+  }, [hydrated, splashMode, passcodeEnabled]);
 
   useEffect(() => {
     let cancelled = false;
@@ -506,7 +497,12 @@ export function MainApp() {
           {splashMode !== "pending" ? (
             <div
               className="boot-reveal"
-              data-ready={bootGateActive ? (revealReady ? "1" : undefined) : "1"}
+              data-ready={
+                // 只有"锁屏+密码"这条路才需要等遮罩撤掉；其余模式立刻可见
+                splashMode === "lock" && passcodeEnabled
+                  ? (revealReady ? "1" : undefined)
+                  : "1"
+              }
             >
               {splashMode === "lock" ? (
                 <LockScreenView
@@ -519,13 +515,10 @@ export function MainApp() {
             </div>
           ) : null}
 
-          {/* Loading 遮罩：从启动一直盖到揭幕，位置和组件都不变，
-              进度条动画因此全程只跑一遍（之前 pending 与揭幕各放一份，切换时会重走）。
-              底下其实是开屏动画或锁屏，正在安静地完成首帧渲染；
-              等它们稳了再揭幕，动画从第一帧起就不会被桌面初始化打断。 */}
-          {showBootLoading ? (
-            <BootLoadingMask done={showBootProgress && revealDone} withBar={showBootProgress} />
-          ) : null}
+          {/* Loading 遮罩：只剩「锁屏 + 启用密码」这一种情况。
+              那时底下要同时挂密码盘和桌面，首帧最重，得挡一下；
+              开屏动画和无密码的锁屏都直接显示，不垫白屏。 */}
+          {showBootLoading ? <BootLoadingMask done={revealDone} withBar /> : null}
         </div>
       ) : null}
     </AccountGate>
