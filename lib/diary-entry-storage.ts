@@ -276,7 +276,8 @@ export function normalizeDiaryEntry(raw: unknown): DiaryEntry | null {
       : new Date().toISOString();
   const body = cleanMultilineText(record.body ?? record.content ?? record.text, 6000);
   const blocks = normalizeBlocks(record.blocks, body);
-  const title = cleanText(record.title, 80) || body.slice(0, 20) || "未命名日记";
+  // 标题可以留空：不再拿正文前几个字顶上，也不塞「未命名日记」
+  const title = cleanText(record.title, 80);
 
   return {
     id,
@@ -342,7 +343,8 @@ export function createDiaryEntry(input: DiaryEntryInput): DiaryEntry {
     username: cleanText(input.username, 40),
     visibility: normalizeVisibility(input.visibility),
     visibleTo: normalizeVisibleTo(input.visibleTo),
-    title: cleanText(input.title, 80) || body.slice(0, 20) || "未命名日记",
+    // 标题留空就留空，不要用正文开头冒充标题
+    title: cleanText(input.title, 80),
     dateLabel: cleanText(input.dateLabel, 40) || formatDateLabel(now),
     mood: cleanText(input.mood, 60),
     weather: cleanText(input.weather, 60),
@@ -373,7 +375,7 @@ export function updateDiaryEntry(id: string, patch: DiaryEntryPatch): DiaryEntry
     username: patch.username !== undefined ? cleanText(patch.username, 40) : current.username,
     visibility: patch.visibility !== undefined ? normalizeVisibility(patch.visibility) : current.visibility,
     visibleTo: patch.visibleTo !== undefined ? normalizeVisibleTo(patch.visibleTo) : current.visibleTo,
-    title: patch.title !== undefined ? (cleanText(patch.title, 80) || body.slice(0, 20) || "未命名日记") : current.title,
+    title: patch.title !== undefined ? cleanText(patch.title, 80) : current.title,
     dateLabel: patch.dateLabel !== undefined ? cleanText(patch.dateLabel, 40) || current.dateLabel : current.dateLabel,
     mood: patch.mood !== undefined ? cleanText(patch.mood, 60) : current.mood,
     weather: patch.weather !== undefined ? cleanText(patch.weather, 60) : current.weather,

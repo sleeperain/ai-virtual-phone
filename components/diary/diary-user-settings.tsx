@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bot, Clock3 } from "lucide-react";
+import { Bot, ChevronRight, Clock3 } from "lucide-react";
 
 import type { Character } from "@/lib/character-types";
 import { useDiaryGenerating } from "@/lib/diary-generating-tracker";
@@ -93,6 +93,10 @@ export function DiaryUserSettingsPage({
   const [avatars, setAvatars] = useState<Record<MomentProfileOwner, string>>({});
   const [avatarRevision, setAvatarRevision] = useState(0);
   const generatingIds = useDiaryGenerating();
+  // 署名：每一组默认收起，点标题行（「默认」/角色名）才展开
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const isGroupExpanded = (key: string) => Boolean(expandedGroups[key]);
+  const toggleGroup = (key: string) => setExpandedGroups(prev => ({ ...prev, [key]: !prev[key] }));
 
   const notify = useCallback((message: string) => {
     onNotice?.(message);
@@ -481,44 +485,62 @@ export function DiaryUserSettingsPage({
                 <div className="moment-profile-list">
                   {/* 默认的「我」：某个角色没单独设时用它 */}
                   <div className="moment-profile-group">
-                    <strong className="moment-profile-group-title">默认</strong>
-                    <MomentProfileRow
-                      label="我"
-                      placeholder="不填就用当前账号名"
-                      name={profiles.user.name}
-                      avatar={avatars.user}
-                      initial="我"
-                      onName={name => saveProfiles({ ...profiles, user: { name } })}
-                      onAvatar={file => void pickAvatar("user", file)}
+                    <ProfileGroupHead
+                      title="默认"
+                      expanded={isGroupExpanded("default")}
+                      onToggle={() => toggleGroup("default")}
                     />
+                    {isGroupExpanded("default") ? (
+                      <MomentProfileRow
+                        label="我"
+                        placeholder="不填就用当前账号名"
+                        name={profiles.user.name}
+                        avatar={avatars.user}
+                        initial="我"
+                        onName={name => saveProfiles({ ...profiles, user: { name } })}
+                        onAvatar={file => void pickAvatar("user", file)}
+                      />
+                    ) : null}
                   </div>
 
                   {/* 每个角色一组：这一段的署名 + 我在这本里的署名 */}
-                  {characters.map(character => (
-                    <div key={character.id} className="moment-profile-group">
-                      <strong className="moment-profile-group-title">{character.name}</strong>
-                      <MomentProfileRow
-                        label="角色署名"
-                        placeholder={character.name}
-                        name={profiles.characters[character.id]?.name ?? ""}
-                        avatar={avatars[character.id]}
-                        fallbackAvatar={character.avatar || undefined}
-                        initial={Array.from(character.name)[0] || "?"}
-                        onName={name => setCharacterName(character.id, name)}
-                        onAvatar={file => void pickAvatar(character.id, file)}
-                      />
-                      <MomentProfileRow
-                        label="我"
-                        placeholder={profiles.user.name || "不填就用上面的默认"}
-                        name={profiles.userByCharacter[character.id]?.name ?? ""}
-                        avatar={avatars[momentUserOwner(character.id)]}
-                        fallbackAvatar={avatars.user || character.avatar || undefined}
-                        initial="我"
-                        onName={name => setBookUserName(character.id, name)}
-                        onAvatar={file => void pickAvatar(momentUserOwner(character.id), file)}
-                      />
-                    </div>
-                  ))}
+                  {characters.map(character => {
+                    const key = `char:${character.id}`;
+                    const expanded = isGroupExpanded(key);
+                    return (
+                      <div key={character.id} className="moment-profile-group">
+                        <ProfileGroupHead
+                          title={character.name}
+                          expanded={expanded}
+                          onToggle={() => toggleGroup(key)}
+                        />
+                        {expanded ? (
+                          <>
+                            <MomentProfileRow
+                              label="角色署名"
+                              placeholder={character.name}
+                              name={profiles.characters[character.id]?.name ?? ""}
+                              avatar={avatars[character.id]}
+                              fallbackAvatar={character.avatar || undefined}
+                              initial={Array.from(character.name)[0] || "?"}
+                              onName={name => setCharacterName(character.id, name)}
+                              onAvatar={file => void pickAvatar(character.id, file)}
+                            />
+                            <MomentProfileRow
+                              label="我"
+                              placeholder={profiles.user.name || "不填就用上面的默认"}
+                              name={profiles.userByCharacter[character.id]?.name ?? ""}
+                              avatar={avatars[momentUserOwner(character.id)]}
+                              fallbackAvatar={avatars.user || character.avatar || undefined}
+                              initial="我"
+                              onName={name => setBookUserName(character.id, name)}
+                              onAvatar={file => void pickAvatar(momentUserOwner(character.id), file)}
+                            />
+                          </>
+                        ) : null}
+                      </div>
+                    );
+                  })}
                 </div>
               </section>
             ) : null}
@@ -526,6 +548,25 @@ export function DiaryUserSettingsPage({
         </div>
       </main>
     </section>
+  );
+}
+
+/** 署名分组的一行标题：右边一个箭头，收起时朝右、展开后转成朝下 */
+function ProfileGroupHead({ title, expanded, onToggle }: {
+  title: string;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`moment-profile-group-head ${expanded ? "is-open" : ""}`}
+      onClick={onToggle}
+      aria-expanded={expanded}
+    >
+      <strong className="moment-profile-group-title">{title}</strong>
+      <ChevronRight size={16} strokeWidth={2} className="moment-profile-group-arrow" aria-hidden="true" />
+    </button>
   );
 }
 

@@ -799,27 +799,43 @@ type DiaryNotice = {
   characterId: string;
 };
 
-/** 「通知」页签：把最近的日记动态摊成一条条通知（谁发布了/更新了日记） */
+/**
+ * 「通知」页签：把日记动态摊成一条条通知。
+ * 发布和更新是两条独立记录：一篇日记先有一条「发布了」，
+ * 之后改过再单独多一条「更新了」，不会把发布那条改写成更新。
+ */
 function buildDiaryNotices(entries: DiaryEntry[]): DiaryNotice[] {
-  return [...entries]
-    .sort((a, b) => {
-      const timeA = new Date(a.updatedAt || a.createdAt).getTime();
-      const timeB = new Date(b.updatedAt || b.createdAt).getTime();
-      return (Number.isNaN(timeB) ? 0 : timeB) - (Number.isNaN(timeA) ? 0 : timeA);
-    })
-    .slice(0, 60)
-    .map(entry => {
-      const mine = entry.authorType === "user";
-      const who = mine ? "你" : entry.characterName;
-      const edited = Boolean(entry.updatedAt && entry.createdAt && entry.updatedAt !== entry.createdAt);
-      return {
-        id: entry.id,
-        text: `${who}${edited ? "更新了" : "发布了"}一则日记${entry.title ? `：《${entry.title}》` : ""}`,
-        time: entry.updatedAt || entry.createdAt,
+  const notices: DiaryNotice[] = [];
+  for (const entry of entries) {
+    const mine = entry.authorType === "user";
+    const who = mine ? "你" : entry.characterName;
+    // 没有标题就不带书名号，只留「谁发布了一则日记」
+    const titlePart = entry.title ? `：《${entry.title}》` : "";
+    notices.push({
+      id: `${entry.id}-publish`,
+      text: `${who}发布了一则日记${titlePart}`,
+      time: entry.createdAt,
+      isMine: mine,
+      characterId: entry.characterId,
+    });
+    // 改过才补一条更新记录（用发布时间做比较，老数据的 updatedAt 缺失也不误判）
+    if (entry.updatedAt && entry.createdAt && entry.updatedAt !== entry.createdAt) {
+      notices.push({
+        id: `${entry.id}-update`,
+        text: `${who}更新了一则日记${titlePart}`,
+        time: entry.updatedAt,
         isMine: mine,
         characterId: entry.characterId,
-      };
-    });
+      });
+    }
+  }
+  return notices
+    .sort((a, b) => {
+      const timeA = new Date(a.time).getTime();
+      const timeB = new Date(b.time).getTime();
+      return (Number.isNaN(timeB) ? 0 : timeB) - (Number.isNaN(timeA) ? 0 : timeA);
+    })
+    .slice(0, 60);
 }
 
 function DiaryHubNoticeList({ entries, characters, userIdentity }: {

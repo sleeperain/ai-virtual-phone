@@ -453,9 +453,10 @@
   color: #55555c;
 }
 
-/* 最右侧的圆形头像（取代原来的「…」菜单） */
+/* 最右侧的圆形头像（取代原来的「…」菜单）；左边多留一点，和铃铛拉开距离 */
 .diary-brand-avatar {
   flex: 0 0 auto;
+  margin-left: 8px;
   width: 26px;
   height: 26px;
   padding: 0;
@@ -797,8 +798,9 @@
   --my-diary-line-height: 1.7;
   --my-diary-header-bottom-gap: 8px;
   --my-diary-card-padding: 16px 16px 14px;
-  --my-diary-author-name-size: 15px;
-  --my-diary-author-id-size: 11px;
+  /* 卡片头像右侧：名字缩 1.5px、下面的 ID 放大 1.5px */
+  --my-diary-author-name-size: 13.5px;
+  --my-diary-author-id-size: 12.5px;
   --my-diary-time-gap: 10px;
 }
 
@@ -1027,12 +1029,48 @@
   gap: 8px;
 }
 
+/* 分组标题行：整行都可点（展开/收起），右边一个箭头 */
+.moment-profile-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 0 0 6px;
+  border: 0;
+  border-bottom: 1px dashed rgba(67, 54, 35, 0.16);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
 .moment-profile-group-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: calc(13px * var(--app-text-scale, 1));
   font-weight: 600;
   color: rgba(52, 39, 29, 0.72);
-  padding-bottom: 2px;
-  border-bottom: 1px dashed rgba(67, 54, 35, 0.16);
+}
+
+/* 收起时朝右，展开后转 90° 朝下 */
+.moment-profile-group-arrow {
+  flex: 0 0 auto;
+  color: rgba(52, 39, 29, 0.46);
+  transition: transform 0.18s ease;
+}
+
+.moment-profile-group-head.is-open .moment-profile-group-arrow {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .moment-profile-group-arrow {
+    transition: none;
+  }
 }
 
 .moment-profile-row {
@@ -5814,7 +5852,14 @@
 /* 「署名」页签：分组标题和每行都用页面中性色 */
 .diary-settings-body .moment-profile-group-title {
   color: rgba(37, 37, 37, 0.6);
+}
+
+.diary-settings-body .moment-profile-group-head {
   border-bottom-color: rgba(0, 0, 0, 0.1);
+}
+
+.diary-settings-body .moment-profile-group-arrow {
+  color: rgba(37, 37, 37, 0.42);
 }
 
 .diary-settings-body .moment-profile-row {

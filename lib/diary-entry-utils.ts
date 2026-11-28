@@ -159,7 +159,8 @@ export function parseDiaryEntryContent(content: string): ParsedDiaryEntry {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     const body = cleanMultilineText(trimmed, 3000) || "今天也留下了一点痕迹。";
     return {
-      title: body.slice(0, 20) || "未命名日记",
+      // 没有标题就没有，别拿正文开头冒充
+      title: "",
       dateLabel: "",
       mood: "",
       weather: "",
@@ -182,7 +183,7 @@ export function parseDiaryEntryContent(content: string): ParsedDiaryEntry {
   }).filter(Boolean).join("\n\n");
 
   return {
-    title: cleanText(record.title ?? record.heading, 80) || combinedBody.slice(0, 20) || "未命名日记",
+    title: cleanText(record.title ?? record.heading, 80),
     dateLabel: cleanText(record.dateLabel ?? record.date ?? record.date_label, 40),
     mood: cleanText(record.mood, 60),
     weather: cleanText(record.weather, 60),
