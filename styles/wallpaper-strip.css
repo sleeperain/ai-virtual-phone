@@ -1,0 +1,62 @@
+/* ══════════════════════════════════════════
+   壁纸列表：横向滑动
+
+   原来 .wp-grid 是网格铺开，壁纸一多就把整页顶得很长，
+   上面的上传按钮被推走。这里叠加一层 .wp-strip：
+   卡片尺寸固定、横向排布、滚动吸附，页面高度只由一张卡片决定。
+
+   用法：className="wp-grid wp-strip"
+   —— 保留原 .wp-grid，卡片的圆角/边框/角标样式全部照旧，只改排列方向。
+   ══════════════════════════════════════════ */
+
+.wp-grid.wp-strip {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
+  padding: 4px 2px 10px;
+  margin-inline: -2px;
+  /* 让首尾卡片不贴边，滑到边缘时视觉更松快 */
+  scroll-padding-inline: 2px;
+}
+
+/* 横向滚动条隐藏（项目全局也隐藏，这里显式再声明一次防个别浏览器） */
+.wp-grid.wp-strip::-webkit-scrollbar {
+  display: none;
+}
+.wp-grid.wp-strip {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+/* 卡片：固定宽度 + 手机竖版比例，不再随列宽伸缩 */
+.wp-grid.wp-strip .wp-card {
+  flex: 0 0 auto;
+  width: clamp(92px, 28vw, 124px);
+  aspect-ratio: 9 / 16;
+  scroll-snap-align: start;
+  border-radius: 16px;
+  overflow: hidden;
+  position: relative;
+}
+
+/* 图片铺满卡片 */
+.wp-grid.wp-strip .wp-card-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
+
+/* 缩略图还没取回来时的占位块同样撑满 */
+.wp-grid.wp-strip .wp-card-img.bg-\[var\(--c-page-body-bg\)\] {
+  height: 100%;
+}
+
+

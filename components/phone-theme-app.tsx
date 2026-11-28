@@ -1546,8 +1546,8 @@ function LockWallpaperPage({
         onChange={handleUpload}
       />
 
-      {/* 第一格是内置默认壁纸，其余是壁纸库 */}
-      <div className="wp-grid">
+      {/* 第一格是内置默认壁纸，其余是壁纸库；横向滑动浏览 */}
+      <div className="wp-grid wp-strip">
         <div
           className={`wp-card${lockWallpaperId ? "" : " wp-card-active"}`}
           onClick={() => { void handlePick(null); }}
@@ -1847,9 +1847,9 @@ function WallpaperPage({
         </div>
       )}
 
-      {/* Wallpaper library grid */}
+      {/* 壁纸库：横向滑动浏览，张数多了也不会把上面的按钮顶走 */}
       {library.length > 0 ? (
-        <div className="wp-grid">
+        <div className="wp-grid wp-strip">
           {library.map((assetId) => {
             const isActive = draft.wallpaperAssetId === assetId;
             const src = thumbs[assetId];
