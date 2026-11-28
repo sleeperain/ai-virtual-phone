@@ -5671,10 +5671,43 @@
   min-height: 42px;
 }
 
-/* 四个页签等分宽度（复用 .diary-hub-tabs / .diary-hub-tab 的等分与选中变蓝），高度同样固定 */
-.diary-settings-tabs {
+/* 标签行（Bookmark / 用户设置）：均匀的垂直渐变，上浅下深。
+   去掉原来那圈 1px 硬描边，边界交给渐变 + 一层极淡的贴合阴影。
+   选择器带 .diary-app 前缀，压得过 .diary-moment-label-row 自己的底色和边框 */
+.diary-app .diary-moment-label-row {
+  border-color: transparent;
+  background: linear-gradient(180deg, #fbfcfd 0%, #f4f6f8 52%, #eaeef2 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 1px 2px rgba(24, 30, 34, 0.05);
+  color: #35373c;
+  text-shadow: none;
+}
+
+/* 四个页签等分宽度（复用 .diary-hub-tabs / .diary-hub-tab 的等分与选中变蓝），高度同样固定；
+   这一行不要边框，底色用浅灰，页签之间靠一小段竖线分隔 */
+.diary-hub-tabs.diary-settings-tabs {
   flex: 0 0 auto;
   min-height: 44px;
+  border: 0;
+  background: #f0f2f5;
+}
+
+/* 短竖线：只在左右相邻的两个页签之间画，上下各留一段，不顶满整行 */
+.diary-settings-tabs .diary-hub-tab {
+  position: relative;
+}
+
+.diary-settings-tabs .diary-hub-tab + .diary-hub-tab::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 1px;
+  height: calc(14px * var(--app-text-scale, 1));
+  background: rgba(0, 0, 0, 0.12);
+  transform: translateY(-50%);
+  pointer-events: none;
 }
 
 /* 页签下沿就是内容卡的上边线，这里只负责滚动 */
