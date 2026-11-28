@@ -289,8 +289,18 @@ export function MainApp() {
   // 帘子正在淡出。解锁/进入时先淡出再卸载，避免瞬间硬切到桌面。
   const [bootLeaving, setBootLeaving] = useState(false);
   const bootExitTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // 桌面是否已经挂载（= 首屏主题预加载已有结果）。桌面内部 savedTheme / themeAssets
+  // 只在首次挂载时读一次 props，所以必须等预加载有结果再挂，否则会先按默认值画一遍、
+  // 资源到位后再"刷新"一次。
+  const desktopMountedRef = useRef(false);
+  const pendingBootDismissRef = useRef(false);
 
   const dismissBoot = useCallback(() => {
+    // 桌面还没挂好就先记下，等挂好再淡出，避免帘子揭开时底下是空的
+    if (!desktopMountedRef.current) {
+      pendingBootDismissRef.current = true;
+      return;
+    }
     setBootLeaving(true);
     clearTimeout(bootExitTimer.current);
     // 时长与 .boot-curtain[data-leaving] 的 transition 对齐
@@ -298,6 +308,14 @@ export function MainApp() {
   }, []);
 
   useEffect(() => () => clearTimeout(bootExitTimer.current), []);
+
+  useEffect(() => {
+    desktopMountedRef.current = hydrated;
+    if (hydrated && pendingBootDismissRef.current) {
+      pendingBootDismissRef.current = false;
+      dismissBoot();
+    }
+  }, [hydrated, dismissBoot]);
 
   useEffect(() => {
     let cancelled = false;
@@ -380,11 +398,14 @@ export function MainApp() {
 
   return (
     <AccountGate>
-      {/* 桌面从一开始就在底层挂载，开屏动画和锁屏只是盖在上面的一层帘子。
-          以前是解锁那一刻才现场挂载桌面，而桌面在自报 desktopReady 之前是
-          visibility:hidden 的，于是先空一下、再等加载——就是"上滑后黑屏硬等"的来源。
-          现在解锁只是把帘子拿走，下面早就画好了。 */}
-      {splashMode !== "pending" ? (
+      {/* 桌面在启动阶段就挂到帘子（开屏动画 / 锁屏）下面：解锁只是把帘子拿走，
+          不再有"上滑后现场挂载桌面、黑屏硬等"的空窗。
+
+          但要等 hydrated（首屏主题预加载已有结果）再挂：DesktopShell 里的
+          savedTheme / themeAssets 都是 useState 初始化，只在首次挂载时读一次 props。
+          提前用 null 挂上去，会先按默认主题画一遍，等资源到位又整体换一次——
+          表现就是"桌面已经能点了，过一会又刷新一下"。 */}
+      {splashMode !== "pending" && hydrated ? (
         <main className="app-root">
           <MusicProvider>
             <LocalErrorBoundary
