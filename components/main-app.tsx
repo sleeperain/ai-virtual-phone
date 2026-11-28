@@ -17,6 +17,7 @@ import { hydrateKvDb, isKvHydrated } from "@/lib/kv-db";
 import { getThemeAssetMap, readThemeProfile } from "@/lib/theme-storage";
 import { resolveActiveIconSkins, type ThemeProfile } from "@/lib/theme-types";
 import { hasPendingMcpOAuthCallback } from "@/lib/tool-executor";
+import { readLockPasscode } from "@/lib/lock-passcode";
 import { shouldRequestPwaFullscreen } from "@/lib/pwa-display-mode";
 
 const TEXT = {
@@ -211,27 +212,6 @@ function BootLoadingContent({ done = false }: { done?: boolean }) {
 }
 
 /**
- * 启动过渡屏：机身 + Loading + 进度条。
- * 这一层刻意做得极轻（没有图、没有模糊），
- * 它负责盖住底下"桌面 + 锁屏同时在首帧渲染"的那段时间。
- */
-function SplashPendingScreen() {
-  return (
-    <main className="app-root splash-root">
-      <section className="phone-shell-wrap splash-shell-wrap" aria-label={TEXT.loading}>
-        <div className="phone-case">
-          <div className="phone-frame">
-            <div className="phone-shell splash-phone-screen splash-pending-screen">
-              <BootLoadingContent />
-            </div>
-          </div>
-        </div>
-      </section>
-    </main>
-  );
-}
-
-/**
  * 揭幕遮罩：盖在已经挂载好、正在首帧渲染的锁屏/动画上面。
  *
  * 为什么要有它：桌面和锁屏是同一次提交里挂上来的，锁屏首帧要和桌面那坨初始化
@@ -345,6 +325,10 @@ export function MainApp() {
   const [revealReady, setRevealReady] = useState(false);
   // 进度条补满的那一小段（只在揭幕前一刻为真），让"完成"有收尾
   const [revealDone, setRevealDone] = useState(false);
+  // 是否启用了锁屏密码。只有"锁屏 + 有密码"这一种情况值得等 Loading：
+  // 它下面要挂密码盘、桌面，首帧压力最大；开屏动画本身就是等待的视觉替代，
+  // 没密码的锁屏也很轻，都不需要再挡一层。
+  const [passcodeEnabled, setPasscodeEnabled] = useState(false);
 
   const dismissBoot = useCallback(() => {
     // 桌面还没挂好就先记下，等挂好再淡出，避免帘子揭开时底下是空的
@@ -360,6 +344,10 @@ export function MainApp() {
 
   useEffect(() => () => clearTimeout(bootExitTimer.current), []);
 
+  /** 「锁屏 + 启用密码」才需要 Loading 挡首帧，其它情况直接显示 */
+  const bootGateActive = splashMode === "lock" && passcodeEnabled;
+  const showBootLoading = splashMode === "pending" || (bootGateActive && !revealReady);
+
   useEffect(() => {
     desktopMountedRef.current = hydrated;
     if (hydrated && pendingBootDismissRef.current) {
@@ -370,8 +358,10 @@ export function MainApp() {
 
   // 揭幕时机：等桌面和锁屏都挂上、并且浏览器把首帧画完之后再揭开。
   // 两次 rAF 确保提交已绘制，再留 BOOT_SETTLE_MS 给重布局与合成收尾。
+  // 只有「锁屏 + 启用密码」需要这一套：那种情况首帧最重，得拿 Loading 挡一下。
+  // 开屏动画本身就是等待的视觉替代品，没密码的锁屏也很轻，都不必再挡。
   useEffect(() => {
-    if (!hydrated || splashMode === "pending") return;
+    if (!hydrated || splashMode !== "lock" || !passcodeEnabled) return;
     let raf2 = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const raf1 = requestAnimationFrame(() => {
@@ -388,7 +378,7 @@ export function MainApp() {
       if (raf2) cancelAnimationFrame(raf2);
       if (timer) clearTimeout(timer);
     };
-  }, [hydrated, splashMode]);
+  }, [hydrated, splashMode, passcodeEnabled]);
 
   useEffect(() => {
     let cancelled = false;
@@ -412,6 +402,7 @@ export function MainApp() {
       const bootProfile = readThemeProfile();
       setLockWallpaperAssetId(bootProfile.lockWallpaperAssetId);
       setSplashMode(bootProfile.splashAnimationEnabled ? "animation" : "lock");
+      setPasscodeEnabled(readLockPasscode().enabled);
 
       let nextPreparedTheme: PreparedDesktopTheme | null = null;
       try {
@@ -500,26 +491,29 @@ export function MainApp() {
 
       {!splashDismissed ? (
         <div className="boot-curtain" data-leaving={bootLeaving ? "1" : undefined}>
-          {splashMode === "pending" ? (
-            <SplashPendingScreen />
-          ) : (
-            <div className="boot-reveal" data-ready={revealReady ? "1" : undefined}>
+          {splashMode !== "pending" ? (
+            <div
+              className="boot-reveal"
+              data-ready={bootGateActive ? (revealReady ? "1" : undefined) : "1"}
+            >
               {splashMode === "lock" ? (
                 <LockScreenView
                   wallpaperAssetId={lockWallpaperAssetId}
                   onUnlock={dismissBoot}
                 />
               ) : (
-                <SplashScreen ready={hydrated && revealReady} onEnter={dismissBoot} />
+                <SplashScreen ready={hydrated} onEnter={dismissBoot} />
               )}
             </div>
-          )}
+          ) : null}
 
-          {/* 揭幕遮罩：底下的锁屏/动画已经挂载并在渲染，这层只负责盖住那段脏活。
-              渲染稳了（revealReady）就淡出，用户看到的是"Loading → 画面直接出现"，
-              而不是"画面一边加载一边卡"。
-              done 让进度条在最后补满一格再淡出，避免"走到 92% 突然消失"的割裂感。 */}
-          {splashMode !== "pending" && !revealReady ? <BootLoadingMask done={revealDone} /> : null}
+          {/* Loading 遮罩。
+              只在这两种时候出现：配置还没读出来（pending）、
+              或者「锁屏 + 启用密码」还没渲染稳。
+              关键是它只挂载一次（同一个位置、同一个组件），
+              进度条动画因此从头到尾只跑一遍 —— 之前在 pending 和揭幕两处各放了一份，
+              切换时会看到进度条重走。 */}
+          {showBootLoading ? <BootLoadingMask done={revealDone} /> : null}
         </div>
       ) : null}
     </AccountGate>

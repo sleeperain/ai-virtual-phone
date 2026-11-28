@@ -582,10 +582,9 @@
   /* 未输入是描边空环 */
   border: 1.5px solid rgba(255, 255, 255, 0.85);
   background: transparent;
-  /* 只过渡颜色，不做 scale：缩放会让浏览器每帧重建这一小块，
-     压在上面的是被模糊的壁纸，代价比看上去高，也是"闪一下"的来源之一 */
+  /* 只过渡颜色，不做 scale。
+     will-change 也去掉：4 个圆点各自提层没有必要，反而多一层图层管理。 */
   transition: background 140ms ease, border-color 140ms ease;
-  will-change: background;
 }
 
 .lock-passcode-dot[data-filled="1"] {
@@ -634,15 +633,18 @@
   background: rgba(255, 255, 255, 0.19);
   color: #fff;
   cursor: pointer;
-  transition: background 120ms ease, transform 120ms ease;
+  /* 只过渡颜色。带上 transform 的话，浏览器会为按下态准备变换通道，
+     首次点击容易触发一次图层处理 —— 就是"点一下闪一下"。 */
+  transition: background 120ms ease;
   /* 手机浏览器默认的点击高亮：第一次点会闪一块灰，就是这个。
      父级 .lock-screen 上设过，但 -webkit-tap-highlight-color 不会可靠地继承到按钮。 */
   -webkit-tap-highlight-color: transparent;
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
-  /* 这里不加 will-change：11 个按键各自提升合成层反而增加图层管理开销，
-     而 background 变色本来就在同一层内完成，不需要提升。 */
+  /* 只留背景色变化，绘制区域就是按钮本身，不新建图层 */
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
 }
 
 /* 删除键不要圆形底，iOS 也是干干净净一个图标 */
@@ -652,9 +654,11 @@
   -webkit-backdrop-filter: none;
 }
 
+/* 按下只变背景色，不做 scale。
+   scale 会创建合成层，在"整层压在桌面/壁纸之上"的密码盘里，
+   每按一次都可能触发一次图层重算 —— 那就是点击时的闪。 */
 .lock-passcode-key:active {
   background: rgba(255, 255, 255, 0.34);
-  transform: scale(0.94);
 }
 
 .lock-passcode-key:disabled {
@@ -700,17 +704,18 @@
   font-weight: 500;
   letter-spacing: 0.04em;
   cursor: pointer;
-  transition: background 140ms ease, transform 140ms ease;
+  transition: background 140ms ease;
   /* 同数字键：关掉手机默认的点击灰闪 */
   -webkit-tap-highlight-color: transparent;
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
 }
 
 .lock-passcode-forgot:active {
   background: rgba(255, 255, 255, 0.32);
-  transform: scale(0.96);
 }
 
 /* 重置成功后的提示条 */
@@ -773,13 +778,6 @@
 
 .boot-reveal[data-ready="1"] {
   opacity: 1;
-}
-
-.splash-pending-screen {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #ffffff;
 }
 
 .boot-loading-content {
