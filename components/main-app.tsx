@@ -17,7 +17,6 @@ import { hydrateKvDb, isKvHydrated } from "@/lib/kv-db";
 import { getThemeAssetMap, readThemeProfile } from "@/lib/theme-storage";
 import { resolveActiveIconSkins, type ThemeProfile } from "@/lib/theme-types";
 import { hasPendingMcpOAuthCallback } from "@/lib/tool-executor";
-import { readLockPasscode } from "@/lib/lock-passcode";
 import { shouldRequestPwaFullscreen } from "@/lib/pwa-display-mode";
 
 const TEXT = {
@@ -26,15 +25,7 @@ const TEXT = {
 
 /** 启动帘子淡出时长（ms），须与 .boot-curtain[data-leaving] 的 transition 对齐 */
 const BOOT_EXIT_DURATION = 340;
-/**
- * 揭幕前给渲染留的缓冲（ms）。
- * 桌面和锁屏是一起挂载的，桌面那一坨初始化很重；如果锁屏在同一帧直接亮相，
- * 首帧就要跟桌面的重活抢时间，看着就是"卡一下才出来"。
- * 这段等待里底下已经把活干完了，揭幕时只是把 Loading 淡掉。
- */
-const BOOT_SETTLE_MS = 400;
-/** 进度条补满后停留的时长（ms），让"加载完成"这件事看得见 */
-const BOOT_DONE_HOLD_MS = 180;
+
 
 const BUILTIN_FONT_URLS = [
   "/fonts/huiwen.woff2",
@@ -193,44 +184,6 @@ function SplashScreen({ ready = false, onEnter }: { ready?: boolean; onEnter?: (
 }
 
 /**
- * Loading 文案 + 进度条。
- *
- * 进度是**估算**的：真正要做的事（IndexedDB 水合、主题资源预加载、桌面挂载）
- * 没有可靠的百分比回调，与其编一个假的实时进度，不如做成一条
- * "先快后慢、永远差一点点"的动画，最后在真正就绪时走满。
- * 规律是渐进加载里常见的那套：越是接近完成越慢，不会走到 100% 卡住干等。
- */
-function BootLoadingContent({ done = false, withBar = true }: { done?: boolean; withBar?: boolean }) {
-  return (
-    <div className="boot-loading-content" data-done={done ? "1" : undefined}>
-      <span className="boot-loading-text">Loading...</span>
-      {withBar ? (
-        <div className="boot-loading-bar" role="progressbar" aria-label={TEXT.loading}>
-          <div className="boot-loading-bar-fill" />
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-/**
- * 揭幕遮罩：盖在已经挂载好、正在首帧渲染的锁屏/动画上面。
- *
- * 为什么要有它：桌面和锁屏是同一次提交里挂上来的，锁屏首帧要和桌面那坨初始化
- * 抢同一帧。让锁屏一边渲染一边露面，看到的就是"卡一下才出来"。
- * 这层不透明底把那段遮掉，等底下渲染稳了再淡出——观感是 Loading 之后画面直接出现。
- *
- * 它本身极轻：纯色底 + 一行字 + 一条进度条，没有图片、没有模糊。
- */
-function BootLoadingMask({ done = false, withBar = true }: { done?: boolean; withBar?: boolean }) {
-  return (
-    <div className="boot-loading-mask" aria-live="polite">
-      <BootLoadingContent done={done} withBar={withBar} />
-    </div>
-  );
-}
-
-/**
  * 锁屏那一屏：外壳、机身边框和开屏动画共用同一套，只有里面的内容换成锁屏。
  */
 function LockScreenView({
@@ -318,23 +271,22 @@ export function MainApp() {
   // 帘子正在淡出。解锁/进入时先淡出再卸载，避免瞬间硬切到桌面。
   const [bootLeaving, setBootLeaving] = useState(false);
   const bootExitTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  // 桌面是否已经挂载（= 首屏主题预加载已有结果）。桌面内部 savedTheme / themeAssets
-  // 只在首次挂载时读一次 props，所以必须等预加载有结果再挂，否则会先按默认值画一遍、
-  // 资源到位后再"刷新"一次。
+  // 桌面是否已经挂载。桌面内部 savedTheme / themeAssets 只在首次挂载时读一次 props，
+  // 所以必须等首屏主题预加载有结果再挂，否则会先按默认值画一遍、资源到位后再"刷新"一次。
+  //
+  // 挂载时机是「进入时才挂」而不是「启动就挂」：桌面那一坨初始化很重，和开屏动画
+  // 跑在同一条主线程上就是直接抢帧，动画会一顿一顿。现在启动阶段只跑动画/锁屏，
+  // 点进去的那一刻才付挂载开销，这段时间动画还在播、帘子也还没淡出，看不出空等。
+  const [desktopMounted, setDesktopMounted] = useState(false);
   const desktopMountedRef = useRef(false);
   const pendingBootDismissRef = useRef(false);
-  // 启动遮罩是否还盖着：锁屏/开屏动画先挂载但藏在下面，等渲染稳了再揭幕
-  const [revealReady, setRevealReady] = useState(false);
-  // 进度条补满的那一小段（只在揭幕前一刻为真），让"完成"有收尾
-  const [revealDone, setRevealDone] = useState(false);
-  // 是否启用了锁屏密码。只影响"要不要显示进度条"：
-  // 真正的等待（首帧渲染）所有模式都要挡，但有进度条的只有锁屏+密码这一种。
-  const [passcodeEnabled, setPasscodeEnabled] = useState(false);
 
   const dismissBoot = useCallback(() => {
     // 桌面还没挂好就先记下，等挂好再淡出，避免帘子揭开时底下是空的
     if (!desktopMountedRef.current) {
       pendingBootDismissRef.current = true;
+      // 进入的这一刻才开始挂桌面：启动阶段让动画独享主线程
+      setDesktopMounted(true);
       return;
     }
     setBootLeaving(true);
@@ -345,43 +297,14 @@ export function MainApp() {
 
   useEffect(() => () => clearTimeout(bootExitTimer.current), []);
 
-  /**
-   * Loading 遮罩只在「锁屏 + 启用密码」时用，用来挡住首帧渲染。
-   * 其他模式（开屏动画、无密码锁屏）直接显示，不再垫一层白屏：
-   * 那层会让人先干等、动画又被推迟，等着的时间反而更长。
-   */
-  const showBootLoading = splashMode === "lock" && passcodeEnabled && !revealReady;
-
+  // 桌面挂上以后，如果之前已经点过「进入」，这里接着把帘子淡掉
   useEffect(() => {
-    desktopMountedRef.current = hydrated;
-    if (hydrated && pendingBootDismissRef.current) {
+    desktopMountedRef.current = desktopMounted;
+    if (desktopMounted && pendingBootDismissRef.current) {
       pendingBootDismissRef.current = false;
       dismissBoot();
     }
-  }, [hydrated, dismissBoot]);
-
-  // 揭幕时机：等桌面和锁屏都挂上、并且浏览器把首帧画完之后再揭开。
-  // 两次 rAF 确保提交已绘制，再留 BOOT_SETTLE_MS 给重布局与合成收尾。
-  // 只有「锁屏 + 启用密码」走这条路：那种情况首帧最重，得拿 Loading 挡一下。
-  useEffect(() => {
-    if (!hydrated || splashMode !== "lock" || !passcodeEnabled) return;
-    let raf2 = 0;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const raf1 = requestAnimationFrame(() => {
-      raf2 = requestAnimationFrame(() => {
-        timer = setTimeout(() => {
-          // 先把进度补满，留 180ms 给人看清，再揭幕
-          setRevealDone(true);
-          timer = setTimeout(() => setRevealReady(true), BOOT_DONE_HOLD_MS);
-        }, BOOT_SETTLE_MS);
-      });
-    });
-    return () => {
-      cancelAnimationFrame(raf1);
-      if (raf2) cancelAnimationFrame(raf2);
-      if (timer) clearTimeout(timer);
-    };
-  }, [hydrated, splashMode, passcodeEnabled]);
+  }, [desktopMounted, dismissBoot]);
 
   useEffect(() => {
     let cancelled = false;
@@ -405,7 +328,6 @@ export function MainApp() {
       const bootProfile = readThemeProfile();
       setLockWallpaperAssetId(bootProfile.lockWallpaperAssetId);
       setSplashMode(bootProfile.splashAnimationEnabled ? "animation" : "lock");
-      setPasscodeEnabled(readLockPasscode().enabled);
 
       let nextPreparedTheme: PreparedDesktopTheme | null = null;
       try {
@@ -465,14 +387,14 @@ export function MainApp() {
 
   return (
     <AccountGate>
-      {/* 桌面在启动阶段就挂到帘子（开屏动画 / 锁屏）下面：解锁只是把帘子拿走，
-          不再有"上滑后现场挂载桌面、黑屏硬等"的空窗。
+      {/* 桌面在「进入」那一刻才挂上来（见 dismissBoot），启动阶段只渲染开屏动画/锁屏：
+          两边同线程跑，桌面那坨初始化会把动画拖成幻灯片。
 
-          但要等 hydrated（首屏主题预加载已有结果）再挂：DesktopShell 里的
-          savedTheme / themeAssets 都是 useState 初始化，只在首次挂载时读一次 props。
-          提前用 null 挂上去，会先按默认主题画一遍，等资源到位又整体换一次——
-          表现就是"桌面已经能点了，过一会又刷新一下"。 */}
-      {splashMode !== "pending" && hydrated ? (
+          挂之前必须满足两个条件：desktopMounted（用户点了进入）和 hydrated
+          （首屏主题预加载已有结果）。DesktopShell 里的 savedTheme / themeAssets 都是
+          useState 初始化，只在首次挂载时读一次 props，提前用 null 挂上去会先按默认
+          主题画一遍、等资源到位又整体换一次——表现就是"桌面已经能点了，过一会又刷新一下"。 */}
+      {desktopMounted && hydrated ? (
         <main className="app-root">
           <MusicProvider>
             <LocalErrorBoundary
@@ -495,15 +417,8 @@ export function MainApp() {
       {!splashDismissed ? (
         <div className="boot-curtain" data-leaving={bootLeaving ? "1" : undefined}>
           {splashMode !== "pending" ? (
-            <div
-              className="boot-reveal"
-              data-ready={
-                // 只有"锁屏+密码"这条路才需要等遮罩撤掉；其余模式立刻可见
-                splashMode === "lock" && passcodeEnabled
-                  ? (revealReady ? "1" : undefined)
-                  : "1"
-              }
-            >
+            {/* 帘子里的内容一挂上就直接可见，不再等什么遮罩/揭幕时机 */}
+            <div className="boot-reveal" data-ready="1">
               {splashMode === "lock" ? (
                 <LockScreenView
                   wallpaperAssetId={lockWallpaperAssetId}
@@ -514,11 +429,6 @@ export function MainApp() {
               )}
             </div>
           ) : null}
-
-          {/* Loading 遮罩：只剩「锁屏 + 启用密码」这一种情况。
-              那时底下要同时挂密码盘和桌面，首帧最重，得挡一下；
-              开屏动画和无密码的锁屏都直接显示，不垫白屏。 */}
-          {showBootLoading ? <BootLoadingMask done={revealDone} withBar /> : null}
         </div>
       ) : null}
     </AccountGate>

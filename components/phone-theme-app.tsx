@@ -25,12 +25,6 @@ import { LookSetManagePage } from "@/components/night/look-set-manage-page";
 import { LookSetEditSheet } from "@/components/night/look-set-sheets";
 import { GlassIcon } from "@/components/ui/glass-icon";
 import { normalizeThemeProfile, resolveActiveIconSkins, DEFAULT_THEME_PROFILE, type ThemeProfile } from "@/lib/theme-types";
-import {
-  DEFAULT_PASSCODE,
-  PASSCODE_LENGTH,
-  readLockPasscode,
-  writeLockPasscode,
-} from "@/lib/lock-passcode";
 import type { DesktopIconId, IconId } from "@/lib/desktop-config";
 import { DOCK_DEFAULT, PAGE_1_DEFAULT, PAGE_2_DEFAULT, PAGE_3_DEFAULT, ICONS } from "@/lib/desktop-config";
 import type { DesktopFolderMap, DesktopIconLayout } from "@/lib/desktop-layout-storage";
@@ -80,7 +74,6 @@ type ThemeSection =
   | "widgets"
   | "splash"
   | "splashLockWallpaper"
-  | "splashPasscode"
   | "case"
   | "text"
   | "css"
@@ -191,7 +184,6 @@ const SECTION_TITLES: Record<Exclude<ThemeSection, "menu">, string> = {
   widgets: "\u684C\u9762\u7EC4\u4EF6",
   splash: "\u5F00\u5C4F\u52A8\u753B",
   splashLockWallpaper: "\u9501\u5C4F\u58C1\u7EB8",
-  splashPasscode: "\u9501\u5C4F\u5BC6\u7801",
   case: "\u624B\u673A\u58F3",
   text: "\u6587\u5B57",
   css: "CSS \u53D8\u91CF",
@@ -200,7 +192,7 @@ const SECTION_TITLES: Record<Exclude<ThemeSection, "menu">, string> = {
   lookSets: "管理搭配",
 };
 
-const THEME_SECTIONS = new Set<string>(["menu", "palette", "wallpaper", "icons", "widgets", "splash", "splashLockWallpaper", "splashPasscode", "case", "text", "css", "nightSet", "lookSets"]);
+const THEME_SECTIONS = new Set<string>(["menu", "palette", "wallpaper", "icons", "widgets", "splash", "splashLockWallpaper", "case", "text", "css", "nightSet", "lookSets"]);
 
 function isThemeSection(value: string): value is ThemeSection {
   return THEME_SECTIONS.has(value);
@@ -318,7 +310,7 @@ export function PhoneThemeApp({
       setSection("nightSet");
     } else if (section === "nightSet") {
       setSection(lookSetBack);
-    } else if (section === "splashLockWallpaper" || section === "splashPasscode") {
+    } else if (section === "splashLockWallpaper") {
       // 从「开屏动画」进来的，返回时回那一页而不是直接回菜单
       setSection("splash");
     } else {
@@ -514,8 +506,6 @@ export function PhoneThemeApp({
             onApply={onApply}
             onNotice={onNotice}
           />
-        ) : section === "splashPasscode" ? (
-          <LockPasscodePage onNotice={onNotice} />
         ) : section === "splash" ? (
           <SplashSettingsPage
             draft={draft}
@@ -523,7 +513,6 @@ export function PhoneThemeApp({
             onApply={onApply}
             onNotice={onNotice}
             onOpenLockWallpaper={() => setSection("splashLockWallpaper")}
-            onOpenPasscode={() => setSection("splashPasscode")}
           />
         ) : section === "wallpaper" ? (
           <WallpaperPage
@@ -1374,7 +1363,6 @@ function SplashSettingsPage({
   onApply,
   onNotice,
   onOpenLockWallpaper,
-  onOpenPasscode,
 }: {
   draft: ThemeProfile;
   onDraftChange: (next: ThemeProfile) => void;
@@ -1382,18 +1370,9 @@ function SplashSettingsPage({
   onNotice: (text: string) => void;
   /** 跳到「锁屏壁纸」子页面（和壁纸页同一套 UI，不再开弹窗） */
   onOpenLockWallpaper: () => void;
-  /** 跳到「锁屏密码」子页面 */
-  onOpenPasscode: () => void;
 }) {
   const enabled = draft.splashAnimationEnabled;
   const lockWallpaperId = draft.lockWallpaperAssetId;
-  // 密码独立存储（不进 ThemeProfile），所以这里单独取一次
-  const [passcode, setPasscode] = useState(() => readLockPasscode());
-
-  const handlePasscodeToggle = useCallback((next: boolean) => {
-    setPasscode(writeLockPasscode({ enabled: next, code: passcode.code }));
-    onNotice(next ? "已启用锁屏密码，上滑解锁后需要输入密码" : "已关闭锁屏密码");
-  }, [onNotice, passcode.code]);
 
   const commit = useCallback(async (patch: Partial<ThemeProfile>) => {
     const next = normalizeThemeProfile({ ...draft, ...patch });
@@ -1440,7 +1419,7 @@ function SplashSettingsPage({
           </label>
         </div>
 
-        {/* 关掉开屏动画后，才出现锁屏壁纸与锁屏密码 */}
+        {/* 关掉开屏动画后，才出现锁屏壁纸入口 */}
         {!enabled && (
           <button
             type="button"
@@ -1458,58 +1437,6 @@ function SplashSettingsPage({
           </button>
         )}
       </div>
-
-      {!enabled && (
-        <div className="menu-group">
-          {/* 锁屏密码总开关：关着的时候不出现下面的入口 */}
-          <div className="menu-item">
-            <span className="card-icon card-icon-glass"><GlassIcon name="identity" /></span>
-            <span className="menu-label appearance-menu-item-label">{"启用锁屏密码"}</span>
-            <label
-              className="block w-10 h-[22px] cursor-pointer relative shrink-0 ml-auto"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <input
-                type="checkbox"
-                checked={passcode.enabled}
-                onChange={(e) => handlePasscodeToggle(e.target.checked)}
-                className="w-full h-full rounded-[11px] m-0 outline-none"
-                style={{
-                  appearance: "none",
-                  backgroundColor: passcode.enabled ? "var(--c-success)" : "var(--c-page-body-bg)",
-                  border: passcode.enabled ? "none" : "1px solid var(--c-input-border)",
-                  transition: "0.2s",
-                }}
-              />
-              <div
-                className="absolute w-[18px] h-[18px] bg-white rounded-full top-[2px] pointer-events-none"
-                style={{
-                  left: passcode.enabled ? 20 : 2,
-                  transition: "0.2s",
-                  boxShadow: "0 2px 4px rgba(0,0,0,0.15)",
-                }}
-              />
-            </label>
-          </div>
-
-          {passcode.enabled && (
-            <button
-              type="button"
-              className="menu-item"
-              onClick={onOpenPasscode}
-            >
-              <span className="card-icon card-icon-glass"><GlassIcon name="presets" /></span>
-              <span className="menu-label appearance-menu-item-label">{"设置锁屏密码"}</span>
-              <span className="menu-right">
-                <span className="ts-11" style={{ color: "var(--c-icon)" }}>
-                  {PASSCODE_LENGTH} 位
-                </span>
-                <IconChevronRight />
-              </span>
-            </button>
-          )}
-        </div>
-      )}
 
       <p className="ts-11 leading-relaxed" style={{ color: "var(--c-icon)" }}>
         {enabled
@@ -1660,132 +1587,6 @@ function LockWallpaperPage({
       <p className="ts-11 leading-relaxed" style={{ color: "var(--c-icon)" }}>
         {"选「默认」就是内置的深色渐变。换完壁纸重新打开一次应用即可看到效果。"}
       </p>
-    </div>
-  );
-}
-
-/* ══════════════════════════════════════════
-   锁屏密码 Page
-
-   不做"先验证旧密码"：忘了旧密码就改不了，等于把自己锁在设置外面。
-   反正密码本身只是隐私遮挡（数据都在本机），验证旧密码也挡不住真想翻的人。
-   所以这里直接给「输入新密码 → 再输一遍」，外加一个「重置为 0000」兜底。
-
-   密码独立存储（lib/lock-passcode.ts），不进 ThemeProfile：
-   主题包导出时不会带走密码，恢复默认外观也不会把它清掉。
-   ══════════════════════════════════════════ */
-
-function LockPasscodePage({ onNotice }: { onNotice: (text: string) => void }) {
-  const [state, setState] = useState(() => readLockPasscode());
-  const [first, setFirst] = useState("");
-  const [second, setSecond] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  /** 当前在输第几遍。用独立状态而不是从长度推算：
-      推算的话，第一遍输满 4 位会立刻切到确认阶段、圆点瞬间清空，看着像被吞了一位。 */
-  const [stage, setStage] = useState<"first" | "second">("first");
-  const shakeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-
-  useEffect(() => () => clearTimeout(shakeTimer.current), []);
-
-  const flashError = useCallback((text: string) => {
-    setError(text);
-    clearTimeout(shakeTimer.current);
-    shakeTimer.current = setTimeout(() => setError(null), 1800);
-  }, []);
-
-  const resetStages = useCallback(() => {
-    setStage("first");
-    setFirst("");
-    setSecond("");
-  }, []);
-
-  const filled = stage === "first" ? first.length : second.length;
-  /** 给隐藏 input 用的显示值：只放当前这一步的数字 */
-  const displayed = stage === "first" ? first : second;
-
-  const handleInputChange = useCallback((raw: string) => {
-    const digits = raw.replace(/\D/g, "").slice(0, PASSCODE_LENGTH);
-    if (error) setError(null);
-
-    if (stage === "first") {
-      setFirst(digits);
-      // 输满 4 位：停一下再进确认阶段，让第 4 个圆点有机会画出来
-      if (digits.length === PASSCODE_LENGTH) {
-        window.setTimeout(() => {
-          setStage("second");
-          setSecond("");
-        }, 220);
-      }
-      return;
-    }
-
-    setSecond(digits);
-    if (digits.length !== PASSCODE_LENGTH) return;
-
-    if (digits === first) {
-      // 这里是"设了新密码"，跟下面「重置为 0000」不是一回事，文案分开
-      const saved = writeLockPasscode({ enabled: true, code: digits });
-      setState(saved);
-      onNotice("锁屏密码已更新");
-      resetStages();
-    } else {
-      flashError("两次输入不一致，重来");
-      resetStages();
-    }
-  }, [error, first, stage, flashError, onNotice, resetStages]);
-
-  const handleReset = useCallback(() => {
-    const saved = writeLockPasscode({ enabled: state.enabled, code: DEFAULT_PASSCODE });
-    setState(saved);
-    onNotice("密码已重置");
-    resetStages();
-  }, [onNotice, resetStages, state.enabled]);
-
-  const title = stage === "first" ? "输入新密码" : "再次输入确认";
-  const stageLabel = stage === "first" ? "第一位数字开始" : "再输一遍确认";
-
-  return (
-    <div className="pc-page">
-      {/* 状态说明 */}
-      <div className="pc-head">
-        <p className="pc-title">{title}</p>
-        <p className="pc-sub">{"请输入 " + PASSCODE_LENGTH + " 位数字"}</p>
-      </div>
-
-      {/* 输入区：隐藏原生 input，只渲染 4 个圆点。
-          不用锁屏密码盘那套（带 backdrop-filter），这里是普通页面，模糊滤镜太贵。 */}
-      <label className="pc-dots-wrap">
-        <input
-          type="text"
-          inputMode="numeric"
-          autoComplete="off"
-          pattern="[0-9]*"
-          maxLength={PASSCODE_LENGTH}
-          className="pc-hidden-input"
-          value={displayed}
-          onChange={(e) => handleInputChange(e.target.value)}
-          aria-label={"密码，" + PASSCODE_LENGTH + " 位数字"}
-        />
-        <span className="pc-dots" data-shake={error ? "1" : undefined}>
-          {Array.from({ length: PASSCODE_LENGTH }).map((_, index) => (
-            <span
-              key={index}
-              className="pc-dot"
-              data-filled={index < filled ? "1" : undefined}
-            />
-          ))}
-        </span>
-      </label>
-
-      {error ? (
-        <p className="pc-error">{error}</p>
-      ) : (
-        <p className="pc-hint">{stageLabel}</p>
-      )}
-
-      <button type="button" className="pc-reset" onClick={handleReset}>
-        {"重置为 " + DEFAULT_PASSCODE}
-      </button>
     </div>
   );
 }
