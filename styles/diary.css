@@ -4928,10 +4928,11 @@
 
 /* ---- 手记首页：发布卡片 + 三个页签 + 通知列表 ---- */
 
-/* 工具条：输入卡片 + 按钮行 + 页签，固定在顶部，不随列表滚动 */
+/* 工具条：输入卡片 + 按钮行 + 页签，固定在顶部，不随列表滚动。
+   左右内边距 16px → 12px：卡片整体左右各宽 4px（总宽 +8px） */
 .diary-hub-toolbar {
   flex: 0 0 auto;
-  padding: 0 16px;
+  padding: 0 12px;
 }
 
 /* 滚动区：起点就是三个页签的下边线，日记再多也只滚这一块。
@@ -4941,8 +4942,9 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  /* 顶部不留白：列表卡上边线直接贴住页签行的下边线 */
-  padding: 0 16px 94px;
+  /* 顶部不留白：列表卡上边线直接贴住页签行的下边线。
+     左右与输入卡片同为 12px，两张卡宽度才对得上 */
+  padding: 0 12px 94px;
   background: transparent;
   -webkit-overflow-scrolling: touch;
 }
@@ -5055,13 +5057,15 @@
   font-weight: 400;
 }
 
-/* 标题行与正文之间的细分割线，横跨整张卡（正文/标题都在右列，天然左对齐） */
+/* 标题行与正文之间的细分割线，横跨整张卡（正文/标题都在右列，天然左对齐）。
+   只让下半像素着色：盒高仍是 1px（不影响布局，也不会被展开动画的 scaleX 覆盖），
+   在 2x 屏上实际就是一条 0.5px 的细线，1x 屏退化成淡一点的 1px */
 .diary-hub-compose-divider {
   grid-column: 1 / -1;
   grid-row: 2;
   height: 1px;
   margin: 0;
-  background: rgba(0, 0, 0, 0.08);
+  background: linear-gradient(180deg, transparent 0 50%, rgba(0, 0, 0, 0.09) 50% 100%);
 }
 
 /* 正文：默认落在右列第一行（和头像同一行）；展开后移到分割线下面 */
@@ -5304,10 +5308,11 @@
   box-shadow: 0 1px 1px rgba(24, 30, 34, 0.06);
 }
 
-/* 片刻纪事：整块 main 自己滚动（Bookmark 标签跟着内容滚） */
+/* 片刻纪事：整块 main 自己滚动（Bookmark 标签跟着内容滚）。
+   左右 12px，和手记那边的卡片同宽 */
 .diary-entry-main.diary-moment-main {
   /* 顶部不留白，滚动可视区上沿正好是顶部栏下框线 */
-  padding: 0 16px 94px;
+  padding: 0 12px 94px;
 }
 
 /* 合并时的操作条（原顶部栏的取消/分享挪到这里） */
@@ -5471,7 +5476,7 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 5px 16px calc(28px + var(--safe-area-bottom, 0px));
+  padding: 5px 12px calc(28px + var(--safe-area-bottom, 0px));
   background: transparent;
   -webkit-overflow-scrolling: touch;
 }
@@ -5649,7 +5654,8 @@
   background: transparent;
   color: rgba(37, 37, 37, 0.78);
   font-family: var(--app-font-family);
-  font-size: calc(12.5px * var(--app-text-scale, 1));
+  /* 比头像菜单那套大 1px（12.5 → 13.5）；高度是 2em，跟着一起长到 27px */
+  font-size: calc(13.5px * var(--app-text-scale, 1));
   line-height: 1;
   text-align: left;
   padding: 0 10px;
@@ -5666,12 +5672,13 @@
 
 /* ---- 用户设置页（定时 / 隐私 / 字体 / 署名） ---- */
 
-/* 整页沿用片刻纪事条目页：标签行 + 页签固定，只有下方的白卡内容滚动 */
+/* 整页沿用片刻纪事条目页：标签行 + 页签固定，只有下方的白卡内容滚动。
+   左右 12px：标签行、页签行、内容白卡和上面的列表卡同宽 */
 .diary-entry-main.diary-settings-main {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 0 16px 0;
+  padding: 0 12px 0;
 }
 
 /* 标签行固定 42px 高：内容再长（比如「署名」页签）也不许被压扁。
