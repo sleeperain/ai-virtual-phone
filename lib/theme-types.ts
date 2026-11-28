@@ -44,6 +44,10 @@ export type ThemeProfile = {
   activeIconSchemeId: string;
   // DOCK 栏背景皮肤
   dockSkinAssetId: string | null;
+  // 开屏动画：true = 启动时播放原生开屏动画；false = 启动时直接进锁屏
+  splashAnimationEnabled: boolean;
+  // 锁屏壁纸（null = 用默认渐变底）
+  lockWallpaperAssetId: string | null;
   // 排版
   fontAssetId: string | null;
   fontFamily: string;
@@ -176,6 +180,8 @@ export const DEFAULT_THEME_PROFILE: ThemeProfile = {
   iconSchemes: [createDefaultIconScheme()],
   activeIconSchemeId: "icon_scheme_default",
   dockSkinAssetId: null,
+  splashAnimationEnabled: true,
+  lockWallpaperAssetId: null,
   fontAssetId: null,
   fontFamily: DEFAULT_FONT_FAMILY,
   hideTopBar: true,
@@ -315,6 +321,13 @@ export function normalizeThemeProfile(raw: unknown): ThemeProfile {
 
   // ── Dock skin ──
   base.dockSkinAssetId = typeof source.dockSkinAssetId === "string" ? source.dockSkinAssetId : null;
+
+  // ── Splash / Lock screen ──
+  // 旧存档没有这两个字段：默认保持「开屏动画开启」，与升级前行为一致。
+  base.splashAnimationEnabled = typeof source.splashAnimationEnabled === "boolean"
+    ? source.splashAnimationEnabled : true;
+  base.lockWallpaperAssetId = typeof source.lockWallpaperAssetId === "string" && (source.lockWallpaperAssetId as string).trim()
+    ? (source.lockWallpaperAssetId as string).trim() : null;
 
   // ── Typography ──
   base.fontAssetId = typeof source.fontAssetId === "string" ? source.fontAssetId : null;

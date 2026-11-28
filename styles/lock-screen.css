@@ -1,0 +1,179 @@
+/* ══════════════════════════════════════════
+   锁屏（参考 iOS）
+   关闭「开屏动画」后启动落在这一屏；上滑解锁进桌面。
+   ══════════════════════════════════════════ */
+
+.lock-screen {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  overflow: hidden;
+  color: #fff;
+  background-color: #10131f;
+  /* 没设锁屏壁纸时的默认底：深蓝紫渐变，接近 iOS 深色壁纸 */
+  background-image:
+    radial-gradient(120% 90% at 22% 8%, #3a4a8c 0%, rgba(58, 74, 140, 0) 62%),
+    radial-gradient(120% 100% at 84% 100%, #7a3f6d 0%, rgba(122, 63, 109, 0) 58%),
+    linear-gradient(168deg, #1b2140 0%, #131726 52%, #0c0e18 100%);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+  transition:
+    transform 0.33s cubic-bezier(0.32, 0.72, 0, 1),
+    opacity 0.33s ease;
+}
+
+/* 解锁退场：整屏往上推走并淡出 */
+.lock-screen[data-leaving="1"] {
+  transform: translate3d(0, -100%, 0);
+  opacity: 0;
+}
+
+/* 上下压暗一点，保证浅色壁纸上白字也读得清 */
+.lock-screen-scrim {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg,
+    rgba(0, 0, 0, 0.26) 0%,
+    rgba(0, 0, 0, 0.02) 30%,
+    rgba(0, 0, 0, 0) 56%,
+    rgba(0, 0, 0, 0.34) 100%);
+}
+
+.lock-screen-content {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 15%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+/* 第一行：日期和星期，居中 */
+.lock-screen-date {
+  font-size: calc(15px * var(--app-text-scale, 1));
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
+  opacity: 0.94;
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.42);
+}
+
+/* 第二行：大字时间，居中 */
+.lock-screen-time {
+  /* 按手机屏幕宽度算，不能用 vw：桌面端手机是固定宽度，vw 会按整个浏览器视口放大 */
+  font-size: min(86px, calc(var(--phone-screen-width, 390px) * 0.22));
+  font-weight: 200;
+  letter-spacing: -0.018em;
+  line-height: 1.04;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  text-shadow: 0 2px 24px rgba(0, 0, 0, 0.4);
+}
+
+.lock-screen-bottom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 26px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.lock-screen-hint {
+  font-size: calc(12.5px * var(--app-text-scale, 1));
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  opacity: 0.74;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.4);
+  animation: lockScreenHint 2.6s ease-in-out infinite;
+  transition: opacity 0.2s ease;
+}
+
+.lock-screen-hint-hidden {
+  opacity: 0;
+}
+
+@keyframes lockScreenHint {
+  0%, 100% { opacity: 0.5; transform: translateY(0); }
+  50%      { opacity: 0.92; transform: translateY(-2px); }
+}
+
+/* 底部小白条：可点，也提示"往上滑"。
+   按钮本身撑成 20px 高的透明热区再画 4.5px 的条，手指才好点中。 */
+.lock-screen-grabber {
+  position: relative;
+  pointer-events: auto;
+  width: 108px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.lock-screen-grabber::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 4.5px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.8);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.28);
+}
+
+.lock-screen-grabber:active {
+  transform: scale(0.94);
+}
+
+/* 设置页里「默认壁纸」那个色块：与锁屏默认底一致 */
+.lock-wallpaper-default {
+  background-image:
+    radial-gradient(120% 90% at 22% 8%, #3a4a8c 0%, rgba(58, 74, 140, 0) 62%),
+    radial-gradient(120% 100% at 84% 100%, #7a3f6d 0%, rgba(122, 63, 109, 0) 58%),
+    linear-gradient(168deg, #1b2140 0%, #131726 52%, #0c0e18 100%);
+  background-size: cover;
+  background-position: center;
+}
+
+/* 锁屏那一屏的手机画面沿用 splash 的满屏画布（无内边距、无壁纸层） */
+.lock-phone-screen {
+  padding: 0;
+  background: #10131f;
+}
+
+.lock-phone-screen::before {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lock-screen,
+  .lock-screen-content,
+  .lock-screen-bottom {
+    transition-duration: 0.01ms !important;
+  }
+  .lock-screen-hint {
+    animation: none;
+    opacity: 0.74;
+  }
+}

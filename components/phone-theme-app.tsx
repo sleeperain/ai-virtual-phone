@@ -12,6 +12,7 @@ import {
   Plus,
   RotateCcw,
   Smartphone,
+  Sparkles,
   Type,
   Upload,
   Wallpaper,
@@ -71,6 +72,7 @@ type ThemeSection =
   | "wallpaper"
   | "icons"
   | "widgets"
+  | "splash"
   | "case"
   | "text"
   | "css"
@@ -124,6 +126,10 @@ function IconWidgets() {
   return <AppWindow size={22} strokeWidth={1.75} />;
 }
 
+function IconSplash() {
+  return <Sparkles size={22} strokeWidth={1.75} />;
+}
+
 function IconCase() {
   return <Smartphone size={22} strokeWidth={1.75} />;
 }
@@ -158,6 +164,7 @@ const MENU_ITEMS: Array<{
   { section: "wallpaper", icon: IconWallpaper, label: "壁纸", desc: "桌面背景", color: BINDING_ACCENTS.api, glow: `color-mix(in srgb, ${BINDING_ACCENTS.api} 35%, transparent)`, glass: "wallpaper" },
   { section: "icons", icon: IconGrid, label: "图标", desc: "应用图标", color: BINDING_ACCENTS.regex, glow: `color-mix(in srgb, ${BINDING_ACCENTS.regex} 35%, transparent)`, glass: "icons" },
   { section: "widgets", icon: IconWidgets, label: "桌面组件", desc: "小组件", color: BINDING_ACCENTS.voice, glow: `color-mix(in srgb, ${BINDING_ACCENTS.voice} 35%, transparent)`, glass: "widgets" },
+  { section: "splash", icon: IconSplash, label: "开屏动画", desc: "启动动画与锁屏", color: BINDING_ACCENTS.api, glow: `color-mix(in srgb, ${BINDING_ACCENTS.api} 35%, transparent)`, glass: "quick-action" },
   { section: "case", icon: IconCase, label: "状态栏", color: BINDING_ACCENTS.memory, glass: "status-bar" },
   { section: "text", icon: IconText, label: "文字", color: BINDING_ACCENTS.identity, glow: `color-mix(in srgb, ${BINDING_ACCENTS.identity} 35%, transparent)`, glass: "text" },
   { section: "css", icon: IconCode, label: "CSS 变量", desc: "自定义全局样式变量", color: BINDING_ACCENTS.embedding, glow: `color-mix(in srgb, ${BINDING_ACCENTS.embedding} 35%, transparent)`, glass: "css" },
@@ -174,6 +181,7 @@ const SECTION_TITLES: Record<Exclude<ThemeSection, "menu">, string> = {
   wallpaper: "\u58C1\u7EB8",
   icons: "\u56FE\u6807",
   widgets: "\u684C\u9762\u7EC4\u4EF6",
+  splash: "\u5F00\u5C4F\u52A8\u753B",
   case: "\u624B\u673A\u58F3",
   text: "\u6587\u5B57",
   css: "CSS \u53D8\u91CF",
@@ -182,7 +190,7 @@ const SECTION_TITLES: Record<Exclude<ThemeSection, "menu">, string> = {
   lookSets: "管理搭配",
 };
 
-const THEME_SECTIONS = new Set<string>(["menu", "palette", "wallpaper", "icons", "widgets", "case", "text", "css", "nightSet", "lookSets"]);
+const THEME_SECTIONS = new Set<string>(["menu", "palette", "wallpaper", "icons", "widgets", "splash", "case", "text", "css", "nightSet", "lookSets"]);
 
 function isThemeSection(value: string): value is ThemeSection {
   return THEME_SECTIONS.has(value);
@@ -348,7 +356,7 @@ export function PhoneThemeApp({
             <div>
               <h3 className="appearance-menu-section-title">Appearance</h3>
               <div className="card-grid mt-2.5">
-                {MENU_ITEMS.filter(item => ["palette", "wallpaper", "icons", "widgets"].includes(item.section)).map((item) => (
+                {MENU_ITEMS.filter(item => ["palette", "wallpaper", "icons", "widgets", "splash"].includes(item.section)).map((item) => (
                   <button
                     key={item.section}
                     className="app-card card-card"
@@ -486,6 +494,13 @@ export function PhoneThemeApp({
           <NightEntityPage setId={lookSetId} entityId={nightEntity.id} />
         ) : section === "lookSets" ? (
           <LookSetManagePage onOpenSet={(setId) => openLookSet(setId, "lookSets")} />
+        ) : section === "splash" ? (
+          <SplashSettingsPage
+            draft={draft}
+            onDraftChange={onDraftChange}
+            onApply={onApply}
+            onNotice={onNotice}
+          />
         ) : section === "wallpaper" ? (
           <WallpaperPage
             draft={draft}
@@ -1321,6 +1336,212 @@ function IconSkinPage({
           onCancel={() => setConfirmDeleteDock(false)}
         />
       )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════
+   Splash / Lock Screen Page
+   ══════════════════════════════════════════ */
+
+function SplashSettingsPage({
+  draft,
+  onDraftChange,
+  onApply,
+  onNotice,
+}: {
+  draft: ThemeProfile;
+  onDraftChange: (next: ThemeProfile) => void;
+  onApply: (next: ThemeProfile) => Promise<void> | void;
+  onNotice: (text: string) => void;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [thumbs, setThumbs] = useState<Record<string, string>>({});
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const enabled = draft.splashAnimationEnabled;
+  const library = draft.wallpaperLibrary;
+  const lockWallpaperId = draft.lockWallpaperAssetId;
+
+  // 缩略图：壁纸库 + 当前锁屏壁纸（主题包导入的锁屏壁纸可能不在库里）
+  useEffect(() => {
+    const ids = Array.from(new Set([...library, lockWallpaperId ?? ""].filter(Boolean)));
+    if (ids.length === 0) {
+      setThumbs({});
+      return;
+    }
+    let cancelled = false;
+    getThemeAssetMap(ids)
+      .then((map) => {
+        if (!cancelled) setThumbs(map);
+      })
+      .catch(() => {
+        // 缩略图取不到就显示占位块，不影响选图
+      });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [library.join(","), lockWallpaperId]);
+
+  const commit = useCallback(async (patch: Partial<ThemeProfile>) => {
+    const next = normalizeThemeProfile({ ...draft, ...patch });
+    onDraftChange(next);
+    await onApply(next);
+  }, [draft, onDraftChange, onApply]);
+
+  const handleToggle = useCallback(async (checked: boolean) => {
+    await commit({ splashAnimationEnabled: checked });
+    onNotice(checked ? "已启用开屏动画" : "已关闭开屏动画，启动时直接进锁屏");
+  }, [commit, onNotice]);
+
+  const handlePickWallpaper = useCallback(async (assetId: string | null) => {
+    setPickerOpen(false);
+    await commit({ lockWallpaperAssetId: assetId });
+    onNotice(assetId ? "锁屏壁纸已更新" : "已改回默认锁屏壁纸");
+  }, [commit, onNotice]);
+
+  const handleUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setBusy(true);
+    try {
+      const assetId = await saveThemeAssetFromBlob(file, "wallpaper");
+      setPickerOpen(false);
+      // 顺手进壁纸库，桌面壁纸页也能复用这张
+      await commit({
+        lockWallpaperAssetId: assetId,
+        wallpaperLibrary: [...draft.wallpaperLibrary, assetId],
+      });
+      onNotice("锁屏壁纸已更新");
+    } catch (error) {
+      onNotice(describeAssetSaveError(error));
+    } finally {
+      setBusy(false);
+    }
+  }, [commit, draft.wallpaperLibrary, onNotice]);
+
+  return (
+    <div className="theme-section-page" data-bottom-reserve style={{ gap: 16 }}>
+      <div className="menu-group">
+        {/* 第一行：开屏动画总开关 */}
+        <div className="menu-item">
+          <span className="card-icon card-icon-glass"><GlassIcon name="quick-action" /></span>
+          <span className="menu-label appearance-menu-item-label">{"启用原生开屏动画"}</span>
+          <label
+            className="block w-10 h-[22px] cursor-pointer relative shrink-0 ml-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <input
+              type="checkbox"
+              checked={enabled}
+              onChange={(e) => { void handleToggle(e.target.checked); }}
+              className="w-full h-full rounded-[11px] m-0 outline-none"
+              style={{
+                appearance: "none",
+                backgroundColor: enabled ? "var(--c-success)" : "var(--c-page-body-bg)",
+                border: enabled ? "none" : "1px solid var(--c-input-border)",
+                transition: "0.2s",
+              }}
+            />
+            <div
+              className="absolute w-[18px] h-[18px] bg-white rounded-full top-[2px] pointer-events-none"
+              style={{
+                left: enabled ? 20 : 2,
+                transition: "0.2s",
+                boxShadow: "0 2px 4px rgba(0,0,0,0.15)",
+              }}
+            />
+          </label>
+        </div>
+
+        {/* 关掉开屏动画后，才出现锁屏壁纸入口 */}
+        {!enabled && (
+          <button
+            type="button"
+            className="menu-item"
+            onClick={() => setPickerOpen(true)}
+          >
+            <span className="card-icon card-icon-glass"><GlassIcon name="wallpaper" /></span>
+            <span className="menu-label appearance-menu-item-label">{"设置锁屏壁纸"}</span>
+            <span className="menu-right"><IconChevronRight /></span>
+          </button>
+        )}
+      </div>
+
+      <p className="ts-11 leading-relaxed" style={{ color: "var(--c-icon)" }}>
+        {enabled
+          ? "启动时先播放开屏动画，点进入按钮后进桌面。"
+          : "已关闭开屏动画：启动直接落在锁屏，第一行显示日期与星期，第二行是大字时间，上滑解锁进桌面。"}
+      </p>
+
+      {!enabled && (
+        <p className="ts-11 leading-relaxed" style={{ color: "var(--c-icon)" }}>
+          {"锁屏壁纸可以跟桌面壁纸不一样；不选就用默认的深色渐变。换完壁纸重新打开一次应用即可看到效果。"}
+        </p>
+      )}
+
+      {pickerOpen && (
+        <ContentDialog
+          title="设置锁屏壁纸"
+          confirmLabel={undefined}
+          cancelLabel="关闭"
+          onConfirm={() => setPickerOpen(false)}
+          onCancel={() => setPickerOpen(false)}
+        >
+          <div className="flex flex-col gap-3">
+            <div className="wp-grid">
+              {/* 默认壁纸 */}
+              <div
+                className={`wp-card${lockWallpaperId ? "" : " wp-card-active"}`}
+                onClick={() => { void handlePickWallpaper(null); }}
+                role="button"
+                tabIndex={0}
+              >
+                <div className="wp-card-img lock-wallpaper-default" />
+                {!lockWallpaperId && <span className="wp-card-badge">{"使用中"}</span>}
+              </div>
+              {library.map((assetId) => {
+                const src = thumbs[assetId];
+                const isActive = lockWallpaperId === assetId;
+                return (
+                  <div
+                    key={assetId}
+                    className={`wp-card${isActive ? " wp-card-active" : ""}`}
+                    onClick={() => { void handlePickWallpaper(assetId); }}
+                    role="button"
+                    tabIndex={0}
+                  >
+                    {src ? (
+                      <img className="wp-card-img" src={src} alt="" />
+                    ) : (
+                      <div className="wp-card-img bg-[var(--c-page-body-bg)]" />
+                    )}
+                    {isActive && <span className="wp-card-badge">{"使用中"}</span>}
+                  </div>
+                );
+              })}
+            </div>
+            <button
+              type="button"
+              className="inline-flex h-10 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-[20px] bg-black px-4 text-xs font-bold text-white shadow-sm transition-all hover:bg-gray-800 active:scale-95 focus:outline-none disabled:opacity-50"
+              onClick={() => fileRef.current?.click()}
+              disabled={busy}
+            >
+              <Plus size={15} strokeWidth={1.8} />
+              <span>{busy ? "上传中…" : "上传新图片"}</span>
+            </button>
+          </div>
+        </ContentDialog>
+      )}
+
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleUpload}
+      />
     </div>
   );
 }

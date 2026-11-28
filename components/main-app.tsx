@@ -10,6 +10,7 @@ import { MediaMaintenanceScheduler } from "@/components/media-maintenance-schedu
 import { DesktopShell } from "./desktop-shell";
 import { OfflinePushRevampAnnouncement } from "./offline-push-revamp-announcement";
 import { SplashAnimation } from "./splash-animation";
+import { LockScreen } from "./lock-screen";
 import { LocalErrorBoundary } from "@/components/ui/local-error-boundary";
 import { MusicProvider } from "@/lib/music-context";
 import { hydrateKvDb, isKvHydrated } from "@/lib/kv-db";
@@ -178,6 +179,50 @@ function SplashScreen({ ready = false, onEnter }: { ready?: boolean; onEnter?: (
   );
 }
 
+/**
+ * 配置还没读出来时的过渡屏：只留机身和开屏动画那张纸色底，不画气球也不显示锁屏。
+ * 这段只有 IndexedDB 一次读取的工夫；关掉开屏动画的用户不会先看到动画闪一下，
+ * 开着动画的用户也只会看到同样的纸色底，接着动画从零开始，观感是连续的。
+ */
+function SplashPendingScreen() {
+  return (
+    <main className="app-root splash-root">
+      <section className="phone-shell-wrap splash-shell-wrap" aria-label={TEXT.loading}>
+        <div className="phone-case">
+          <div className="phone-frame">
+            <div className="phone-shell splash-phone-screen" />
+          </div>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+/**
+ * 锁屏那一屏：外壳、机身边框和开屏动画共用同一套，只有里面的内容换成锁屏。
+ */
+function LockScreenView({
+  wallpaperAssetId,
+  onUnlock,
+}: {
+  wallpaperAssetId: string | null;
+  onUnlock: () => void;
+}) {
+  return (
+    <main className="app-root splash-root">
+      <section className="phone-shell-wrap splash-shell-wrap" aria-label="锁屏">
+        <div className="phone-case">
+          <div className="phone-frame">
+            <div className="phone-shell splash-phone-screen lock-phone-screen">
+              <LockScreen wallpaperAssetId={wallpaperAssetId} onUnlock={onUnlock} />
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  );
+}
+
 type PreparedDesktopTheme = {
   profile: ThemeProfile;
   assets: Record<string, string>;
@@ -233,6 +278,11 @@ export function MainApp() {
   const [splashDismissed, setSplashDismissed] = useState(false);
   const [kvHydrateFailed, setKvHydrateFailed] = useState(false);
   const [initAttempt, setInitAttempt] = useState(0);
+  // 开屏那一屏显示什么：pending = 配置还没读出来，animation = 开屏动画，lock = 锁屏。
+  // 主题配置存在 IndexedDB 里，水合完成前 kvGet 只有空缓存、读出来永远是默认值，
+  // 所以必须等水合完再定，否则「关掉开屏动画」只在当次会话生效、重开又播回动画。
+  const [splashMode, setSplashMode] = useState<"pending" | "animation" | "lock">("pending");
+  const [lockWallpaperAssetId, setLockWallpaperAssetId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -251,6 +301,11 @@ export function MainApp() {
         return;
       }
       setKvHydrateFailed(false);
+
+      // 水合完成，主题配置才是真的：这时才决定开屏是播动画还是进锁屏。
+      const bootProfile = readThemeProfile();
+      setLockWallpaperAssetId(bootProfile.lockWallpaperAssetId);
+      setSplashMode(bootProfile.splashAnimationEnabled ? "animation" : "lock");
 
       let nextPreparedTheme: PreparedDesktopTheme | null = null;
       try {
@@ -310,7 +365,16 @@ export function MainApp() {
   return (
     <AccountGate>
       {!splashDismissed ? (
-        <SplashScreen ready={hydrated} onEnter={() => setSplashDismissed(true)} />
+        splashMode === "lock" ? (
+          <LockScreenView
+            wallpaperAssetId={lockWallpaperAssetId}
+            onUnlock={() => setSplashDismissed(true)}
+          />
+        ) : splashMode === "animation" ? (
+          <SplashScreen ready={hydrated} onEnter={() => setSplashDismissed(true)} />
+        ) : (
+          <SplashPendingScreen />
+        )
       ) : (
         <main className="app-root">
           <MusicProvider>

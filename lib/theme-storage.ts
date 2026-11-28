@@ -352,6 +352,7 @@ export function collectThemeAssetIds(profile: ThemeProfile): string[] {
     profile.wallpaperAssetId ?? "",
     profile.fontAssetId ?? "",
     profile.dockSkinAssetId ?? "",
+    profile.lockWallpaperAssetId ?? "",
     ...profile.wallpaperLibrary,
     ...iconIds,
     ...iconSchemeIds,
