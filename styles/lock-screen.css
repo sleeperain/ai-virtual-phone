@@ -104,29 +104,52 @@
   white-space: normal;
 }
 
-/* 第一行：日期和星期，居中 */
+/* 第一行：日期和星期，居中。
+   字号写死、不用 var(--app-text-scale)：那是桌面壳注入的变量，注入前后会变一次，
+   锁屏在启动瞬间正好横跨这个时刻，会看到字号"跳"一下。锁屏是固定版式，不吃全局缩放。 */
 .lock-screen .wg-large-time[data-variant="lock"] .wg-lt-date {
-  font-size: calc(15px * var(--app-text-scale, 1));
-  font-weight: 500;
+  font-size: 15px !important;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI",
+    "Helvetica Neue", Roboto, "Noto Sans", system-ui, sans-serif !important;
+  font-weight: 500 !important;
+  font-style: normal !important;
+  font-synthesis: none !important;
   letter-spacing: 0.06em;
   line-height: 1.2;
   opacity: 0.94;
-  color: #fff;
+  color: #fff !important;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   text-shadow: 0 1px 10px rgba(0, 0, 0, 0.42);
 }
 
-/* 第二行：大字时间，居中 */
+/* 第二行：大字时间，居中。
+
+   字体必须钉死在这里，不能只是"优先级更高"：
+   1) 桌面组件的样式（widgets.css）是在 lock-screen.css 之后导入的，同特异性时它赢；
+   2) 项目里所有 @font-face 都是 font-display: swap，字体文件下载完会替换，
+      字重若被浏览器先"合成"出来，替换后就会由粗变细；
+   3) 不能引用 var(--app-font-family)：这个变量由桌面壳注入，锁屏先渲染、
+      桌面后注入，变量一到字体就换一次。
+   所以：固定系统字体栈 + 禁用字重合成 + !important 挡住桌面组件那份。 */
 .lock-screen .wg-large-time[data-variant="lock"] .wg-lt-time {
   /* 按手机屏幕宽度算，不能用 vw：桌面端手机是固定宽度，vw 会按整个浏览器视口放大 */
-  font-size: min(86px, calc(var(--phone-screen-width, 390px) * 0.22));
-  font-weight: 200;
+  font-size: min(86px, calc(var(--phone-screen-width, 390px) * 0.22)) !important;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI",
+    "Helvetica Neue", Roboto, "Noto Sans", system-ui, sans-serif !important;
+  /* 不走 200：多数系统字体没有这个字重，浏览器会伪合成，字体到位后就变细。
+     300 是各家系统都真实提供的 Light，稳定。 */
+  font-weight: 300 !important;
+  font-style: normal !important;
+  /* 禁止合成粗体/斜体：宁可回落到真实字重，也不要在加载过程中"假装"一下 */
+  font-synthesis: none !important;
   letter-spacing: -0.018em;
   line-height: 1.04;
-  color: #fff;
-  /* 优先用系统里的 iOS 数字字形（细字重 + 紧字距），没有就退回 App 字体 */
-  font-family: -apple-system, "SF Pro Display", "Helvetica Neue", "Segoe UI", var(--app-font-family);
+  color: #fff !important;
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum" 1;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   text-shadow: 0 2px 24px rgba(0, 0, 0, 0.4);
 }
 
@@ -144,7 +167,8 @@
 }
 
 .lock-screen-hint {
-  font-size: calc(12.5px * var(--app-text-scale, 1));
+  /* 同样写死：启动瞬间 --app-text-scale 尚未由桌面壳注入，避免字号跳变 */
+  font-size: 12.5px;
   font-weight: 500;
   letter-spacing: 0.16em;
   opacity: 0.74;
