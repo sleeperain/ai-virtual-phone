@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 
 import { WidgetRenderer } from "@/components/widgets/widget-renderer";
@@ -49,12 +49,20 @@ type DragState = {
   targetCol: number;
 };
 
-export function LockWidgetArea({
-  onEditingChange,
-}: {
-  /** 通知父级：编辑态时锁屏不该响应上滑解锁 */
-  onEditingChange?: (editing: boolean) => void;
-}) {
+/** 工具栏按钮由锁屏自己渲染（好复用桌面 .edit-mode-edit / .edit-mode-done 的定位），
+    这里只暴露两个动作给它调用 */
+export type LockWidgetAreaHandle = {
+  openPicker: () => void;
+  exitEditing: () => void;
+};
+
+export const LockWidgetArea = forwardRef<
+  LockWidgetAreaHandle,
+  {
+    /** 通知父级：编辑态时锁屏不该响应上滑解锁；同时决定工具栏显不显示 */
+    onEditingChange?: (editing: boolean) => void;
+  }
+>(function LockWidgetArea({ onEditingChange }, ref) {
   const [entries, setEntries] = useState<LockWidgetEntry[]>([]);
   const [editing, setEditing] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -307,6 +315,11 @@ export function LockWidgetArea({
     setPickerOpen(false);
   }, []);
 
+  useImperativeHandle(ref, () => ({
+    openPicker: () => setPickerOpen(true),
+    exitEditing,
+  }), [exitEditing]);
+
   return (
     <div
       className="lock-widget-area"
@@ -382,27 +395,6 @@ export function LockWidgetArea({
       {/* 拖影：跟着手指走的克隆 */}
       <div ref={ghostRef} className="lock-widget-ghost" aria-hidden />
 
-      {editing && (
-        <div className="lock-widget-actions">
-          <button
-            type="button"
-            className="lock-widget-action"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={exitEditing}
-          >
-            取消
-          </button>
-          <button
-            type="button"
-            className="lock-widget-action lock-widget-action-primary"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => setPickerOpen(true)}
-          >
-            添加
-          </button>
-        </div>
-      )}
-
       {pickerOpen && (
         <div
           className="lock-widget-picker"
@@ -449,7 +441,7 @@ export function LockWidgetArea({
       )}
     </div>
   );
-}
+});
 
 /* 目录是纯静态的，取一次就够（避免每次渲染重建数组） */
 let catalogCache: ReturnType<typeof getLockWidgetCatalog> | null = null;

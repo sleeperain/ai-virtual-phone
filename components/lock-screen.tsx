@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { getThemeAssetMap } from "@/lib/theme-storage";
 import { PhoneStatusBar } from "@/components/phone-status-bar";
-import { LockWidgetArea } from "@/components/lock-widgets";
+import { LockWidgetArea, type LockWidgetAreaHandle } from "@/components/lock-widgets";
 
 /* ══════════════════════════════════════════
    锁屏（参考 iOS）
@@ -36,6 +36,7 @@ export function LockScreen({
   const unlockedRef = useRef(false);
   // 正在编辑锁屏组件：此时整屏不响应上滑解锁，免得摆弄组件时把屏幕滑走
   const [widgetEditing, setWidgetEditing] = useState(false);
+  const widgetApiRef = useRef<LockWidgetAreaHandle | null>(null);
 
   // ── 锁屏壁纸 ──
   useEffect(() => {
@@ -137,10 +138,37 @@ export function LockScreen({
           opacity: Math.max(0, 1 - lift / 320),
         }}
       >
-        <LockWidgetArea onEditingChange={setWidgetEditing} />
+        <LockWidgetArea ref={widgetApiRef} onEditingChange={setWidgetEditing} />
       </div>
 
-      <div className="lock-screen-bottom" style={{ opacity: Math.max(0, 1 - lift / 140) }}>
+      {/* 编辑态工具栏：直接复用桌面「编辑桌面」的两个按钮类，
+          位置和观感跟桌面完全一致（左上「添加」、右上「取消」） */}
+      {widgetEditing && (
+        <>
+          <button
+            type="button"
+            className="edit-mode-edit"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => widgetApiRef.current?.openPicker()}
+          >
+            添加
+          </button>
+          <button
+            type="button"
+            className="edit-mode-done"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => widgetApiRef.current?.exitEditing()}
+          >
+            取消
+          </button>
+        </>
+      )}
+
+      {/* 编辑态时把「上滑解锁」藏起来：这时候不响应上滑，留着会误导 */}
+      <div
+        className="lock-screen-bottom"
+        style={{ opacity: widgetEditing ? 0 : Math.max(0, 1 - lift / 140) }}
+      >
         <div className={hintDismissed ? "lock-screen-hint lock-screen-hint-hidden" : "lock-screen-hint"}>
           上滑解锁
         </div>
