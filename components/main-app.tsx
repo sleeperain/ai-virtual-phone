@@ -416,8 +416,8 @@ export function MainApp() {
 
       {!splashDismissed ? (
         <div className="boot-curtain" data-leaving={bootLeaving ? "1" : undefined}>
+          {/* 帘子里的内容一挂上就直接可见，不再等什么遮罩/揭幕时机 */}
           {splashMode !== "pending" ? (
-            {/* 帘子里的内容一挂上就直接可见，不再等什么遮罩/揭幕时机 */}
             <div className="boot-reveal" data-ready="1">
               {splashMode === "lock" ? (
                 <LockScreenView
