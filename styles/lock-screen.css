@@ -29,12 +29,15 @@
     opacity 0.33s ease;
 }
 
-/* 解锁退场：小幅上推 + 淡出。
-   不再整屏推走（-100%）：那样会瞬间掀开整片，把底下还没画完的桌面暴露出来，
-   就是"蹦"的观感。这里只上移一小段，真正负责过渡的是帘子的整体淡出。 */
+/* 解锁退场：只淡出，不做任何位移。
+   之前这里带了 translate3d(0, -10%, 0)，壁纸和文字会一起往上滑一小段，
+   再叠上帘子自身的淡出，看起来就是"壁纸滞后上滑"，不干净。
+   位置完全不动、只降透明度，视觉上是原地淡开，露出底下已画好的桌面。 */
 .lock-screen[data-leaving="1"] {
-  transform: translate3d(0, -10%, 0);
+  transform: none;
   opacity: 0;
+  /* 解锁这一下要利落，比跟手回弹的过渡更快 */
+  transition: opacity 260ms ease;
 }
 
 /* 锁屏壁纸层：解码完成后才淡入。
@@ -155,6 +158,227 @@
   -webkit-font-smoothing: subpixel-antialiased;
   -moz-osx-font-smoothing: auto;
   text-shadow: 0 2px 20px rgba(0, 0, 0, 0.45);
+}
+
+/* ── 锁屏组件区 ──
+   固定 2 行 × 4 列，摆在时间下方。组件按顺序自动排位（见 lib/lock-widgets.ts）。 */
+.lock-widget-area {
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  top: 42%;
+  z-index: 12;
+  /* 容器本身要能接收指针事件（父级 .lock-screen 是手势层） */
+  touch-action: none;
+}
+
+.lock-widget-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: repeat(2, 74px);
+  gap: 12px;
+}
+
+.lock-widget-slot {
+  position: relative;
+  border-radius: 20px;
+  /* 编辑态的描边靠 ::after，这里不裁剪，否则删除按钮会被切掉 */
+  min-width: 0;
+  min-height: 0;
+}
+
+/* 组件撑满自己的格子，不吃桌面网格那套 --slot-* 尺寸变量 */
+.lock-widget-area .widget-wrap {
+  width: 100% !important;
+  height: 100% !important;
+  align-items: stretch;
+  justify-content: stretch;
+}
+
+.lock-widget-area .widget-glass {
+  width: 100% !important;
+  height: 100% !important;
+  flex: 1 1 auto;
+  overflow: hidden;
+  border-radius: 20px;
+}
+
+/* preview 模式默认是绝对定位 + scale（给桌面管理器缩小预览用的），
+   这里要的是原尺寸铺满，所以把两样都取消 */
+.lock-widget-area .widget-preview-mode {
+  position: static !important;
+  transform: none !important;
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: 20px;
+}
+
+/* 编辑态：组件轻轻抖动，并给个虚线框提示"可以删" */
+.lock-widget-area[data-editing="1"] .lock-widget-slot {
+  animation: jiggle 0.24s ease-in-out infinite;
+}
+
+.lock-widget-area[data-editing="1"] .lock-widget-slot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 20px;
+  border: 1.5px dashed rgba(255, 255, 255, 0.75);
+  pointer-events: none;
+  z-index: 5;
+}
+
+.lock-widget-remove {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  z-index: 10;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1.5px solid rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font-size: 14px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.lock-widget-remove:active {
+  transform: scale(0.9);
+}
+
+/* 编辑态工具栏：取消 / 添加 */
+.lock-widget-actions {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 14px);
+  display: flex;
+  gap: 10px;
+  z-index: 14;
+}
+
+.lock-widget-action {
+  height: 34px;
+  padding: 0 20px;
+  border: none;
+  border-radius: 17px;
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.lock-widget-action:active {
+  transform: scale(0.95);
+}
+
+.lock-widget-action-primary {
+  background: rgba(255, 255, 255, 0.92);
+  color: #1a1a1a;
+}
+
+/* 组件选择器：贴着锁屏底部弹出的面板 */
+.lock-widget-picker {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(0, 0, 0, 0.38);
+}
+
+.lock-widget-picker-sheet {
+  width: 100%;
+  max-height: 62%;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 16px calc(env(safe-area-inset-bottom, 0px) + 16px);
+  border-radius: 22px 22px 0 0;
+  background: var(--c-panel, #ffffff);
+  color: var(--c-text-title, #2c3440);
+  animation: lockWidgetPickerIn 0.26s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@keyframes lockWidgetPickerIn {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+.lock-widget-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.lock-widget-picker-close {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--c-input, #f2f3f5);
+  color: var(--c-text, #797e85);
+  font-size: 16px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.lock-widget-picker-list {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lock-widget-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 4px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  color: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  border-bottom: 0.5px solid var(--c-card-border, #e0e0e0);
+}
+
+.lock-widget-picker-item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.lock-widget-picker-item-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lock-widget-picker-item-meta {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--c-icon, #a0a3a8);
 }
 
 .lock-screen-bottom {

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getThemeAssetMap } from "@/lib/theme-storage";
 import { PhoneStatusBar } from "@/components/phone-status-bar";
 import { LargeTimeDisplay } from "@/components/widgets/large-time-display";
+import { LockWidgetArea } from "@/components/lock-widgets";
 
 /* ══════════════════════════════════════════
    锁屏（参考 iOS）
@@ -33,6 +34,8 @@ export function LockScreen({
   const [hintDismissed, setHintDismissed] = useState(false);
   const dragStartY = useRef<number | null>(null);
   const unlockedRef = useRef(false);
+  // 正在编辑锁屏组件：此时整屏不响应上滑解锁，免得摆弄组件时把屏幕滑走
+  const [widgetEditing, setWidgetEditing] = useState(false);
 
   // ── 时间：每秒走一次；后台被节流后切回前台立刻校准 ──
   useEffect(() => {
@@ -78,7 +81,7 @@ export function LockScreen({
   }, [onUnlock]);
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (leaving || unlockedRef.current) return;
+    if (leaving || unlockedRef.current || widgetEditing) return;
     dragStartY.current = event.clientY;
     try {
       event.currentTarget.setPointerCapture(event.pointerId);
@@ -88,7 +91,7 @@ export function LockScreen({
   };
 
   const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (dragStartY.current === null || leaving || unlockedRef.current) return;
+    if (dragStartY.current === null || leaving || unlockedRef.current || widgetEditing) return;
     const delta = event.clientY - dragStartY.current;
     // 往上跟手；往下给一点回弹阻尼，不做整屏下拉
     setDragY(delta < 0 ? delta : delta * 0.16);
@@ -150,6 +153,9 @@ export function LockScreen({
             时间由本组件下发，两个定时器合成一个。 */}
         <LargeTimeDisplay variant="lock" date={now} />
       </div>
+
+      {/* 组件区：长按进入编辑态，「取消」退出、「添加」打开选择器 */}
+      <LockWidgetArea onEditingChange={setWidgetEditing} />
 
       <div className="lock-screen-bottom" style={{ opacity: Math.max(0, 1 - lift / 140) }}>
         <div className={hintDismissed ? "lock-screen-hint lock-screen-hint-hidden" : "lock-screen-hint"}>
