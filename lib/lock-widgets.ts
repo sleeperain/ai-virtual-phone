@@ -11,7 +11,9 @@ import { kvGet, kvSet, registerKvMigration } from "./kv-db";
    锁屏组件
 
    锁屏上也能摆桌面组件（和桌面共用 WIDGET_CATALOG / WidgetRenderer）。
-   为了不让版面失控，锁屏固定一块 2 行 × 4 列的网格，放在时间下方：
+   锁屏固定一块 4 列 × 4 行的网格，从状态栏下方铺到屏幕中部。
+   时间不是内置样式，而是默认放进去的一个「极简大号时间」组件（2×4，占满顶上两行），
+   用户也可以删掉它、换成别的组件。
    只接受能塞进这块网格的尺寸，其余尺寸在选择器里直接过滤掉。
 
    位置不存死在数据里：按数组顺序自动排位，删掉中间一个后面的自动补上，
@@ -21,9 +23,17 @@ import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 const LOCK_WIDGETS_KEY = "ai_phone_lock_widgets_v1";
 registerKvMigration(LOCK_WIDGETS_KEY);
 
-/** 锁屏组件区的网格：4 列、2 行 */
+/** 锁屏组件区的网格：4 列、4 行，铺满从状态栏下方到中部的整块区域 */
 export const LOCK_GRID_COLS = 4;
-export const LOCK_GRID_ROWS = 2;
+export const LOCK_GRID_ROWS = 4;
+
+/**
+ * 默认摆一个大号时间（2×4 正好占满顶上两行）。
+ * 锁屏不再内置时间样式，时间就由这个桌面组件提供，用户也可以换掉它。
+ */
+const DEFAULT_ENTRIES: LockWidgetEntry[] = [
+  { id: "lock_default_large_time", type: "largeTime" as WidgetType, size: "2x4" as WidgetSize },
+];
 
 /** 锁屏上允许的组件尺寸（必须能放进 2×4） */
 function fitsLockGrid(size: WidgetSize): boolean {
@@ -69,7 +79,8 @@ function normalizeEntry(raw: unknown): LockWidgetEntry | null {
 export function loadLockWidgetEntries(): LockWidgetEntry[] {
   try {
     const raw = kvGet(LOCK_WIDGETS_KEY);
-    if (!raw) return [];
+    // 从没配置过 → 给默认的大号时间；用户手动清空过则存的是 "[]"，尊重清空
+    if (raw === null) return DEFAULT_ENTRIES.map((entry) => ({ ...entry }));
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
     return parsed
