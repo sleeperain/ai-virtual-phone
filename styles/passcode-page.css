@@ -1,0 +1,158 @@
+/* ══════════════════════════════════════════
+   设置页 · 锁屏密码
+
+   和锁屏上的密码盘（.lock-passcode-*）不是一套：
+   那边压在壁纸上，需要毛玻璃；这里是普通设置页，用卡片底色 + 实线圆点，
+   全程不碰 backdrop-filter —— 那是这个页面卡顿的主因（每个数字键一个大模糊）。
+   ══════════════════════════════════════════ */
+
+.pc-page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 4px 4px 0;
+}
+
+/* ── 顶部说明 ── */
+.pc-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding-top: 6px;
+}
+
+.pc-title {
+  margin: 0;
+  font-size: calc(16px * var(--app-text-scale, 1));
+  font-weight: 600;
+  color: var(--c-text-title);
+  letter-spacing: 0.01em;
+}
+
+.pc-sub {
+  margin: 0;
+  font-size: calc(11.5px * var(--app-text-scale, 1));
+  color: var(--c-icon);
+}
+
+/* ── 输入区 ──
+   原生 input 藏起来（但保留可点、可聚焦、能唤起数字键盘），
+   视觉上只显示四个圆点。整块是个 label，点哪儿都能聚焦输入。 */
+.pc-dots-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 76px;
+  border-radius: 18px;
+  background: var(--c-input, #f2f3f5);
+  cursor: text;
+}
+
+/* 透明但可交互：不能用 display:none，那样聚焦不了、也弹不出键盘 */
+.pc-hidden-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: transparent;
+  caret-color: transparent;
+  /* 避免 iOS 聚焦时把页面顶上去太多 */
+  font-size: 16px;
+  text-align: center;
+  opacity: 0.01;
+  outline: none;
+  cursor: text;
+}
+
+.pc-dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  /* label 是定位上下文，这里要盖在透明 input 上方但不能吃掉点击 */
+  pointer-events: none;
+}
+
+.pc-dots[data-shake="1"] {
+  animation: pcShake 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97);
+}
+
+@keyframes pcShake {
+  0%, 100% { transform: translateX(0); }
+  15%      { transform: translateX(-7px); }
+  30%      { transform: translateX(6px); }
+  45%      { transform: translateX(-4px); }
+  60%      { transform: translateX(3px); }
+  75%      { transform: translateX(-2px); }
+  90%      { transform: translateX(1px); }
+}
+
+.pc-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.5px solid var(--c-icon, #a0a3a8);
+  background: transparent;
+  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+.pc-dot[data-filled="1"] {
+  background: var(--c-text-title, #2c3440);
+  border-color: var(--c-text-title, #2c3440);
+  transform: scale(1.05);
+}
+
+/* ── 提示 / 错误 ── */
+.pc-hint {
+  margin: 0;
+  text-align: center;
+  font-size: calc(11.5px * var(--app-text-scale, 1));
+  color: var(--c-icon);
+  /* 固定高度：在提示和错误之间切换时页面不跳 */
+  min-height: 18px;
+}
+
+.pc-error {
+  margin: 0;
+  text-align: center;
+  font-size: calc(11.5px * var(--app-text-scale, 1));
+  font-weight: 600;
+  color: var(--c-danger, #ff3b30);
+  min-height: 18px;
+}
+
+/* ── 重置按钮：低存在感的描边胶囊，不跟主操作抢注意力 ── */
+.pc-reset {
+  align-self: center;
+  height: 36px;
+  padding: 0 22px;
+  border: 1px solid var(--c-card-border, #e0e0e0);
+  border-radius: 18px;
+  background: transparent;
+  color: var(--c-text, #797e85);
+  font-size: calc(12.5px * var(--app-text-scale, 1));
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease, transform 140ms ease;
+}
+
+.pc-reset:active {
+  background: var(--c-input, #f2f3f5);
+  color: var(--c-text-title, #2c3440);
+  transform: scale(0.97);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pc-dots[data-shake="1"] {
+    animation: none !important;
+  }
+  .pc-dot,
+  .pc-reset {
+    transition: none !important;
+  }
+}

@@ -686,18 +686,6 @@
   transform: scale(0.96);
 }
 
-/* 设置页里的数字键：浅色背景，把锁屏那套半透明白换成卡片底 */
-.lock-passcode-key-light {
-  background: var(--c-input, #f2f3f5);
-  color: var(--c-text-title, #2c3440);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-.lock-passcode-key-light:active {
-  background: var(--c-card-border, #e0e0e0);
-}
-
 /* 重置成功后的提示条 */
 .lock-passcode-toast {
   position: absolute;

@@ -1680,6 +1680,9 @@ function LockPasscodePage({ onNotice }: { onNotice: (text: string) => void }) {
   const [first, setFirst] = useState("");
   const [second, setSecond] = useState("");
   const [error, setError] = useState<string | null>(null);
+  /** 当前在输第几遍。用独立状态而不是从长度推算：
+      推算的话，第一遍输满 4 位会立刻切到确认阶段、圆点瞬间清空，看着像被吞了一位。 */
+  const [stage, setStage] = useState<"first" | "second">("first");
   const shakeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => () => clearTimeout(shakeTimer.current), []);
@@ -1691,36 +1694,45 @@ function LockPasscodePage({ onNotice }: { onNotice: (text: string) => void }) {
   }, []);
 
   const resetStages = useCallback(() => {
+    setStage("first");
     setFirst("");
     setSecond("");
   }, []);
 
-  const handleDigit = useCallback((digit: string) => {
-    if (error) return;
-    if (first.length < PASSCODE_LENGTH) {
-      setFirst(first + digit);
+  const filled = stage === "first" ? first.length : second.length;
+  /** 给隐藏 input 用的显示值：只放当前这一步的数字 */
+  const displayed = stage === "first" ? first : second;
+
+  const handleInputChange = useCallback((raw: string) => {
+    const digits = raw.replace(/\D/g, "").slice(0, PASSCODE_LENGTH);
+    if (error) setError(null);
+
+    if (stage === "first") {
+      setFirst(digits);
+      // 输满 4 位：停一下再进确认阶段，让第 4 个圆点有机会画出来
+      if (digits.length === PASSCODE_LENGTH) {
+        window.setTimeout(() => {
+          setStage("second");
+          setSecond("");
+        }, 220);
+      }
       return;
     }
-    const next = (second + digit).slice(0, PASSCODE_LENGTH);
-    setSecond(next);
-    if (next.length === PASSCODE_LENGTH) {
-      if (next === first) {
-        // 这里是"设了新密码"，跟下面「重置为 0000」不是一回事，文案分开
-        const saved = writeLockPasscode({ enabled: true, code: next });
-        setState(saved);
-        onNotice("锁屏密码已更新");
-        resetStages();
-      } else {
-        flashError("两次输入不一致，重来");
-        resetStages();
-      }
-    }
-  }, [error, first, second, flashError, onNotice, resetStages]);
 
-  const handleDelete = useCallback(() => {
-    if (first.length < PASSCODE_LENGTH) setFirst((prev) => prev.slice(0, -1));
-    else setSecond((prev) => prev.slice(0, -1));
-  }, [first.length]);
+    setSecond(digits);
+    if (digits.length !== PASSCODE_LENGTH) return;
+
+    if (digits === first) {
+      // 这里是"设了新密码"，跟下面「重置为 0000」不是一回事，文案分开
+      const saved = writeLockPasscode({ enabled: true, code: digits });
+      setState(saved);
+      onNotice("锁屏密码已更新");
+      resetStages();
+    } else {
+      flashError("两次输入不一致，重来");
+      resetStages();
+    }
+  }, [error, first, stage, flashError, onNotice, resetStages]);
 
   const handleReset = useCallback(() => {
     const saved = writeLockPasscode({ enabled: state.enabled, code: DEFAULT_PASSCODE });
@@ -1729,75 +1741,49 @@ function LockPasscodePage({ onNotice }: { onNotice: (text: string) => void }) {
     resetStages();
   }, [onNotice, resetStages, state.enabled]);
 
-  const title = first.length < PASSCODE_LENGTH ? "输入新密码" : "再次输入确认";
-  const filled = first.length < PASSCODE_LENGTH ? first.length : second.length;
+  const title = stage === "first" ? "输入新密码" : "再次输入确认";
+  const stageLabel = stage === "first" ? "第一位数字开始" : "再输一遍确认";
 
   return (
-    <div className="theme-section-page" data-bottom-reserve style={{ gap: 14 }}>
-      <p className="ts-12 text-center" style={{ color: "var(--c-text-title)", fontWeight: 600 }}>
-        {title}
-      </p>
-
-      <div
-        className="lock-passcode-dots"
-        data-shake={error ? "1" : undefined}
-        style={{ height: "auto" }}
-        aria-label={`已输入 ${filled} 位，共 ${PASSCODE_LENGTH} 位`}
-      >
-        {Array.from({ length: PASSCODE_LENGTH }).map((_, index) => (
-          <span
-            key={index}
-            className="lock-passcode-dot"
-            data-filled={index < filled ? "1" : undefined}
-            style={{ borderColor: "var(--c-text-title)", background: index < filled ? "var(--c-text-title)" : "transparent" }}
-          />
-        ))}
+    <div className="pc-page">
+      {/* 状态说明 */}
+      <div className="pc-head">
+        <p className="pc-title">{title}</p>
+        <p className="pc-sub">{"请输入 " + PASSCODE_LENGTH + " 位数字"}</p>
       </div>
+
+      {/* 输入区：隐藏原生 input，只渲染 4 个圆点。
+          不用锁屏密码盘那套（带 backdrop-filter），这里是普通页面，模糊滤镜太贵。 */}
+      <label className="pc-dots-wrap">
+        <input
+          type="text"
+          inputMode="numeric"
+          autoComplete="off"
+          pattern="[0-9]*"
+          maxLength={PASSCODE_LENGTH}
+          className="pc-hidden-input"
+          value={displayed}
+          onChange={(e) => handleInputChange(e.target.value)}
+          aria-label={"密码，" + PASSCODE_LENGTH + " 位数字"}
+        />
+        <span className="pc-dots" data-shake={error ? "1" : undefined}>
+          {Array.from({ length: PASSCODE_LENGTH }).map((_, index) => (
+            <span
+              key={index}
+              className="pc-dot"
+              data-filled={index < filled ? "1" : undefined}
+            />
+          ))}
+        </span>
+      </label>
 
       {error ? (
-        <p className="ts-11 text-center" style={{ color: "var(--c-danger)" }}>{error}</p>
+        <p className="pc-error">{error}</p>
       ) : (
-        <p className="ts-11 text-center" style={{ color: "var(--c-icon)" }}>
-          {`请输入 ${PASSCODE_LENGTH} 位数字`}
-        </p>
+        <p className="pc-hint">{stageLabel}</p>
       )}
 
-      <div className="lock-passcode-keys" style={{ marginInline: "auto" }}>
-        {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((digit) => (
-          <button
-            key={digit}
-            type="button"
-            className="lock-passcode-key lock-passcode-key-light"
-            onClick={() => handleDigit(digit)}
-          >
-            <span className="lock-passcode-digit">{digit}</span>
-          </button>
-        ))}
-        <span className="lock-passcode-key-blank" />
-        <button
-          type="button"
-          className="lock-passcode-key lock-passcode-key-light"
-          onClick={() => handleDigit("0")}
-        >
-          <span className="lock-passcode-digit">0</span>
-        </button>
-        <button
-          type="button"
-          className="lock-passcode-key lock-passcode-key-plain"
-          onClick={handleDelete}
-          style={{ color: "var(--c-text-title)" }}
-          aria-label="删除"
-        >
-          <span className="lock-passcode-delete">⌫</span>
-        </button>
-      </div>
-
-      <button
-        type="button"
-        className="lock-passcode-forgot"
-        onClick={handleReset}
-        style={{ alignSelf: "center", background: "var(--c-input)", color: "var(--c-text-title)" }}
-      >
+      <button type="button" className="pc-reset" onClick={handleReset}>
         {"重置为 " + DEFAULT_PASSCODE}
       </button>
     </div>
