@@ -438,17 +438,15 @@
   color: rgba(22, 22, 26, 0.62);
 }
 
-/* 地球：当前在片刻纪事时高亮成主题蓝 */
-.diary-brand-nav.is-active {
-  color: #8fb2c8;
-}
-
-/* 实心铃铛：常态是灰色，只有当前在 TA的手记 时才压深一档。
+/* 地球和铃铛共用同一套颜色：常态灰色，当前所在的那一页压深一档。
+   两个页面（TA的手记 / 片刻纪事）因此完全一致，不再一处蓝、一处灰。
    选择器带 .diary-brand-header 前缀，才压得过上面那条 .note-wall-menu-btn 的默认色 */
+.diary-brand-header .diary-brand-nav,
 .diary-brand-header .diary-brand-bell {
   color: #a0a0a8;
 }
 
+.diary-brand-header .diary-brand-nav.is-active,
 .diary-brand-header .diary-brand-bell.is-active {
   color: #55555c;
 }
@@ -802,6 +800,9 @@
   --my-diary-author-name-size: 13.5px;
   --my-diary-author-id-size: 12.5px;
   --my-diary-time-gap: 10px;
+  /* 正文、时间戳（含前面的时钟图标）统一缩进到这里：
+     头像 34px + 头像与名字之间的 10px = 第一行名字的左边缘 */
+  --my-diary-author-indent: 44px;
 }
 
 .diary-flat-card {
@@ -828,6 +829,13 @@
   white-space: pre-wrap;
   word-break: break-word;
   text-align: left;
+}
+
+/* 列表卡片里的正文和时间戳都缩进到人名左边：
+   外层两个类一起限定的写法，只作用于列表，详情页卡片保持原样 */
+.diary-hub-entries .diary-flat-card-body,
+.diary-hub-entries .diary-flat-card-footer {
+  margin-left: var(--my-diary-author-indent);
 }
 
 /* 日记正文超过六行时折叠 */
